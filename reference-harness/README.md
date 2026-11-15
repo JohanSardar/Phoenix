@@ -14,7 +14,7 @@ The final answer goes to stdout; tool names go to stderr. Model HTTP errors show
 
 ## Configuration and tools
 
-- `config/model.json` names the endpoint, credential and model environment variables and sets the turn limit. There is no hard-coded provider or endpoint.
+- `config/model.json` names the endpoint, credential and model environment variables and sets the turn limit. Optional `MODEL_HEADERS` is a JSON object of additional request headers, for providers that require routing metadata. There is no hard-coded provider or endpoint.
 - `.mcp.json` contains `mcpServers` entries with `command`, `args` and optional `env`. Each server is a separate stdio process, connected using `@modelcontextprotocol/client` v2. The demo speaks MCP 2025-11-25. Tool descriptions and input schemas come from each server's `tools/list`; the model sees names like `mcp_calendar__move_event`.
 - `tools/calendar.json` describes `list_events`, `get_event` and `move_event`. The server writes only a local JSON calendar. On first launch it copies `data/calendar.seed.json` to `.local/calendar.json`; later processes reuse that file. For a fresh demo, point the server's `CALENDAR_FILE` environment variable at a new local path through `.mcp.json`.
 - `tools/cli.json` declares the fixed argv for `date` and `cat data/preferences.txt`. The harness uses `execFile`, not a shell; the model cannot supply arbitrary commands or arguments. These processes inherit the harness environment, so use only trusted commands. PATH remains available for Phoenix's CLI shims.

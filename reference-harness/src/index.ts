@@ -27,11 +27,12 @@ async function main() {
   const { values } = parseArgs({ options: { "task-file": { type: "string" } } });
   if (!values["task-file"]) throw new Error("Usage: node src/index.ts --task-file task.txt");
   const task = readFileSync(resolve(values["task-file"]), "utf8");
-  const model: { baseUrlEnv: string; apiKeyEnv: string; modelEnv: string; maxTurns: number } = json("config/model.json");
+  const model: { baseUrlEnv: string; apiKeyEnv: string; modelEnv: string; headersEnv: string; maxTurns: number } = json("config/model.json");
   const baseUrl = process.env[model.baseUrlEnv];
   const modelId = process.env[model.modelEnv];
   if (!baseUrl || !modelId) throw new Error(`Set ${model.baseUrlEnv} and ${model.modelEnv}`);
   const apiKey = process.env[model.apiKeyEnv];
+  const extraHeaders: Record<string, string> = JSON.parse(process.env[model.headersEnv] ?? "{}");
   const tools: Tool[] = [];
 
   const { mcpServers } = json(".mcp.json") as {
@@ -78,7 +79,7 @@ async function main() {
     const response = await fetch(`${baseUrl.replace(/\/$/, "")}/responses`, {
       method: "POST",
       redirect: "error",
-      headers: { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+      headers: { ...extraHeaders, "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
       body: JSON.stringify({
         model: modelId,
         instructions,
