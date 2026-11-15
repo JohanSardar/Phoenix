@@ -6,4 +6,8 @@ Phoenix is an open-source system that records everything an agent harness does w
 - [Glossary](GLOSSARY.md)
 - [Architecture decision records](docs/adr/)
 
+## Merging
+
+Label a pull request `automerge` and it lands, squash-merged, once its checks pass.
+
 License: MIT, see LICENSE
