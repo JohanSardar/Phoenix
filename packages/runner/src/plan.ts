@@ -1,4 +1,4 @@
-import { cp, mkdir } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rename } from "node:fs/promises";
 import { join } from "node:path";
 import type { Bindings, HarnessContract, ReplayPlan } from "@phoenix/formats";
 import { bundleApproval, digest, readApprovalsLedger, readMomentBundle } from "@phoenix/store";
@@ -30,6 +30,7 @@ export async function resolvePlan(root: string, ledger: string, request: ReplayR
   checked("harness", request.harness);
   if (request.bindings) checked("bindings", request.bindings);
   for (const tree of [request.base, request.candidate]) if (await treeDigest(tree.directory) !== tree.digest) throw new Error(`Tree digest mismatch: ${tree.digest}`);
+  if (request.start === "echo" && request.base.digest !== request.candidate.digest) throw new Error("Echo replays require the unedited base tree");
   if (bundle.manifest.harness && bundle.manifest.harness.tree !== request.base.digest) throw new Error("Base tree does not match the locked harness");
   const events = hydrate(bundleEvidence(bundle), bundle.files);
   if (request.start !== "beginning" && request.start !== "echo") {
@@ -55,11 +56,14 @@ export async function resolvePlan(root: string, ledger: string, request: ReplayR
   const directory = join(root, "replays", id.slice(7));
   const existing = await optional<ResolvedPlan>(join(directory, "plan.json"));
   if (existing) { if (canonical(existing) !== canonical(plan)) throw new Error("Replay identity collision"); return { id, plan: existing }; }
-  await mkdir(join(directory, "inputs"), { recursive: true, mode: 0o700 });
-  await cp(request.moment, join(directory, "inputs/bundle"), { recursive: true, errorOnExist: true, force: false });
-  await cp(request.base.directory, join(directory, "inputs/base"), { recursive: true, errorOnExist: true, force: false });
-  await cp(request.candidate.directory, join(directory, "inputs/candidate"), { recursive: true, errorOnExist: true, force: false });
-  for (const [name, hash] of [["base", plan.base_tree], ["candidate", plan.candidate_tree]] as const) if (await treeDigest(join(directory, "inputs", name)) !== hash) throw new Error("Tree changed while resolving the plan");
-  await save(join(directory, "plan.json"), plan);
+  await mkdir(join(root, "replays"), { recursive: true, mode: 0o700 });
+  const stage = await mkdtemp(join(root, "replays/.resolve-"));
+  await mkdir(join(stage, "inputs"));
+  await cp(request.moment, join(stage, "inputs/bundle"), { recursive: true, errorOnExist: true, force: false });
+  await cp(request.base.directory, join(stage, "inputs/base"), { recursive: true, errorOnExist: true, force: false });
+  await cp(request.candidate.directory, join(stage, "inputs/candidate"), { recursive: true, errorOnExist: true, force: false });
+  for (const [name, hash] of [["base", plan.base_tree], ["candidate", plan.candidate_tree]] as const) if (await treeDigest(join(stage, "inputs", name)) !== hash) throw new Error("Tree changed while resolving the plan");
+  await save(join(stage, "plan.json"), plan);
+  await rename(stage, directory);
   return { id, plan };
 }

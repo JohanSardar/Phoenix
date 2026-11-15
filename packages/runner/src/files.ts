@@ -90,6 +90,17 @@ export function hydrate(events: readonly TraceEvent[], files: MomentBundle["file
     if (!event.body || "inline" in event.body) return event;
     const bytes = files.get(`data/blobs/${event.body.blob.slice(7)}`);
     if (!bytes || digest(bytes) !== event.body.blob) throw new Error(`Missing or corrupt evidence blob: ${event.body.blob}`);
-    return { ...event, body: { ...event.body, inline: Buffer.from(bytes).toString("utf8") } };
+    try {
+      const inline = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      return { ...event, body: { inline, ...(event.body.content_encoding ? { content_encoding: event.body.content_encoding } : {}) } };
+    } catch { return event; }
   });
+}
+
+export async function bundleBody(bundle: MomentBundle, event: TraceEvent): Promise<Uint8Array> {
+  if (!event.body) return new Uint8Array();
+  if ("inline" in event.body) return Buffer.from(event.body.inline);
+  const bytes = bundle.files.get(`data/blobs/${event.body.blob.slice(7)}`);
+  if (!bytes || digest(bytes) !== event.body.blob) throw new Error(`Missing or corrupt evidence blob: ${event.body.blob}`);
+  return bytes;
 }

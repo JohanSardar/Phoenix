@@ -9,9 +9,10 @@ import { compareBaseline, customCheckHost, evaluateCheck, momentVerdict, sampleV
 import { fidelityReport, weakestTier, type FidelityContext, type FidelityReport } from "@phoenix/fidelity";
 import { BlobStore, bundleApproval, digest, readApprovalsLedger, readCapture, readMomentBundle, type MomentBundle } from "@phoenix/store";
 import type { ReplayResult, TraceEvent } from "@phoenix/formats";
-import { bundleEvidence, canonical, checked, claim, eventId, hydrate, load, optional, save } from "./files.ts";
+import { bundleBody, bundleEvidence, canonical, checked, claim, eventId, load, optional, save } from "./files.ts";
 import { materialize, treeDigest } from "./materialize.ts";
 import { resolvePlan, type ReplayRequest, type ResolvedPlan } from "./plan.ts";
+import { submitTask } from "./server.ts";
 
 type Sample = ReplayResult["samples"][number];
 type Attempt = Sample["attempts"][number] & { container?: string; recovered?: boolean; fresh_after_drift?: boolean };
@@ -32,14 +33,15 @@ export interface RunnerOptions {
 }
 
 const execute = promisify(execFile);
-const body = async (event: TraceEvent): Promise<Uint8Array> => Buffer.from(event.body && "inline" in event.body ? event.body.inline : "");
-
-async function sampleTrace(root: string): Promise<TraceEvent[]> {
+async function sampleTrace(root: string): Promise<{ events: TraceEvent[]; body(event: TraceEvent): Promise<Uint8Array>; blobs: Record<string, string> }> {
+  const blobs = new BlobStore(root);
+  const body = async (event: TraceEvent): Promise<Uint8Array> => !event.body ? new Uint8Array() : "inline" in event.body ? Buffer.from(event.body.inline) : blobs.get(event.body.blob);
   try {
     const view = await readCapture(root);
-    const blobs = new BlobStore(root);
-    return await Promise.all(view.allEvents.map(async event => event.body && "blob" in event.body ? { ...event, body: { ...event.body, inline: Buffer.from(await blobs.get(event.body.blob)).toString("utf8") } } : event));
-  } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+    const values: Record<string, string> = {};
+    for (const event of view.allEvents) if (event.body && "blob" in event.body) values[event.body.blob] = Buffer.from(await body(event)).toString("utf8");
+    return { events: [...view.allEvents], body, blobs: values };
+  } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return { events: [], body, blobs: {} }; throw error; }
 }
 
 export class Runner {
@@ -85,6 +87,12 @@ export class Runner {
       if (bundle.lockHash !== plan.bundle || bundle.lock.check !== plan.check) throw new Error("Resolved bundle changed");
       const approval = bundleApproval(bundle, (await readApprovalsLedger(this.#options.ledger)).entries);
       for (const [name, hash] of [["base", plan.base_tree], ["candidate", plan.candidate_tree]] as const) if (await treeDigest(join(directory, "inputs", name)) !== hash) throw new Error("Resolved tree changed");
+      if (plan.start !== "echo") {
+        const echoId = await this.plan({ moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: "echo", samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, env: plan.runner.env });
+        await this.resume(echoId);
+        const drift = await optional<{ result: string }>(join(this.#options.root, "echo-drift", plan.base_tree.slice(7) + ".json"));
+        if (plan.start !== "beginning" && drift) throw new Error(`This base tree supports only beginning; echo drift: ${drift.result}`);
+      }
       let baseline: ReplayResult | undefined;
       if (plan.candidate_tree !== plan.base_tree && plan.start !== "echo") {
         const baselinePlan = { ...plan, candidate_tree: plan.base_tree };
@@ -102,8 +110,8 @@ export class Runner {
       let journalWrites = Promise.resolve();
       const persist = () => journalWrites = journalWrites.then(() => save(join(directory, "journal.json"), status));
       await persist();
-      const evidence = hydrate(bundleEvidence(bundle), bundle.files);
-      const sandbox = this.#options.sandbox ?? new ContainerSandbox({ cli: plan.runner.cli });
+      const evidence = bundleEvidence(bundle);
+      const sandbox = this.#options.sandbox ?? new ContainerSandbox({ cli: plan.runner.cli, relayPorts: [8080] });
       const keyPath = join(directory, "hmac.key");
       try { await writeFile(keyPath, randomBytes(32), { flag: "wx", mode: 0o600 }); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
@@ -146,6 +154,10 @@ export class Runner {
         result.baseline = momentVerdict(baseline.samples, plan.samples).counts;
         if (compared.improved !== undefined) result.improved = compared.improved;
         await save(join(directory, "comparison.json"), compared);
+      } else if (plan.start !== "echo") {
+        result.baseline = verdict.counts;
+        if (verdict.verdict !== "incomplete") result.improved = false;
+        await save(join(directory, "comparison.json"), compareBaseline(verdict, verdict));
       }
       checked("result", result);
       await save(join(directory, "result.json"), result);
@@ -168,12 +180,22 @@ export class Runner {
     const { id, directory, plan, bundle, evidence, sample, sandbox, hmacKey, persist } = input;
     const previous = sample.attempts.at(-1);
     if (previous?.status === "running") {
+      const previousRoot = join(directory, "samples", String(sample.sample), String(previous.attempt));
+      const completed = await optional<{ kind: string; code?: number }>(join(previousRoot, "outcome.json"));
+      const assessment = await optional<Awaited<ReturnType<typeof evaluateCheck>>>(join(previousRoot, "assessment.json"));
+      if (completed && completed.kind !== "interrupted" && assessment && !(previous.recovered && completed.kind === "diverged")) {
+        Object.assign(sample, sampleVerdict({ ...assessment, diverged: completed.kind === "diverged" }), { expectations: assessment.expectations, complete: true });
+        if (completed.kind === "finished" && completed.code !== 0) sample.status = "fail";
+        previous.status = "finished";
+        await persist();
+        return;
+      }
       previous.status = "interrupted"; previous.cause = "runner interrupted";
       if (previous.container && !this.#options.sandbox) await execute(plan.runner.cli[0]!, [...plan.runner.cli.slice(1), "rm", "-f", previous.container, previous.container.replace("phoenix-workload-", "phoenix-relay-")]).catch(() => {});
       await persist();
     }
-    const recovery = previous?.status === "interrupted" ? await sampleTrace(join(directory, "samples", String(sample.sample), String(previous.attempt), "trace")) : [];
-    const attempt: Attempt = { attempt: sample.attempts.length, status: "running", ...(recovery.length ? { recovered: true } : {}) };
+    const recovery = previous?.status === "interrupted" ? await sampleTrace(join(directory, "samples", String(sample.sample), String(previous.attempt), "trace")) : undefined;
+    const attempt: Attempt = { attempt: sample.attempts.length, status: "running", ...(recovery?.events.length ? { recovered: true } : {}) };
     sample.attempts.push(attempt);
     const root = join(directory, "samples", String(sample.sample), String(attempt.attempt));
     await mkdir(root, { recursive: true, mode: 0o700 });
@@ -192,8 +214,8 @@ export class Runner {
         headers[name] = value;
       }
       const start = plan.start === "mark" ? { at: bundle.manifest.mark! } : plan.start;
-      engine = await startEngine({ evidence: { events: evidence, body }, ...(recovery.length ? { resume: { events: recovery, body } } : {}), connectors: bundle.manifest.connectors, start,
-        clock: { start: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall }, routes: { ...tree.routes, http: { ...tree.routes.http, "phoenix-model": plan.runner.model.connector } },
+      engine = await startEngine({ evidence: { events: evidence, body: event => bundleBody(bundle, event) }, ...(recovery?.events.length ? { resume: { events: recovery.events, body: recovery.body } } : {}), connectors: bundle.manifest.connectors, start,
+        clock: { start: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall }, routes: { ...tree.routes, http: { ...tree.routes.http, "phoenix-model": plan.runner.model.connector, "phoenix-model:8080": plan.runner.model.connector } },
         model: { connector: plan.runner.model.connector, dialect: dialect as NonNullable<EngineOptions["model"]>["dialect"], provider: { url: plan.runner.model.url, headers } },
         sample: { root: join(root, "trace"), metadata: { capture: `${id.slice(7)}-${sample.sample}-${attempt.attempt}`, harness: { name: plan.runner.harness.name, tree: plan.candidate_tree }, recipe: { name: "runner", version: "1" }, routes: ["tap"], started_at: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall ?? new Date(0).toISOString(), boot_id: `${id}-${sample.sample}-${attempt.attempt}` } }, hmacKey });
       await writeClockFile(join(root, "clock"), engine.clock.now());
@@ -205,6 +227,7 @@ export class Runner {
       process.stdout.resume(); process.stderr.resume();
       const connections = (async () => { for await (const connection of running.channel) engine!.accept(connection); })().then(() => ({ kind: "interrupted" as const, why: "engine channel closed" }), () => ({ kind: "interrupted" as const, why: "engine channel closed" }));
       outcome = await Promise.race([
+        ...("serve" in plan.runner.harness.run ? [submitTask(running.channel, plan.runner.harness.run, bundle.manifest.prompt ?? "")] : []),
         process.exited.then(({ code }) => ({ kind: "finished" as const, code })),
         process.interrupted.then(error => ({ kind: "interrupted" as const, why: error.message })),
         engine.stopped.then(stop => stop.kind === "diverged" ? { kind: "diverged" as const, trigger: stop.divergence.trigger, detail: stop.divergence.detail } : stop),
@@ -218,15 +241,16 @@ export class Runner {
       await engine?.close();
       await clockWrites;
     }
-    const trace = await sampleTrace(join(root, "trace"));
+    const recorded = await sampleTrace(join(root, "trace"));
+    const trace = recorded.events;
     const expectedStates = Object.fromEntries((bundle.check.expect ?? []).flatMap(exp => "end_state" in exp ? [[exp.end_state.equals, JSON.parse(Buffer.from(bundle.files.get(exp.end_state.equals)!).toString())]] : []));
     const boundary = trace.find(e => e.kind === "meta" && e.op === "start-point");
-    const assessed = await evaluateCheck(bundle.check, { trace, ...(boundary ? { startAfter: eventId(boundary) } : {}) }, { expectedStates, custom: customCheckHost({ checksDirectory: join(directory, "inputs/bundle/checks"), workDirectory: root, image: plan.harness_image, sandbox }) });
+    const assessed = await evaluateCheck(bundle.check, { trace, blobs: recorded.blobs, ...(boundary ? { startAfter: eventId(boundary) } : {}) }, { expectedStates, custom: customCheckHost({ checksDirectory: join(directory, "inputs/bundle/checks"), workDirectory: root, image: plan.harness_image, sandbox }) });
     const verdict = sampleVerdict({ ...assessed, diverged: outcome.kind === "diverged" });
     const context: FidelityContext = { source: bundle.manifest.source, connectors: Object.fromEntries(Object.entries(bundle.manifest.connectors ?? {}).map(([name, connector]) => [name, { coverage_tier: connector.tier, origin: connector.origin, routes: connector.routes, read_only: connector.read_only }])), start: plan.start, prefix_edits: engine?.prefixEdits() ?? [], container_runtime: plan.container_runtime, clock: await optional(join(root, "clock-report.json")) ?? { clock: "unknown" }, processes: [], ...("serve" in plan.runner.harness.run ? { earlier_tasks_not_replayed: true } : {}) };
     const contextEvent: TraceEvent = { v: 1, capture: id, stream: "runner", seq: 0, id: "runner:0", kind: "meta", op: "fidelity.context", ts: { wall: new Date().toISOString() }, body: { inline: JSON.stringify(context) } };
     const limitations: TraceEvent = { ...contextEvent, seq: 1, id: "runner:1", op: "fidelity.workdir", body: { inline: JSON.stringify({ raw_address_reporting: false, snapshot_unread: bundle.manifest.workdir ? JSON.parse(Buffer.from(bundle.files.get(bundle.manifest.workdir)!).toString()).unread : [] }) } };
-    const report = fidelityReport([contextEvent, ...trace, limitations]);
+    const report = fidelityReport([contextEvent, ...trace, limitations], recorded.blobs);
     if (outcome.kind === "diverged" && !report.divergences.length) report.divergences.push({ event: "runner", detail: outcome });
     await save(join(root, "fidelity.json"), report);
     await save(join(root, "assessment.json"), assessed);
@@ -234,7 +258,14 @@ export class Runner {
     if (outcome.kind === "interrupted") {
       attempt.status = "interrupted"; attempt.cause = outcome.why;
       if (sample.attempts.slice(0, -1).some(a => a.status === "interrupted" && a.cause === outcome.why)) sample.complete = true;
-    } else if (recovery.length && outcome.kind === "diverged" && outcome.trigger === "prefix-drift" && verdict.status !== "fail") {
+    } else if (recovery?.events.length && outcome.kind === "diverged" && outcome.trigger === "prefix-drift" && verdict.status !== "fail") {
+      const prior = await optional<Awaited<ReturnType<typeof evaluateCheck>>>(join(directory, "samples", String(sample.sample), String(previous!.attempt), "assessment.json"));
+      if (prior?.expectations.some(e => e.outcome === "fail" && e.irreversible && !e.tainted)) {
+        attempt.status = "finished";
+        sample.status = "fail"; sample.discounted = false; sample.complete = true; sample.expectations = prior.expectations;
+        await persist();
+        return;
+      }
       attempt.status = "finished"; attempt.cause = "recovery prefix drift; restarting at the original start point";
       attempt.fresh_after_drift = true;
       await persist();
