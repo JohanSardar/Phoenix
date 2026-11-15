@@ -1,5 +1,6 @@
 import { CLI_STREAM, cliInvocation, decodeCliControl, encodeCliControl, type CliControl, type TerminalSize } from "@phoenix/wire";
-import type { ReadStream, WriteStream } from "node:tty";
+import { closeSync, openSync } from "node:fs";
+import { WriteStream, type ReadStream } from "node:tty";
 import { frame, relayInput, writeBytes, type Backend, type Stdio } from "./ports.ts";
 
 export interface SignalSource {
@@ -8,9 +9,18 @@ export interface SignalSource {
 }
 
 function terminal(stream: Stdio["stdin"] | Stdio["stdout"]): TerminalSize | null {
-  const tty = stream as WriteStream;
+  const tty = stream as WriteStream & { fd: number };
   if (!tty.isTTY) return null;
-  return { columns: tty.columns ?? process.stdout.columns ?? 80, rows: tty.rows ?? process.stdout.rows ?? 24 };
+  const fd = openSync(`/dev/fd/${tty.fd}`, "r");
+  let probe: WriteStream | undefined;
+  try {
+    probe = new WriteStream(fd);
+    const [columns, rows] = probe.getWindowSize();
+    return { columns, rows };
+  } finally {
+    if (probe) probe.destroy();
+    else closeSync(fd);
+  }
 }
 
 export async function cliTap(options: { backend: Backend; connector: string; argv: string[]; cwd?: string; env?: Record<string, string | undefined>; allowEnv: readonly string[]; io?: Stdio; signals?: SignalSource }): Promise<{ code: number | null; signal: string | null }> {
@@ -32,11 +42,17 @@ export async function cliTap(options: { backend: Backend; connector: string; arg
     signals.on(signal, listener);
     cleanup.push(() => { signals.off(signal, listener); });
   }
-  for (const [fd, stream] of [io.stdin, io.stdout, io.stderr].entries()) if (terminal(stream)) {
-    const resize = () => send({ type: "resize", fd: fd as 0 | 1 | 2, ...terminal(stream)! });
-    stream.on("resize", resize);
-    cleanup.push(() => { stream.off("resize", resize); });
-  }
+  const sizes = [terminals.stdin, terminals.stdout, terminals.stderr];
+  const resize = (): void => {
+    for (const [fd, stream] of [io.stdin, io.stdout, io.stderr].entries()) if (sizes[fd]) {
+      const size = terminal(stream)!;
+      if (size.columns === sizes[fd]!.columns && size.rows === sizes[fd]!.rows) continue;
+      sizes[fd] = size;
+      send({ type: "resize", fd: fd as 0 | 1 | 2, ...size });
+    }
+  };
+  signals.on("SIGWINCH", resize);
+  cleanup.push(() => { signals.off("SIGWINCH", resize); });
   const tty = io.stdin as ReadStream;
   const wasRaw = tty.isRaw;
   if (terminals.stdin && tty.setRawMode) {

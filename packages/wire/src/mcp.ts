@@ -63,5 +63,8 @@ export function decodeMcpHttp(bytes: Uint8Array, contentType: string): Decode<Rp
   if (!contentType.toLowerCase().includes("text/event-stream")) return [decodeMcp(bytes)];
   const decoded = decodeSse(bytes);
   if (!decoded.ok) return [decoded];
-  return decoded.value.filter(event => event.data !== "").map(event => decodeMcp(new TextEncoder().encode(event.data)));
+  return decoded.value.filter(event => event.data !== "").map(event => {
+    const message = decodeMcp(new TextEncoder().encode(event.data));
+    return message.ok ? message : { ok: false, why: message.why, bytes };
+  });
 }

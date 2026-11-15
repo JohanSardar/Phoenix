@@ -22,7 +22,7 @@ function toolUses(value: unknown): ToolUse[] {
     if (!value || typeof value !== "object") return;
     const v = object(value);
     const fn = object(v.function ?? v.functionCall);
-    if (v.type === "tool_use" || v.type === "function_call" || v.type === "function" || v.functionCall || (typeof v.id === "string" && fn.name)) {
+    if (v.type === "tool_use" || v.type === "function_call" || v.functionCall || (typeof v.id === "string" && fn.name)) {
       const args = v.input ?? v.arguments ?? fn.arguments ?? fn.args;
       let parsed = args;
       if (typeof args === "string") { try { parsed = JSON.parse(args); } catch {} }
@@ -131,7 +131,7 @@ export function decodeModelBody(bytes: Uint8Array, contentType: string): Decode<
   for (const event of sse.value) {
     if (!event.data || event.data === "[DONE]") continue;
     const decoded = decodeJson(new TextEncoder().encode(event.data));
-    if (!decoded.ok) return decoded;
+    if (!decoded.ok) return { ok: false, why: decoded.why, bytes };
     values.push(decoded.value);
   }
   return { ok: true, value: values };
