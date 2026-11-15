@@ -73,7 +73,10 @@ export function bundleEvidence(bundle: MomentBundle): TraceEvent[] {
     ids.add(id);
     if (bundle.manifest.run && (event.capture !== bundle.manifest.run.capture || event.task !== undefined && event.task !== (bundle.manifest.run.task ?? ""))) throw new Error(`Evidence belongs to another run: ${id}`);
   }
-  events.sort((a, b) => a.ts.mono !== undefined && b.ts.mono !== undefined ? BigInt(a.ts.mono) < BigInt(b.ts.mono) ? -1 : BigInt(a.ts.mono) > BigInt(b.ts.mono) ? 1 : a.stream.localeCompare(b.stream) || a.seq - b.seq : a.ts.wall.localeCompare(b.ts.wall) || a.stream.localeCompare(b.stream) || a.seq - b.seq);
+  if (paths.size > 1) {
+    const monotonic = events.every(e => e.ts.mono !== undefined);
+    events.sort((a, b) => monotonic ? BigInt(a.ts.mono!) < BigInt(b.ts.mono!) ? -1 : BigInt(a.ts.mono!) > BigInt(b.ts.mono!) ? 1 : a.stream.localeCompare(b.stream) || a.seq - b.seq : a.ts.wall.localeCompare(b.ts.wall) || a.stream.localeCompare(b.stream) || a.seq - b.seq);
+  }
   for (const fill of bundle.manifest.fills ?? []) {
     const value = checked("fill", JSON.parse(Buffer.from(bundle.files.get(fill.path)!).toString()));
     if (!value.at) continue;
