@@ -1,9 +1,9 @@
 import { lstat, mkdir, open, readFile, readdir, rename, rm, truncate, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { parse } from "yaml";
 import { validate, type FormatName, type FormatTypes, type LedgerEntry, type MomentLock, type MomentManifest, type ReplayResult, type SuccessCheck, type TraceEvent } from "@phoenix/formats";
-import { digest, readApprovalsLedger, readJsonLines, readMomentBundle, type MomentBundle } from "@phoenix/store";
+import { BlobStore, digest, readApprovalsLedger, readJsonLines, readMomentBundle, type MomentBundle } from "@phoenix/store";
 
 export const ledgerPath = (home: string): string => join(home, "approvals.jsonl");
 
@@ -130,7 +130,14 @@ export async function reviewPass(resultPath: string, traces: readonly string[], 
     throw new Error(`Result ran against a lock that is not in the approvals ledger: ${ran.lock_hash}`);
   if (result.verdict !== "meets-check" || !result.discount?.discounted) throw new Error("Only a discounted pass needs acceptance");
   const synthesized: TraceEvent[] = [];
-  for (const trace of traces) synthesized.push(...(await readJsonLines(trace, (value) => checked("trace", value))).values.filter((e) => e.provenance === "synthesized"));
+  for (const trace of traces) {
+    const blobs = new BlobStore(dirname(dirname(trace)));
+    for (const event of (await readJsonLines(trace, (value) => checked("trace", value))).values) {
+      if (event.provenance !== "synthesized") continue;
+      const body = event.body && "blob" in event.body ? { inline: Buffer.from(await blobs.get(event.body.blob)).toString() } : event.body;
+      synthesized.push({ ...event, ...(body ? { body } : {}) });
+    }
+  }
   if (!synthesized.length) throw new Error("No synthesized answers found in the sample traces; give the traces the pass rests on");
   return { result, hash: digest(bytes), revision: ran.revision, synthesized };
 }
