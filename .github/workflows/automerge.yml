@@ -1,0 +1,66 @@
+name: automerge
+
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened, ready_for_review]
+  check_suite:
+    types: [completed]
+  workflow_run:
+    workflows: ["**"]
+    types: [completed]
+  status:
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+concurrency:
+  group: automerge
+  cancel-in-progress: false
+
+jobs:
+  automerge:
+    name: automerge
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.name != github.workflow
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge labeled PRs whose checks passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SELF: automerge
+        run: |
+          set -euo pipefail
+          status=0
+          for pr in $(gh pr list --state open --label automerge --limit 100 --json number --jq '.[].number'); do
+            read -r draft sha < <(gh pr view "$pr" --json isDraft,headRefOid --jq '"\(.isDraft) \(.headRefOid)"')
+            if [ "$draft" = true ]; then
+              echo "#$pr: draft, skipping"
+              continue
+            fi
+
+            runs=$(gh api --paginate "repos/$GH_REPO/commits/$sha/check-runs?filter=all&per_page=100" --jq '.check_runs[]' | jq -s .)
+            own_suites=$(jq -c --arg self "$SELF" '[.[] | select(.name == $self and .app.slug == "github-actions") | .check_suite.id] | unique' <<<"$runs")
+            latest=$(gh api --paginate "repos/$GH_REPO/commits/$sha/check-runs?filter=latest&per_page=100" --jq '.check_runs[]' | jq -s .)
+            bad_runs=$(jq -r --arg self "$SELF" '.[]
+              | select((.name == $self and .app.slug == "github-actions") | not)
+              | select(.status != "completed" or ((.conclusion | IN("success", "neutral", "skipped")) | not))
+              | "\(.name) (\(.status)/\(.conclusion))"' <<<"$latest")
+            open_suites=$(gh api --paginate "repos/$GH_REPO/commits/$sha/check-suites?per_page=100" --jq '.check_suites[]' \
+              | jq -r --argjson own "$own_suites" 'select(.app.slug == "github-actions" and .status != "completed" and ((.id | IN($own[])) | not))
+              | "workflow suite \(.id) (\(.status))"')
+            bad_statuses=$(gh api "repos/$GH_REPO/commits/$sha/status?per_page=100" --jq '.statuses[] | select(.state != "success") | "\(.context) (\(.state))"')
+
+            blockers=$(printf '%s\n%s\n%s\n' "$bad_runs" "$open_suites" "$bad_statuses" | sed '/^$/d')
+            if [ -n "$blockers" ]; then
+              echo "#$pr at $sha: waiting on:"
+              echo "$blockers"
+              continue
+            fi
+
+            echo "#$pr at $sha: all checks passed, merging"
+            gh pr merge "$pr" --squash --match-head-commit "$sha" || status=1
+          done
+          exit "$status"
