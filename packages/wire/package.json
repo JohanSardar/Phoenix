@@ -7,6 +7,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@phoenix/formats": "workspace:*"
+    "@phoenix/formats": "workspace:*",
+    "ajv": "^8.20.0",
+    "eventsource-parser": "^4.1.3"
   }
 }
