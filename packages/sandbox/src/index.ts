@@ -1,1 +1,5 @@
-export {};
+export { ContainerSandbox } from "./container.ts";
+export { writeClockFile, clockEnvironment, classifyClockProbe, inspectElf } from "./clock.ts";
+export { EngineChannel } from "./channel.ts";
+export type { EngineConnection, Destination } from "./channel.ts";
+export type { Sandbox, SandboxSpec, SandboxProcess, Mount, CommandResult, ClockReport } from "./types.ts";
