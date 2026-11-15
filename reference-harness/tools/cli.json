@@ -1,0 +1,14 @@
+[
+  {
+    "name": "cli_current_time",
+    "description": "Read the current local time and UTC offset from the system clock.",
+    "command": "date",
+    "args": ["+%Y-%m-%dT%H:%M:%S%z"]
+  },
+  {
+    "name": "cli_read_preferences",
+    "description": "Read the person's calendar preferences before changing an event.",
+    "command": "cat",
+    "args": ["data/preferences.txt"]
+  }
+]

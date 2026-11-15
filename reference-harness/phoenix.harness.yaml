@@ -1,0 +1,13 @@
+phoenix_harness: 1
+name: reference-harness
+run:
+  command: [node, src/index.ts, --task-file, "{task_file}"]
+  output: stdout
+endpoints:
+  model: { env: MODEL_BASE_URL, dialect: openai-responses }
+  mcp: { file: .mcp.json, format: mcpServers }
+editable:
+  - src/**
+  - prompts/**
+  - tools/*.json
+  - config/*.json
