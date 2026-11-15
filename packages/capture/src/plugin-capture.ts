@@ -43,11 +43,13 @@ export async function capturePlugin(options: PluginCaptureOptions): Promise<void
       const ts = { wall: new Date().toISOString(), mono: process.hrtime.bigint().toString() };
       const messages = await Promise.all([observation.request, observation.response].map(async message => {
         let bytes = message.body;
+        const embedded: Awaited<ReturnType<typeof sanitizeMessage>>[] = [];
         if (options.target.surface === "mcp") {
           const envelope = JSON.parse(Buffer.from(bytes).toString());
           let changed = false;
           for (const item of envelope.result?.content ?? []) if (item.type === "text" && typeof item.text === "string") {
             const stripped = await sanitizeMessage({ body: Buffer.from(item.text) }, policy);
+            embedded.push(stripped);
             const text = Buffer.from(stripped.msg.body!).toString();
             if (text !== item.text) { item.text = text; changed = true; }
           }
@@ -56,6 +58,8 @@ export async function capturePlugin(options: PluginCaptureOptions): Promise<void
         const headers = message.head?.headers ?? [];
         const header = (name: string) => { for (let i = 0; i < headers.length; i += 2) if (headers[i]!.toLowerCase() === name) return headers[i + 1]; return undefined; };
         const result = await sanitizeMessage({ body: bytes, contentType: header("content-type"), contentEncoding: header("content-encoding") }, policy);
+        result.changes.push(...embedded.flatMap(r => r.changes));
+        result.unscanned.push(...embedded.flatMap(r => r.unscanned));
         let body: string, body_encoding: "base64" | undefined;
         try { body = new TextDecoder("utf-8", { fatal: true }).decode(result.msg.body!); }
         catch { body = Buffer.from(result.msg.body!).toString("base64"); body_encoding = "base64"; }

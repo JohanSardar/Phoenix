@@ -111,7 +111,7 @@ function stateFor(ctx: ReplayCtx, connector: string): State {
 }
 
 function emulatorOwns(ctx: ReplayCtx, connector: string): boolean {
-  return "emulators" in ctx && !!(ctx.emulators as { has(connector: string): boolean } | undefined)?.has(connector);
+  return ctx.emulators?.has(connector) ?? false;
 }
 
 export function entityCurrent(exchange: Exchange, call: Call, ctx: ReplayCtx): boolean {
