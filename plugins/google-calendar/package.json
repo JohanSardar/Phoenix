@@ -1,0 +1,10 @@
+{
+  "name": "@phoenix/plugin-google-calendar",
+  "version": "0.0.0",
+  "description": "Google Calendar MCP capture and entity-overlay descriptor for Phoenix",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "files": ["phoenix-plugin.json", "src/capture.ts", "README.md"],
+  "exports": { "./phoenix-plugin.json": "./phoenix-plugin.json" },
+  "license": "MIT"
+}

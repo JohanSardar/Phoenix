@@ -1,0 +1,20 @@
+{
+  "phoenix_plugin": 1,
+  "connector": "calendar",
+  "recognize": { "mcp_servers": ["google-calendar", "calendar"] },
+  "tier": "stateful",
+  "operations": ["tools/call:list_events", "tools/call:get_event", "tools/call:move_event"],
+  "read_only": ["tools/call:list_events", "tools/call:get_event"],
+  "entity_map": {
+    "tools/call:list_events": {
+      "kind": "list", "entity": "event", "id_path": "/id", "items_path": "", "complete": "unpaginated"
+    },
+    "tools/call:get_event": {
+      "kind": "get", "entity": "event", "id_path": "/id", "items_path": ""
+    },
+    "tools/call:move_event": {
+      "kind": "update", "entity": "event", "id_path": "/id", "items_path": ""
+    }
+  },
+  "capture": { "command": ["node", "src/capture.ts"], "protocol": "stdio" }
+}
