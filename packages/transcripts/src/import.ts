@@ -1,8 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
 import { join } from "node:path";
-import { validate, type TraceEvent } from "@phoenix/formats";
+import { checkVersion, validate, type TraceEvent } from "@phoenix/formats";
 import { stripSecrets, type SecretPolicy } from "@phoenix/redact";
 import { appendCoverage, BlobStore, digest, writeImport } from "@phoenix/store";
 
@@ -38,6 +37,21 @@ export function readerCoverage(value: unknown): value is ReaderCoverage {
     && (v.harness_versions as string[]).length > 0;
 }
 
+async function* traceLines(input: Readable): AsyncIterable<string> {
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let pending = "";
+  for await (const chunk of input) {
+    pending += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+    let end: number;
+    while ((end = pending.indexOf("\n")) !== -1) {
+      yield pending.slice(0, end);
+      pending = pending.slice(end + 1);
+    }
+  }
+  pending += decoder.decode();
+  if (pending) yield pending;
+}
+
 async function cleanEvent(event: TraceEvent, policy: SecretPolicy): Promise<TraceEvent> {
   const { body, ...rest } = event;
   if (body) (rest as TraceEvent).body = Object.fromEntries(Object.entries(body).filter(([key]) => key !== "inline")) as TraceEvent["body"];
@@ -67,11 +81,13 @@ export async function importEvents(options: ImportOptions): Promise<ImportResult
   const blobs = new BlobStore(root);
   let line = 0, coverage: ReaderCoverage | undefined;
   try {
-    for await (const text of createInterface({ input, crlfDelay: Infinity })) {
+    for await (const text of traceLines(input)) {
       line++;
       let raw: unknown;
       try { raw = JSON.parse(text); }
       catch { issues.push({ line, reason: "invalid-json" }); continue; }
+      const version = checkVersion("trace", raw);
+      if (!version.ok) { issues.push({ line, reason: version.error }); continue; }
       const checked = validate("trace", raw);
       if (!checked.ok) { issues.push({ line, reason: "invalid-trace" }); continue; }
       const event = checked.value;
@@ -83,7 +99,7 @@ export async function importEvents(options: ImportOptions): Promise<ImportResult
       }
       const clean = await cleanEvent(event, policy);
       clean.capture = metadata.capture;
-      clean.stream = `${digest(Buffer.from(reader)).slice(7, 23)}.${sourceDigest.slice(7)}.${event.stream}`;
+      clean.stream = `${digest(Buffer.from(reader)).slice(7, 23)}.${sourceDigest.slice(7)}.${clean.stream}`;
       clean.route = options.route ?? "import";
       clean.ts = { ...clean.ts };
       delete clean.ts.mono;
