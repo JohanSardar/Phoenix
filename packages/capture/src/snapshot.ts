@@ -42,7 +42,7 @@ export async function snapshot(options: { root: string; cwd: string; run: string
         if (type !== "blob") { manifest.unread.push(path!); continue; }
         try { await save(path!, await git("cat-file", "blob", object!), mode!, "committed"); } catch { manifest.unread.push(path!); }
       }
-      for (const path of (await git("diff", "--name-only", "--relative", "-z", manifest.commit, "--", ".")).toString().split("\0").filter(Boolean)) {
+      for (const path of (await git("diff", "--no-renames", "--name-only", "--relative", "-z", manifest.commit, "--", ".")).toString().split("\0").filter(Boolean)) {
         entries.delete(path);
         try { await lstat(join(options.cwd, path)); await copy(path); } catch {}
       }
