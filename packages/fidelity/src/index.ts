@@ -68,6 +68,7 @@ export function fidelityReport(trace: readonly TraceEvent[], blobs: Readonly<Rec
   const report: FidelityReport = { connectors: [], unused: [], answers: [], prefix_uncompared: [], unverified_read_only: [], stale: [], divergences: [], emulator_differences: [], format_mismatches: [], local_file_effects: [], workdir: [], gaps: [], unattributed: [], secrets: [], discounts: [], notes: [] };
   const connectors = new Map<string, ConnectorReport>();
   const lastCall = new Map<string, string>();
+  const rpcCalls = new Map<string, string>();
   const body = (event: TraceEvent): unknown => {
     const text = event.body && ("inline" in event.body ? event.body.inline : blobs[event.body.blob]);
     if (text === undefined) throw new Error(`Missing fidelity metadata body: ${event.id ?? event.stream}`);
@@ -112,11 +113,21 @@ export function fidelityReport(trace: readonly TraceEvent[], blobs: Readonly<Rec
     }
     connector.called = true;
     const key = `${event.connector}:${event.stream}`;
+    let rpcKey: string | undefined;
+    if (event.surface === "mcp") {
+      try {
+        const rpc = object(body(event));
+        if (typeof rpc.id === "string" || typeof rpc.id === "number") rpcKey = JSON.stringify([event.connector, event.stream, rpc.id]);
+      } catch { report.notes.push(`Cannot correlate MCP response evidence at ${id}`); }
+    }
     if (event.kind === "call") lastCall.set(key, id);
+    if (event.kind === "call" && rpcKey !== undefined) rpcCalls.set(rpcKey, id);
     if (event.kind === "result") {
       if (event.provenance) connector.responses[event.provenance]++;
       else report.notes.push(`Response ${id} has no provenance`);
-      if (["derived", "synthesized"].includes(event.provenance ?? "") || /fill|repeat/.test(event.resolver ?? "")) report.answers.push({ ...item, call: lastCall.get(key), detail: { provenance: event.provenance, resolver: event.resolver } });
+      const call = event.surface === "mcp" ? rpcKey === undefined ? undefined : rpcCalls.get(rpcKey) : lastCall.get(key);
+      if (["derived", "synthesized"].includes(event.provenance ?? "") || /fill|repeat/.test(event.resolver ?? "")) report.answers.push({ ...item, call, detail: { provenance: event.provenance, resolver: event.resolver } });
+      if (rpcKey !== undefined) rpcCalls.delete(rpcKey);
     }
     if (event.kind !== "call") connector.tier = weakestTier(connector.tier, responseTier(event));
   }

@@ -31,12 +31,12 @@ export interface MomentVerdict {
 }
 
 export function momentVerdict(samples: readonly (SampleVerdict & { sample: number; tiebreak: boolean })[], rule: SuccessCheck["samples"] = { base: 2, tiebreak: 1 }): MomentVerdict {
-  if (!Number.isInteger(rule.base) || rule.base < 1 || !Number.isInteger(rule.tiebreak) || rule.tiebreak < 1) throw new Error("Invalid sample rule");
+  if (!Number.isInteger(rule.base) || rule.base < 1 || !Number.isInteger(rule.tiebreak) || rule.tiebreak < 0) throw new Error("Invalid sample rule");
   if (new Set(samples.map(s => s.sample)).size !== samples.length) throw new Error("Duplicate sample id");
   const base = samples.filter(s => !s.tiebreak);
   if (base.length > rule.base || samples.filter(s => s.tiebreak).length > rule.tiebreak) throw new Error("Too many samples for check");
   const disagree = base.length === rule.base && base.every(s => s.status !== "unassessed") && base.some(s => s.status === "pass") && base.some(s => s.status === "fail");
-  const needsTiebreak = disagree || samples.some(s => s.tiebreak);
+  const needsTiebreak = rule.tiebreak > 0 && (disagree || samples.some(s => s.tiebreak));
   const scheduled = rule.base + (needsTiebreak ? rule.tiebreak : 0);
   const counts = { pass: samples.filter(s => s.status === "pass").length, fail: samples.filter(s => s.status === "fail").length, unassessed: samples.filter(s => s.status === "unassessed").length + scheduled - samples.length };
   const incomplete = base.length < rule.base || counts.unassessed > 0;

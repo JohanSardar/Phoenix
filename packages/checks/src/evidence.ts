@@ -1,5 +1,5 @@
 import { validate, type TraceEvent } from "@phoenix/formats";
-import { canonicalJson, decodeModelBody, modelDialects, object } from "@phoenix/wire";
+import { canonicalJson, decodeCliInvocation, decodeModelBody, modelDialects, object } from "@phoenix/wire";
 
 export interface Action {
   tool: string;
@@ -93,7 +93,7 @@ export function collectEvidence(input: EvidenceInput, scope: "run" | "continuati
       const rpc = object(JSON.parse(text));
       name = event.op.slice("tools/call:".length);
       args = object(rpc.params).arguments ?? {};
-    } else if (event.surface === "cli") args = object(JSON.parse(text)).argv;
+    } else if (event.surface === "cli") args = decodeCliInvocation(new TextEncoder().encode(text));
     else { try { args = JSON.parse(text); } catch { args = text; } }
     taps.push({ tool: `${event.connector}.${name}`, args, event: eventId(event), at, order: at });
   }

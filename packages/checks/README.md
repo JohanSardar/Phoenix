@@ -12,7 +12,7 @@ not a pass. An invalid check is refused.
 Actions come from agent-layer tap calls, or model-response tool-use blocks
 when the tool has no tap. Model requests are never counted as new actions.
 MCP tools are named `connector.tool`, CLI operations `connector.op` (arguments
-contain the recorded argv), and direct HTTP operations `connector.METHOD path`.
+are the invocation object, including `argv`), and direct HTTP operations `connector.METHOD path`.
 A unique same-name/same-arguments tap call between two model responses is
 paired with its model block for turn/position order. Ambiguity uses tap order
 and is noted. Under-layer traffic is never an action.

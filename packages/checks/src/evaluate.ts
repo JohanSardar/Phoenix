@@ -35,7 +35,7 @@ export async function evaluateCheck(check: SuccessCheck, input: EvidenceInput, o
     try {
       if ("called" in exp || "not_called" in exp || "max_calls" in exp) {
         const rule = "called" in exp ? exp.called : "not_called" in exp ? exp.not_called : exp.max_calls;
-        const actions = evidence.actions.filter(a => (rule.tool === "*" || a.tool === rule.tool) && (!("args" in rule) || matchesArgs(a.args, rule.args)));
+        const actions = evidence.actions.filter(a => (rule.tool === "*" || a.tool === rule.tool) && (!("args" in rule) || matchesArgs(a.args, rule.args))).sort((a, b) => a.at - b.at);
         if ("called" in exp) {
           passed = exp.called.times === undefined ? actions.length > 0 : actions.length === exp.called.times;
           if (passed && exp.called.times === undefined) through = actions[0]!.at;
