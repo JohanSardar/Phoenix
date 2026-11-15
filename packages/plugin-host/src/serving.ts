@@ -60,6 +60,11 @@ export async function startServingPlugin(plugin: InstalledPlugin, options: Servi
         catch { throw new PluginProcessError("Plugin answer is not JSON-RPC"); }
         if (!response || response.jsonrpc !== "2.0" || response.id !== input.id || (("result" in response) === ("error" in response)) || "method" in response)
           throw new PluginProcessError("Plugin answer has an invalid JSON-RPC response envelope");
+        if ("error" in response) {
+          const error = response.error as { code?: unknown; message?: unknown } | null;
+          if (!error || typeof error !== "object" || !Number.isInteger(error.code) || typeof error.message !== "string")
+            throw new PluginProcessError("Plugin answer has an invalid JSON-RPC error");
+        }
       }
       return { status: "answer", value: { body, ...(head ? { head } : {}) } };
     },
