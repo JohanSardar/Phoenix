@@ -223,6 +223,9 @@ importers:
       '@phoenix/taps':
         specifier: workspace:*
         version: link:../taps
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   packages/checks:
     dependencies:
