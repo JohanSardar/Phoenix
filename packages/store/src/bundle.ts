@@ -86,12 +86,17 @@ export async function readMomentBundle(root: string): Promise<MomentBundle> {
     if (path !== "moment.lock.json" && path !== "check.draft.yaml" && !locked.has(path))
       throw new Error(`Unhashed bundle file: ${path}`);
   }
-  for (const path of references(manifest)) {
+  const checkReferences = (check.expect ?? []).flatMap((expectation) => "end_state" in expectation ? [expectation.end_state.equals] : "custom" in expectation ? [expectation.custom] : []);
+  for (const path of [...references(manifest), ...checkReferences]) {
     localPath(root, path);
     if (!locked.has(path)) throw new Error(`Unhashed bundle reference: ${path}`);
   }
   for (const path of manifest.executable ?? []) {
     if (!path.startsWith("checks/")) throw new Error(`Executable outside checks/: ${path}`);
+  }
+  for (const expectation of check.expect ?? []) {
+    if ("custom" in expectation && (!expectation.custom.startsWith("checks/") || !manifest.executable?.includes(expectation.custom)))
+      throw new Error(`Custom check is not declared executable under checks/: ${expectation.custom}`);
   }
   return { root, manifest, check, lock, lockHash: digest(bytes("moment.lock.json")), files };
 }
