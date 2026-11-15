@@ -6,10 +6,12 @@ import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { appendCoverage, createCapture, digest } from "@phoenix/store";
 import { applyRecipe, readDescriptor } from "./recipe.ts";
+import { capturePlugin, type PluginCaptureOptions } from "./plugin-capture.ts";
 
 export interface CaptureOptions {
   cwd?: string; home?: string; root?: string; recipe: string; contract?: string;
   routes?: string[]; copyIgnored?: boolean; command: string[]; entry: string;
+  plugins?: Omit<PluginCaptureOptions, "root" | "home">[];
 }
 export async function launch(options: CaptureOptions) {
   const cwd = resolve(options.cwd ?? process.cwd()), home = resolve(options.home ?? process.env.PHOENIX_HOME ?? join(homedir(), ".phoenix"));
@@ -97,6 +99,7 @@ export async function launch(options: CaptureOptions) {
     await appendCoverage(root, { state: "closed", at: new Date().toISOString(), exit: result, configured: routes,
       ...(retainRuntime ? { retained_overlay: overlay.cwd } : {}),
       limitations: ["Absolute-path commands and shell builtins bypass CLI shims", "CLI results do not capture filesystem side effects", "Only configured model endpoints are recorded", "New files in a generated config overlay remain in the retained overlay", "Provider-held history and unproxied surfaces need later coverage assessment"] });
+    for (const plugin of options.plugins ?? []) await capturePlugin({ ...plugin, root, home }).catch(() => {});
     return { root, ...result };
   } finally {
     stopping = true;

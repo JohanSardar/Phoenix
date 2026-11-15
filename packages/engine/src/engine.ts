@@ -3,7 +3,7 @@ import { request as httpsRequest } from "node:https";
 import type { Server } from "node:http";
 import { PassThrough, type Duplex } from "node:stream";
 import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
-import type { MomentManifest, TraceEvent } from "@phoenix/formats";
+import type { MomentManifest, PluginDescriptor, TraceEvent } from "@phoenix/formats";
 import {
   answerCall, buildIndex, checkModelRequest, comparePrefixRequest, httpHost, httpShape, matchFrozen, mcpShape, replayCtx, sameReply, toCall,
   Emulators, type EmulatorConfig, type Answer, type Call, type ConnectorPolicy, type Divergence, type ModelDialectName, type StartPoint, type WireMessage,
@@ -18,6 +18,7 @@ export interface EngineOptions {
   evidence: { events: readonly TraceEvent[]; body(event: TraceEvent): Promise<Uint8Array> };
   connectors?: MomentManifest["connectors"];
   volatile?: Readonly<Record<string, readonly string[]>>;
+  entityMaps?: Readonly<Record<string, PluginDescriptor["entity_map"]>>;
   start: StartPoint;
   clock?: { start?: string };
   routes: { mcp?: Readonly<Record<string, string>>; http?: Readonly<Record<string, string>> };
@@ -87,7 +88,7 @@ function withId(bytes: Uint8Array, id: unknown): Uint8Array {
 }
 
 export async function startEngine(options: EngineOptions): Promise<Engine> {
-  const policy = (connector: string): ConnectorPolicy => ({ ...options.connectors?.[connector], ...(options.volatile?.[connector] ? { volatile: options.volatile[connector] } : {}) });
+  const policy = (connector: string): ConnectorPolicy => ({ ...options.connectors?.[connector], entity_map: options.entityMaps?.[connector], ...(options.volatile?.[connector] ? { volatile: options.volatile[connector] } : {}) });
   const index = await buildIndex(options.evidence.events, { body: options.evidence.body, policy, start: options.start, ...(options.clock?.start ? { startTime: options.clock.start } : {}) });
   const clock = new VirtualClock(index.startTime);
   const trace = await SampleTrace.create(options.sample.root, options.sample.metadata, clock, options.hmacKey);

@@ -110,8 +110,23 @@ export async function buildIndex(events: readonly TraceEvent[], options: {
     request: p.request, response: p.response, during: p.during, after: p.after,
   }));
   const startTime = options.startTime ?? events[0]?.ts.wall ?? new Date(0).toISOString();
+  const prefetch: Exchange[] = [];
+  for (const [position, event] of events.entries()) {
+    if (event.kind !== "prefetch" || event.partial || !event.connector || !event.surface) continue;
+    const decoded = decodeJson(await options.body(event));
+    if (!decoded.ok) continue;
+    const data = decoded.value as { op?: string; args?: unknown; request?: { body: string; head?: HttpRequest }; response?: { body: string; head?: import("@phoenix/wire").HttpResponse } };
+    if (typeof data.op !== "string" || typeof data.request?.body !== "string" || typeof data.response?.body !== "string") continue;
+    const request = { ...data.request, body: Buffer.from(data.request.body) };
+    const call = toCall({ surface: event.surface, connector: event.connector, op: data.op, args: data.args, raw: request }, options.policy(event.connector));
+    if (!call.readOnly) continue;
+    prefetch.push({ ...call, id: eventId(event), request, response: { ...data.response, body: Buffer.from(data.response.body) },
+      history: writes.filter(w => w.call.connector === call.connector && w.completed < position).map(w => w.call.key),
+      frozen: false, position, completed: position, observedAt: event.ts.wall, provenance: "recorded", during: [], after: [],
+    });
+  }
   return {
-    exchanges, frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), notifications, startTime,
+    exchanges, prefetch, frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), notifications, startTime,
     cutTime: cut === 0 ? startTime : events[Math.min(cut, events.length - 1)]!.ts.wall,
   };
 }

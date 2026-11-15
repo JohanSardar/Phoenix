@@ -15,6 +15,7 @@ export function matchFrozen(call: Call, ctx: ReplayCtx): Exchange | Divergence {
   const exchange = ctx.index.frozen.find(e => !ctx.served.has(e.id) && e.connector === call.connector && e.key === call.key && sameWriteHistory(e.history, call.history ?? ctx.histories[call.connector] ?? []));
   if (!exchange) return { trigger: "prefix-drift", detail: `${call.op} on ${call.connector} is not a recorded call of the frozen prefix`, call: described(call) };
   ctx.served.add(exchange.id);
+  for (const resolver of resolvers) resolver.observe?.(call, { raw: exchange.response, provenance: exchange.provenance, resolver: "frozen-prefix", exchange }, ctx);
   served(call, ctx);
   return exchange;
 }
@@ -27,6 +28,7 @@ export async function answerCall(call: Call, ctx: ReplayCtx): Promise<{ answer: 
     const result = await resolver.resolve(call, ctx);
     if ("miss" in result) { misses.push({ resolver: resolver.name, why: result.why }); continue; }
     if (!skip.has("emulator")) await ctx.emulators?.observe(call, result);
+    for (const observer of resolvers) observer.observe?.(call, result, ctx);
     served(call, ctx);
     return { answer: result };
   }
