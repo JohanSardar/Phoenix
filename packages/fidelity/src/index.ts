@@ -59,8 +59,8 @@ export function weakestTier(...values: Tier[]): Tier {
 export function responseTier(event: Pick<TraceEvent, "kind" | "provenance" | "resolver">): Tier {
   if (event.kind === "divergence" || event.resolver === "blocked") return "blocked";
   if (event.provenance === "synthesized" || event.resolver === "simulator") return "synthesized";
-  if (event.provenance === "derived" || event.provenance === "recorded") return "recorded";
   if (event.resolver === "emulator") return "stateful";
+  if (event.provenance === "derived" || event.provenance === "recorded") return "recorded";
   return "recorded";
 }
 
