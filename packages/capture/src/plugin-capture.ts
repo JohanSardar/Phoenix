@@ -61,7 +61,7 @@ export async function capturePlugin(options: PluginCaptureOptions): Promise<void
         result.changes.push(...embedded.flatMap(r => r.changes));
         result.unscanned.push(...embedded.flatMap(r => r.unscanned));
         let body: string, body_encoding: "base64" | undefined;
-        try { body = new TextDecoder("utf-8", { fatal: true }).decode(result.msg.body!); }
+        try { body = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(result.msg.body!); }
         catch { body = Buffer.from(result.msg.body!).toString("base64"); body_encoding = "base64"; }
         return { message: { ...message, body, ...(body_encoding ? { body_encoding } : {}), ...(result.originalEncoding ? { contentEncoding: result.originalEncoding } : {}) }, result };
       }));
