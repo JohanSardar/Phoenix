@@ -16,13 +16,15 @@ function checkDraft(text: string): string {
   return text;
 }
 
-function chosenWorkdir(snapshots: ReadonlyMap<string, WorkdirSnapshot>, name: string | false | undefined): WorkdirSnapshot | undefined {
+function chosenWorkdir(snapshots: ReadonlyMap<string, WorkdirSnapshot>, name: string | false | undefined, task: string): WorkdirSnapshot | undefined {
   if (name === false) return undefined;
   if (name !== undefined) {
     const snapshot = snapshots.get(name);
     if (!snapshot) throw new Error(`No working-directory snapshot named ${name}; the capture has: ${[...snapshots.keys()].join(", ") || "none"}`);
     return snapshot;
   }
+  const own = task ? [...snapshots.values()].find((s) => (s as { task?: unknown }).task === task) : snapshots.get("default");
+  if (own) return own;
   if (snapshots.size > 1) throw new Error(`Choose a working-directory snapshot: ${[...snapshots.keys()].join(", ")}`);
   return snapshots.values().next().value;
 }
@@ -97,7 +99,7 @@ export async function createSnapshotMoment(o: SnapshotMomentOptions): Promise<Mo
   }
 
   const files = new Map<string, string>([["data/run.jsonl", events.map((e) => JSON.stringify(e) + "\n").join("")], ["check.draft.yaml", check]]);
-  const snapshot = chosenWorkdir(view.snapshots, o.workdir);
+  const snapshot = chosenWorkdir(view.snapshots, o.workdir, run.task);
   let workdir: Pick<MomentManifest, "workdir" | "include_ignored"> = {};
   if (snapshot) {
     if (o.includeIgnored && !snapshot.ignored_copied) throw new Error("The capture did not copy ignored files, so the moment cannot include them");

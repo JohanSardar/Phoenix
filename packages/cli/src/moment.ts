@@ -6,7 +6,7 @@ import { approver, confirm, phoenixHome } from "./approval-prompt.ts";
 
 const USAGE = [
   "Usage: phoenix moment create --capture <dir> [--task <key>] --mark <event> [--start beginning|mark|<event>] --id <id>",
-  "         --connector <name>:<mcp|cli|http> ... [--check <file> | --correction <event>]",
+  "         [--connector <name>:<mcp|cli|http> ...] [--check <file> | --correction <event>]",
   "         [--workdir <snapshot> | --no-workdir] [--include-ignored | --no-include-ignored] [--prompt <text>] [--timezone <tz>] <out-dir>",
   "       phoenix moment create --scenario <dir> [--home <dir>] [--who <name>] <out-dir>",
   "       phoenix moment accept [--home <dir>] [--who <name>] <moment-dir>",
@@ -39,8 +39,8 @@ export async function runMomentCommand(args: string[]): Promise<number> {
     process.stdout.write(JSON.stringify({ moment: manifest.id, bundle: root, locked }) + "\n");
     return 0;
   }
-  if (!v.capture || !v.mark || !v.id || !v.connector?.length || (v.check && v.correction) || (v.workdir && v["no-workdir"]) || (v["include-ignored"] && v["no-include-ignored"])) throw new Error(USAGE);
-  const connectors = v.connector.map((spec) => {
+  if (!v.capture || !v.mark || !v.id || (v.check && v.correction) || (v.workdir && v["no-workdir"]) || (v["include-ignored"] && v["no-include-ignored"])) throw new Error(USAGE);
+  const connectors = (v.connector ?? []).map((spec) => {
     const [name, surface] = spec.split(":");
     if (!name || !SURFACES.includes(surface as never)) throw new Error(`Connector must be <name>:<mcp|cli|http>: ${spec}`);
     return { name, surface: surface as (typeof SURFACES)[number] };
