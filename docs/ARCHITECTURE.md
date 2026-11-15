@@ -1,0 +1,748 @@
+# Phoenix: Architecture
+
+Status: November 15, 2026. Built from SPEC.md.
+
+## 0. The shape
+
+Phoenix is a TypeScript monorepo run with `npx`. Every tool surface (MCP over stdio, MCP over Streamable HTTP, CLI commands, direct HTTP calls and the model API) is handled by a **tap**. A tap carries wire traffic unchanged over a two-way **link** to a **backend**. During Capture the backend is the real upstream wrapped in a **tee**. The tee passes every byte straight through except the last frame of each message, which it holds until that message's redacted record has been handed to the operating system. No disk flush sits on the call path, and a recorder that falls behind slows the call instead of dropping the record. During a Replay the backend is a responder driven by the **answer chain**, which works in the spec's order: recording, overlay, emulator, capture-time reads, simulator, divergence. A recorded answer is used only while the Replay's writes on that connector match the writes the original run had made at that point. A **Moment** is a directory of plain files (manifest, success check, lock, data) that can sit in git. Its approval also goes in a ledger outside every workspace, and only the setup step can write to that ledger. A Replay runs a frozen candidate (the base harness tree plus only the edits made to editable paths) in a sandbox that has no route out and one byte channel to the Phoenix **engine**. The engine holds the recording, the trace, the check and the real model credential, and none of them is inside the sandbox. To replay from the mark, Phoenix launches any harness from the start and answers it with recorded model and tool responses up to the mark. Each answer is checked against the recording, and the run stops loudly on the first difference. The Workbench is a thin API over the runner, exposed as an MCP server and a matching CLI. It has no code that can write a success check. Every language-neutral format is a versioned JSON Schema. Plugins and recipes are separate processes or data files, so the core works with none installed.
+
+## 1. Runtime picture
+
+**Capture (live, beside the harness, no container):**
+
+```mermaid
+flowchart LR
+  L["phoenix capture launcher"] -->|env and config overlay| H["Harness"]
+  H -->|model base URL| G["Gateway"]
+  H -->|stdio| P["MCP stdio proxy, one per server"]
+  H -->|PATH| S["CLI shim, one per invocation"]
+  H -->|optional flag tool| F["phoenix flag"]
+  G --> M[("Model provider")]
+  G --> RM[("Remote MCP server")]
+  P --> LS["Local MCP server"] -->|forward proxy, optional| G
+  G --> V[("Vendor API")]
+  S --> B["Real CLI binary"]
+  PC["Plugin capture sidecar, opt-in"] -.->|declared read-only calls| P
+  G -->|redacted events| T[("Run directory: one segment per recorder, blobs, notes")]
+  P -->|redacted events| T
+  S -->|redacted events| T
+  F --> T
+```
+
+**Replay (inside the Workbench):**
+
+```mermaid
+flowchart LR
+  I["Improver: outside agent or person"] -->|MCP or CLI| W["Workbench"]
+  W --> R["Runner"]
+  R -->|resolved plan, one engine and one sandbox per sample| EN
+  subgraph SB["Sandbox: no route out"]
+    H2["Candidate harness: base tree plus editable changes"]
+    SH["MCP and CLI shims"]
+    RS["Real MCP server, optional"]
+    RL["Relay: no policy, no secrets"]
+    H2 --> SH --> RL
+    H2 -->|model base URL, placeholder key| RL
+    RS -->|vendor API| RL
+  end
+  RL -->|one byte channel| GW
+  subgraph EN["Engine, outside the sandbox"]
+    GW["Gateway and responders"] --> AC["Answer chain"]
+    CK["Virtual clock"]
+    TR[("Sample trace")]
+  end
+  AC -->|local channel| EM["Plugin emulator, no network"]
+  AC --> SM["Simulator model"]
+  GW -->|inference operations only, real key added here| MP[("Model provider")]
+  R --> C["Check runner: custom code, no network"]
+  C --> W
+```
+
+In Capture every recorder is its own process or worker writing its own file, so there is no shared daemon or database to lose. In a Replay the engine is the single controlled path out of the sandbox. The candidate can reach the engine's listeners and nothing else. Phoenix has no long-running hosted service. All state is files, and any `phoenix` process can pick up work another one left unfinished.
+
+## 2. Units
+
+| Unit | Language | Owns | May depend on | Must never depend on |
+|---|---|---|---|---|
+| `spec` | JSON Schema, Markdown | Versioned definitions of the trace, moment manifest, success check, lock, approvals ledger, harness contract, bindings, plugin descriptor, recipe descriptor, replay plan and replay result | nothing | any code |
+| `formats` | TypeScript | Types generated from `spec`, validators, version checks | `spec` | every other unit |
+| `store` | TypeScript | Run directories: segment writer, blob store and spool, merged reader, crash recovery; moment bundle reader and writer; reading the approvals ledger | `formats` | taps, answer, engine, workbench |
+| `redact` | TypeScript | Pure redaction of messages before they are written | `formats` | I/O of any kind |
+| `wire` | TypeScript | Pure codecs: MCP framing for both protocol eras, CLI invocation records, HTTP exchanges, model-API dialects (inference-operation lists, splitting a request into history and configuration), call keys, write histories, format inference | `formats` | I/O of any kind |
+| `taps` | TypeScript | One listener per surface, each given a `Backend` | `wire`, `formats` | `capture`, `answer`, any knowledge of live versus replay |
+| `capture` | TypeScript | Launcher, upstream backends, the tee and its release rule, recipe application, flag and correction commands, plugin capture host | `taps`, `store`, `redact`, `plugin-host`, `formats` | `answer`, `engine`, `runner`, `workbench`, `checks` |
+| `model` | TypeScript | `ModelProvider` port and its adapters, used by the simulator and check drafting | `formats` | everything else |
+| `answer` | TypeScript | Answer chain, matcher, write histories, entity overlay, prefetch and simulator resolvers, divergence | `wire`, `store`, `plugin-host`, `model`, `formats` | `taps`, `sandbox`, `workbench`, any live vendor client |
+| `engine` | TypeScript | Replay-side server: taps wired to responders over the answer chain, frozen-prefix model responder, model route, virtual clock, sample trace | `taps`, `answer`, `store`, `redact`, `formats` | `workbench`, `setup` |
+| `sandbox` | TypeScript, shell | `Sandbox` port, container driver, VM driver, the relay | `formats` | everything else |
+| `checks` | TypeScript | Deterministic expectation evaluators, custom-check host, taint, sample and moment verdicts | `store`, `wire`, `sandbox`, `formats` | `engine`, `workbench`, `setup` |
+| `fidelity` | TypeScript | Tier and grade rules and the fidelity report, all computed from a trace | `store`, `wire`, `formats` | `engine`, `workbench` |
+| `runner` | TypeScript | Resolves a replay plan, runs and resumes samples, reuses baselines, records results | `engine`, `sandbox`, `checks`, `fidelity`, `store`, `formats` | `workbench`, `setup` |
+| `setup` | TypeScript | Turns a mark or a Scenario into a moment bundle, classifies operations, picks tiers, drafts and locks the success check, appends to the approvals ledger | `store`, `wire`, `plugin-host`, `model`, `formats` | `workbench`, `runner` |
+| `workbench` | TypeScript | `WorkbenchApi`, its MCP server and CLI, workspaces, candidate freezing, patch and pull-request output | `runner`, `store`, `checks`, `fidelity`, `formats` | `setup`, any code that writes a check or the ledger |
+| `plugin-host` | TypeScript | Finds plugin descriptors, starts plugin processes, speaks the plugin protocol | `sandbox`, `formats` | any specific plugin |
+| `plugin-kit` | TypeScript | The connector test kit: runs recorded exchanges through a plugin and reports differences | `plugin-host`, `store`, `wire`, `formats` | `workbench` |
+| `cli` | TypeScript | The `phoenix` binary; the only place units are wired together | all units | nothing barred |
+| `recipes/*` | YAML, optional scripts in any language | Capture recipes for Claude Code, Codex, pi, fx, Ozi and a generic one | `spec` | core internals |
+| `plugins/*` | any | Connector plugins, each separately installed | `spec` | core internals |
+| `reference-harness` | TypeScript | The small from-scratch harness | the harness contract in `spec`, the official MCP client SDK | every Phoenix package |
+
+`redact`, `wire`, the matcher in `answer`, the evaluators in `checks` and `fidelity` are pure functions over files. Each one can be checked by feeding it a recorded trace, with no vendor and no sandbox running.
+
+## 3. Core pieces
+
+### 3.1 Taps, links and backends
+
+A tap owns one surface's transport and nothing else. It knows where a message starts and ends, not what it means.
+
+```ts
+interface Frame {
+  dir: "out" | "back";     // out: harness toward tool; back: tool toward harness
+  stream: number;          // one message or body within the connection
+  bytes: Uint8Array;
+  last: boolean;           // this frame completes a message
+  at: bigint;              // host monotonic clock when seen
+}
+interface Link {
+  write(f: Frame): Promise<void>;
+  frames(): AsyncIterable<Frame>;
+  abort(why: string): void;
+}
+interface Backend {
+  open(conn: { surface: Surface; connector: string; meta: unknown }): Link;
+}
+```
+
+A link is two-way and long-lived, so every protocol pattern fits without a special case. On stdio that means JSON-RPC lines in both directions. On Streamable HTTP it means a POST and its request-scoped SSE stream. For MCP revisions up to 2025-11-25 it also covers the session header, the standalone GET stream, server-initiated requests, cancellation and `Last-Event-ID` resumption ([2025-11-25 transports](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)). The 2026-07-28 revision removes the handshake, sessions and resumability. It carries the protocol version in each request's `_meta`, adds `server/discover`, delivers change notifications on a `subscriptions/listen` stream, and replaces server-initiated requests with `input_required` results that the client retries ([2026-07-28 changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog), [transports](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports)). Both eras are just frames on streams.
+
+There are four taps:
+
+- **MCP stdio.** A process that sits where the server command used to be and relays newline-delimited JSON-RPC both ways. Some clients probe a stdio server by launching a disposable second copy ([SDK guide](https://ts.sdk.modelcontextprotocol.io/v2/migration/support-2026-07-28.html)). When that happens, a second proxy relays to a second server process.
+- **MCP Streamable HTTP.** A reverse route in the gateway (`/mcp/<name>`).
+- **CLI.** A shim placed first on `PATH` for each command the recipe names. It carries argv as an array (never a joined shell string), the working directory, an allow-listed slice of the environment, stdin, stdout, stderr, and the exit code or signal. Each descriptor gets a pseudoterminal only if the shim's own descriptor is a terminal, along with the terminal size, resize events and forwarded signals. Otherwise it gets a pipe.
+- **HTTP gateway.** One listener with three entry modes. In reverse mode the harness's base URL points at it. In forward-proxy mode it is set through `HTTPS_PROXY` with a local CA. Transparent mode exists only inside the sandbox. The gateway serves the model API, direct API calls, and vendor traffic from a real MCP server.
+
+Every tap keeps these rules:
+
+1. A tap never rewrites a message, never answers one itself, never decodes a body, and never adds a request of its own (no discovery probe, no protocol upgrade, no change to the tool list). Meaning is decoded later from the recorded copy by `wire`.
+2. A tap does not know whether it is live or in a replay. That depends only on the backend it was given.
+3. Agent-level traffic and the traffic underneath it are kept apart. An HTTP request made by a local MCP server is recorded with `layer: "under"`. If exactly one `tools/call` is in flight on that server, the request is linked to it with `parent_basis: "sole-in-flight"`, which marks the link as an inference, not proof. If no single call can be named, the parent is left empty. No check depends on these links.
+
+### 3.2 Capture
+
+`phoenix capture -- <harness command>` is the launcher. It does five things in order. It creates the run directory. It applies a capture recipe as an overlay (environment variables, command-line config overrides, or a generated copy of a config file), so the person's own files are never edited. It starts the gateway on a loopback port as a supervised child. It runs the harness. It closes the run when the harness exits. `PHOENIX_RUN_ID` and `PHOENIX_HOME` reach every proxy and shim through the inherited environment.
+
+- **MCP proxy.** The recipe rewrites each stdio server entry to `phoenix mcp-proxy -- <original command>` and each remote entry to the gateway's `/mcp/<name>` route. The server itself is untouched. The trace holds every message in both directions, every tool list seen (including later changes), and the protocol version actually used. On older servers that version comes from the `initialize` result. On current servers it comes from per-request `_meta` and `server/discover`. A `server/discover` sent only as a compatibility probe is recorded as a probe.
+- **Remote MCP and OAuth.** Authorization is bound to the server's own resource URL ([authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)). A reverse route is used only where its authorization behavior stays valid. Otherwise the recipe uses forward-proxy mode, which keeps the original URL. Phoenix never weakens token validation to make interception work.
+- **CLI proxy.** The shim records the invocation and then runs the real binary from the rest of `PATH`. A command invoked by absolute path or as a shell built-in does not pass through a shim, and the coverage record says so. A recorded command response does not record the local files that command wrote.
+- **Model-API recording.** In reverse mode the gateway forwards to the real provider and records the full request and the full streamed response in the provider's own format. It is not converted into a common chat format. Every tool result the model was shown crosses this boundary in some request. That makes this record the evidence of what the model saw from tools nobody proxied, and a second witness for tools that were proxied. It is not evidence of side effects the harness never reported. Some dialects let the provider hold the conversation, so later requests carry only new items ([OpenAI conversation state](https://developers.openai.com/api/docs/guides/conversation-state)). In that case the trace still holds every item that was sent, and the coverage record notes that the provider held the history.
+- **Direct API calls.** Forward-proxy mode records these. The calling process must trust the local CA, so recipes turn this mode on only where that is known to work. The same mode, set in a local MCP server's environment, records the vendor traffic underneath the server.
+- **A harness whose model base URL cannot be changed.** Its recipe supplies another route. It can use the forward proxy where the binary accepts the CA, or a script that turns the harness's own log of model exchanges into trace events through `phoenix record` (events on stdin, validated against the trace schema). A log importer may supply only what the log actually contains. The coverage record names the route that was used.
+- **Plugin capture.** A connector plugin may declare a `capture` command. The capture host runs it as a sidecar, streams it that connector's recorded events, and executes the read-only calls it asks for, limited to objects the agent saw, on the same upstream. The host refuses any tool the plugin did not declare read-only. Server tool annotations are never enough, because MCP says clients must treat them as untrusted ([tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)). Results are written as `prefetch` events with their own timestamps and are never sent to the harness. The sidecar ends by writing a coverage statement: which collections it read completely, and over what span of time. This is off unless the person turns it on for that connector.
+- **Flagging.** `phoenix flag "<reason>"` writes a mark to the current run. An opt-in one-tool MCP server does the same for harnesses that prefer a tool. Neither is added unless the person adds it, so default Capture never changes what the agent sees.
+- **Corrections.** `phoenix correct <run> --at <event> "<text>" [--one-off]` appends a Correction to the run's notes, either during the run or afterward.
+- **Coverage record.** Each recorder appends a line to `coverage.jsonl` when it starts (surface, server or command, entry mode), so coverage survives a run that never closes cleanly. At close, the launcher adds the surfaces that were configured but saw no traffic, and what the taps cannot see.
+
+#### The tee and its release rule
+
+In Capture, a backend is the real upstream wrapped in a tee. The tee passes every frame through as soon as it arrives, except a frame marked `last`. It holds that frame until the recorder reports that the message's redacted record has been fully written to the operating system, and then releases it. As a result, no tool ever holds a complete request, and the harness never holds a complete response, that is missing from the trace. In a streamed response, every chunk except the final one flows at full speed.
+
+The recorder can go wrong in two ways, and they are handled differently:
+
+- **The recorder is behind.** The queue between the tap and the recorder is bounded. When it fills, the tap stops reading from its sockets, which is ordinary stream backpressure. The call gets slower, and no record is dropped.
+- **The recorder has failed.** A write returned an error (disk full, permission, I/O) or the recorder worker died. Held frames are released at once, and the run continues unrecorded on that tap. The gap shows without relying on any marker being written. Every event carries a sequence number that the tap assigned before queueing, so a hole in the sequence marks a gap, and a segment without a `close` event has an unknown tail. When writing is still possible, a `gap` event is also written.
+
+#### Recording path
+
+Forwarding runs on the main thread. The recorder runs on a worker thread fed by the bounded queue. The worker assembles each message, redacts it whole, and appends it to an append-only file with no in-process buffering. It keeps calling `write` until every byte is accepted, because one call may take fewer bytes than asked ([write(2)](https://man7.org/linux/man-pages/man2/write.2.html)). After each batch, the worker syncs the file continuously and off the call path, so a power loss can take at most the batch in flight. Node's `fs.fsync` is enough on every platform, because libuv issues `F_FULLFSYNC` on macOS itself ([libuv `fs.c`](https://github.com/libuv/libuv/blob/v1.x/src/unix/fs.c)). Streamed bodies are spooled as they pass. Redacted bytes go into a temporary blob once they are behind the redactor's look-behind window, along with each chunk's arrival time. When the body ends, three steps happen before any event refers to the blob: it is synced, renamed to its content hash, and its directory is synced. The directory needs its own sync, as [fsync(2)](https://man7.org/linux/man-pages/man2/fsync.2.html) explains.
+
+#### Redaction
+
+Redaction runs in the recorder before any write, so unredacted bytes never reach disk:
+
+```ts
+redact(msg: WireMessage, policy: RedactPolicy):
+  { msg: WireMessage; changes: { at: string; rule: string }[] }
+```
+
+The default policy takes the following out of the recorded copy:
+
+- auth headers (`Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `x-api-key` and similar);
+- credentials in URLs;
+- values under secret-named keys and values that match secret patterns;
+- detected personal data.
+
+A replaced value becomes a typed placeholder derived from an HMAC of the original, under a key that stays in `PHOENIX_HOME`. The same value always maps to the same placeholder, so replay matching still works. Redaction runs over the whole assembled message. On a streamed body it runs with a look-behind window, so a secret split across network chunks is still caught. Each change is recorded with its location and rule.
+
+A payload the redactor cannot decode is **withheld**: the event keeps its size, an HMAC digest and the reason, and the bytes are not stored. Binary media the redactor has no rule for is also withheld by default. A decode failure never permits raw storage. Phoenix writes no raw payload to its own logs or crash output.
+
+#### What Capture guarantees
+
+1. Recording never fails a call and never waits on a disk flush. It adds one redaction pass and one write per message to a call. A recorder that is behind slows the call.
+2. If a tap process crashes, every message it delivered whole is in its segment. The exchange in flight shows as a `call` with no `result`, with whatever part of its body had been spooled attached as partial.
+3. If the machine loses power or the kernel crashes, each recorder can lose the batch it had written but not yet synced. Everything synced before that is intact.
+4. If storage fails outright, the agent keeps running and the trace shows exactly where recording stopped. Whether Phoenix should stop the agent instead is under Questions for the user.
+5. A recorder writes only its own segment file. Recorders share no locks.
+6. A dropped upstream connection gives an `aborted` result with the bytes received. Phoenix never retries a live call.
+
+### 3.3 Trace store
+
+A run is a directory, whether it came from Capture or from a Replay sample:
+
+```
+runs/<run-id>/
+  run.json              written once: harness name and tree digest, recipe and version, start time, host boot id
+  coverage.jsonl        one line per recorder as it starts, plus the launcher's summary at close
+  seg/<recorder>.jsonl  one append-only file per recorder, ending with a close event
+  blobs/sha256/..       bodies above a size threshold, named by the hash of the redacted bytes
+  blobs/tmp/..          spools of bodies still streaming
+  notes.jsonl           marks and Corrections, append-only
+```
+
+```ts
+interface TraceWriter { append(e: TraceEvent): Promise<"written" | "failed">; close(): Promise<void>; }
+interface TraceReader { events(run: RunId, from?: EventId): AsyncIterable<TraceEvent>; }
+```
+
+The reader merges segments by monotonic timestamp, then recorder id, then sequence number. All the recorders of a run are processes on one host reading one monotonic clock, so the merged order is the order in which the taps saw the traffic. The reader handles damage as follows:
+
+- A final line that does not parse is dropped and reported as torn.
+- A line that fails validation anywhere else is reported as corruption, never skipped silently.
+- Sequence holes and segments with no `close` are reported.
+- An orphaned spool is attached to its call as a partial body.
+
+Reading needs no index and no database, and a run can be read while it is still being written. Run directories are private and are never published. Only moment bundles are shared.
+
+### 3.4 Harness contract, recipes, bindings and the reference harness
+
+The **harness contract** (`phoenix.harness.yaml` in the harness repository) declares the three things the spec names: how to run the harness, where its MCP servers and model API are configured, and which files are editable.
+
+```yaml
+phoenix_harness: 1
+name: my-harness
+run:      { command: [node, dist/main.js, --task-file, "{task_file}"], output: stdout,
+            build: [npm, run, build], image: { dockerfile: Dockerfile } }
+endpoints:
+  model:  { env: ANTHROPIC_BASE_URL, dialect: anthropic-messages }
+  mcp:    { file: .mcp.json, format: mcpServers }
+editable: ["prompts/**", "tools/*.json", "config/model.yaml"]
+```
+
+`run.image` and `run.build` are part of "how to run it" when the harness runs in a Replay. The image is built from the base tree, and `build` runs inside the sandbox on the candidate. A harness contract whose editable globs match any path inside a moment bundle is refused.
+
+A **capture recipe** (`recipe.yaml`, optionally with a script) says how to point one harness at Phoenix without editing the person's config. It names the model base-URL setting and dialect, where MCP servers are configured and in which format, which CLI commands to shim, a sandbox image, and an optional clock declaration (`clock: preload`, see section 3.9). A recipe states which harness versions and login modes it covers, and which surfaces it captures for each. It never switches the harness to a different provider or billing route than the person chose.
+
+The first recipes rely on these documented settings:
+
+- Claude Code reads `ANTHROPIC_BASE_URL` and MCP entries from `.mcp.json` ([gateway](https://code.claude.com/docs/en/llm-gateway-connect), [MCP](https://code.claude.com/docs/en/mcp)).
+- Codex takes a custom `model_providers` entry and `mcp_servers` in `config.toml` ([config](https://learn.chatgpt.com/docs/config-file/config-advanced)).
+- pi takes a provider `baseUrl` in `models.json` ([docs](https://pi.dev/docs/latest/models-configuration)).
+- fx takes named custom connections ([docs](https://fx.sh/docs/configure-fx/custom-model-connections)).
+- The Ozi recipe is written against Ozi's own configuration files.
+
+**Bindings** (`bindings.yaml` beside a moment set, optional) join a moment's logical connector names to this harness's own config entries, and say how each one is served. For example, `calendar: { mcp_server: google-calendar, serve: recorded }`, or `serve: real` to run the real server over replayed vendor traffic. With no bindings file, a connector binds to the MCP server or command of the same name. Bindings are what let a shared moment run under someone else's harness without touching the locked bundle.
+
+The **reference harness** is a small TypeScript harness with one model, a few MCP tools and a few CLI tools, its own `phoenix.harness.yaml`, and no import of any Phoenix package. It has no session or resume feature, and it replays from the mark like any other harness.
+
+### 3.5 Moments and the setup step
+
+A Moment is a bundle directory containing `moment.yaml`, `check.yaml`, `moment.lock.json`, `data/`, and `checks/` when the check has custom code. It never holds harness, tool or plugin code. The one executable thing it may hold is the custom check, which the manifest names as executable and which runs only in the check sandbox (section 3.11).
+
+A **mark** is a cut in a run's merged order, named by an event id. The **frozen prefix** is every exchange whose result was complete before the cut. A call that was open at the cut (request before, result after) is not frozen. Its recorded result belongs to the after-mark recordings, because the harness had not yet received it. A run can be a live Capture, a Replay sample's trace, or a staged run written by hand, and all three can be marked.
+
+`setup` builds a bundle in fixed steps. Each step is a function from files to files:
+
+1. **Locate.** Take a mark (flagged or picked) in a run, or a Scenario description.
+2. **Find connectors.** Group the run's agent-level events by connector and surface.
+3. **Collect the Snapshot.** Copy the run's evidence for each connector and for the model, in three separate parts: the **frozen prefix**, the **after-mark recordings** (what the original run went on to do and see), and **capture-time observations** (plugin state and prefetch results). Each recorded exchange keeps its observed-at time, the call it came from, and its **write history**: the ordered keys of the non-read-only calls that had completed on that connector before it. Also record:
+   - the prompt;
+   - the model identifier as the provider reported it, with an alias recorded as an alias;
+   - the clock time and timezone;
+   - the harness tree digest, and the git commit when there is one;
+   - the recipe version and the tool lists;
+   - the MCP protocol version and era.
+
+   Setup uses only what Capture recorded. It never queries a vendor's present state.
+4. **Classify operations.** For each connector, write down which operations are read-only and where that came from. The plugin's declaration comes first. Without one, the server's own annotations and HTTP safe methods ([RFC 9110 §9.2.1](https://www.rfc-editor.org/rfc/rfc9110#section-9.2.1)) are used and marked `unverified`. Without either, the list is empty and every operation counts as a write. This classification is part of what the person approves.
+5. **Pick tiers.** A connector's tier can be no higher than its plugin declares and no higher than its coverage statement supports. It is `stateful` only when the collections its tools read were captured completely, and otherwise `recorded`. A connector with no plugin is `recorded`.
+6. **Infer formats.** Build a JSON Schema for each tool from its recorded responses, and note where a declared `outputSchema` disagrees with what was recorded. `outputSchema` is optional in MCP, and plain text is never treated as JSON.
+7. **Draft the check.** The draft is a file, `check.draft.yaml`. `phoenix check draft` writes it through the `ModelProvider` port by reading the trace, the harness files and any docs the person names. It starts from the Correction, if there is one that is not marked one-off. The person, or an agent of theirs working outside the Workbench, may write or edit the same file.
+8. **Lock.** `phoenix check approve <moment>` shows the draft. On approval it writes `check.yaml` and `moment.lock.json`, which holds the hashes of the manifest, the check, every custom-check file and every data file, plus who approved and when. It also appends the lock's hash to the **approvals ledger**, an append-only file in `PHOENIX_HOME` outside any workspace. For a seeded Scenario, the manifest may set `lock: auto`, which locks without approval and is recorded in the ledger as such. Changing anything locked makes a new moment revision with a new lock. Results stay attached to the hash they were run against.
+
+The lock file in the bundle is the portable record of an approval. The ledger is the authority on this machine: the runner runs only bundles whose lock hash is in it. A moment received from someone else carries their lock, which proves the files are intact but not that this person agrees with the check. `phoenix moment accept <moment>` shows the check and records the acceptance in the ledger.
+
+For a Scenario, steps 2 and 3 are replaced by the author's seed files. These are emulator state in the plugin's state format, hand-written exchanges, and optionally a **staged run** (hand-written model and tool exchanges as trace events) with a mark in it. The manifest says `source: scenario`, and its data is marked `origin: seeded`, never `captured`. From step 4 on, both kinds are the same bundle and replay the same way: from the beginning, or from the mark when the bundle has a run with one.
+
+### 3.6 Answer chain
+
+The replay layer is an ordered list of resolvers over calls. Each one returns an answer or a reasoned miss, and the chain returns the first answer.
+
+```ts
+interface Call {
+  surface: "mcp" | "cli" | "http";
+  layer: "agent" | "under";
+  connector: string;          // logical name, e.g. "calendar"
+  op: string;                 // "tools/call:move_event", "gh", "GET api.notion.com/v1/pages/{id}"
+  args: unknown;              // normalized arguments
+  readOnly: boolean;          // from the locked classification
+  raw: WireMessage;
+}
+interface Answer {
+  raw: WireMessage;           // exact bytes to send back, streamable
+  provenance: "real" | "recorded" | "derived" | "synthesized";
+  resolver: string;
+  note?: string;              // e.g. "repeat of last observation"
+}
+type Miss = { miss: true; why: string };
+interface Resolver { name: string; resolve(call: Call, ctx: ReplayCtx): Promise<Answer | Miss>; }
+```
+
+**Keys.** A call key is the SHA-256 of the canonical JSON ([RFC 8785](https://www.rfc-editor.org/rfc/rfc8785)) of surface, connector, op and normalized arguments. Canonical JSON fixes representation, not meaning, so only object key order is normalized. Array order, null versus absent, and argv boundaries are kept. An argument path is removed from the key only by a versioned rule in the connector's plugin. The core removes nothing.
+
+**Write history.** For each connector, the engine keeps the ordered keys of the non-read-only calls served so far in this sample. A recorded exchange is **current** when its stored write history equals the sample's. With a plugin entity map, the comparison is narrower: a differing write makes stale only the recorded answers that contain an entity it touched and, for a create, lists of that entity type. This rule keeps the recording from answering for a world the candidate has changed, or for one where the candidate skipped a write the original made. An error response to a write is not treated as proof that the write had no effect.
+
+The resolvers run in the order the spec fixes:
+
+1. **Recorded.** A current exchange with the same key answers, byte for byte. When several exchanges share a key, the k-th call gets the k-th recorded answer. A call beyond the recorded count misses here, with one exception. If the locked classification lists the operation as read-only, the call is answered with the last current observation, labeled `derived` with the note "repeat of last observation". No write has been made to the frozen world since that observation, so the frozen world's answer has not changed. The exception does not apply to an operation a plugin marks `volatile` (cursors, polls, anything whose answer moves without a write, including answers relative to "now"). A manifest can also turn it off for a connector.
+2. **Overlay.** Driven by a declarative **entity map** in the connector's plugin descriptor. For each tool, the map gives its kind (list, get, create, update, delete), the entity type, the paths to ids and items, how a list result shows it is complete, and optionally which arguments filter a list by equality or range on a named field. The core builds the entities observed at or before the mark (plus capture-time observations), applies recorded prefix writes using the entity each write's recorded response returned, and then applies the Replay's own writes on top.
+   - It answers a get by id for a known entity.
+   - It answers a list only when the list is complete and either unfiltered or filtered by declared arguments.
+   - An entity whose state after a write is not known is **unknown**, and reading it is a miss.
+   - An entity never seen is a miss, not "not found", unless a complete list covers it.
+
+   A connector with no entity map has no overlay. The map covers lookups only. Recurrence, permissions, ranking and side effects are connector semantics, so they belong to an emulator.
+3. **Emulator.** Used for connectors whose plugin has a `serve` command, started from the Snapshot with a seed and the virtual clock supplied by the engine. It answers at the vendor-API level or the tool level. Recorded prefix writes are run against it so its state at the mark matches the captured world. Where its answer to a prefix call differs from the recording, the recorded answer is served and the difference goes in the fidelity report.
+4. **Prefetch.** Results of read-only tools that the capture sidecar ran at capture time. They are matched by key and must be current under the same write-history rule.
+5. **Simulator.** Used only for connectors whose manifest entry allows `synthesized`. The simulator model writes a response in the tool's format. The response is validated against the tool's real protocol envelope, the inferred schema and any declared schema. It is then stored before it is served, keyed by moment, connector, call key, write history, clock context and simulator configuration. The store is write-once and shared by every sample and by the baseline, so the same question in the same world gets the same invented answer on both sides of a comparison. An invalid response is retried within the resolver and never served. Non-read-only calls get a synthesized acknowledgement and change nothing, and that acknowledgement never counts as evidence that a state change happened.
+6. **Divergence.** The chain stops the sample and records the call and every resolver's reason for missing. It never falls back to a live connector.
+
+Each connector has exactly one state holder in a Replay, either the overlay or the emulator, never both. Each sample has its own state holder.
+
+When the bindings mark a connector `serve: real`, the real MCP server runs in the sandbox and tool calls go to it. The chain answers only the server's vendor traffic, and the two layers are never both answered. The tool result's provenance is the weakest provenance among the vendor answers served to that server since its previous tool result, with `resolver: real-server`. Real code running over invented inputs is not `real`. Vendor-hosted MCP servers cannot be redirected, so they stay at recorded fidelity at the tool level.
+
+Every answer carries a provenance:
+
+- `real` means the live system during Capture, the real model provider during a Replay, or real server code that consumed no replayed data.
+- `recorded` means bytes from the log or from prefetch.
+- `derived` means computed from recorded data by the overlay, an emulator or a repeat.
+- `synthesized` means the simulator wrote it.
+
+No resolver may return data without one of the four. The order is fixed in code, and a manifest can only remove steps for a connector.
+
+### 3.7 Engine
+
+There is one engine process per sample, outside the sandbox. It hosts the taps with responders as their backends, the virtual clock, the model route and a trace writer, so a Replay produces a full trace in the same format as a live run. The matcher's index is built in memory from the bundle when the engine starts. The engine appends each answer to the sample's trace before it sends that answer. Nothing in a Replay is in production, so this write is simply waited for. Every answer the harness received is therefore in the trace, which is what makes a sample resumable (section 3.10).
+
+**Divergence detector.** The last resolver is one trigger, and seven more are recorded the same way:
+
+- an outbound connection the engine cannot map to a connector;
+- a TLS handshake the client refused;
+- a call in the frozen prefix that does not match the recording;
+- a model-route request that is not an inference operation;
+- a model request that would make the provider act on the live world;
+- a model request that refers to conversation state the provider holds from outside this sample;
+- lifecycle behavior the MCP recording does not contain.
+
+**MCP responder.** This is the server side of the link, driven by the recording, and it answers in the recorded era. A connector recorded on an older revision gets the recorded `initialize` result and handles `server/discover` the way the recording shows. One recorded on 2026-07-28 answers `server/discover` and stamps each result. Tool lists are served as recorded. Within a `tools/call`, the messages the server sent during that call are replayed in order before the result. These include progress notifications and, on older revisions, server-initiated requests. For each server-initiated request, the responder waits for the harness's response and compares it with the recorded one. Change notifications are sent at the same position in the call order as recorded, on the GET stream or the `subscriptions/listen` stream according to era. An `input_required` result and the retry that follows it are two ordinary calls. Lifecycle behavior the recording does not have is a divergence, not an invented success.
+
+**Model responder: two phases.**
+
+- **Frozen prefix.** When a Replay starts from the mark, the candidate is still launched from the start. Until the mark, the engine answers every model request with the recorded model response and every tool call with its recorded result. This imposes the history exactly as it was, for any harness, with nothing asked of the harness beyond its three-item contract. `wire` splits each prefix model request into its **history** (the user, assistant and tool-result turns) and its **configuration** (system prompt, tool definitions, model identifier and parameters).
+  - The history must equal the recorded history.
+  - The configuration may differ, because that is what an Improver edits. Each difference is listed in the result as `prefix_edits`.
+  - Every tool call in the recorded history must still name a tool the candidate defines, with arguments its input schema accepts.
+
+  A history difference, a broken condition, or a tool call the recording does not have at that point stops the sample with a **prefix-drift** divergence that names the first differing field. Such a change needs a Replay from the beginning. Concurrent requests are matched by content first and order second.
+- **Live.** From the mark onward, or from the first request when starting from the beginning, model requests go to the real provider and tool calls go through the answer chain. A call that was open at the cut is the first live step.
+
+Every result says what "frozen" covered. The history shown to the model and every answer the harness received before the mark are the recorded ones. The code that carried them is the candidate's. State that a harness keeps outside its model and tool calls is whatever the candidate rebuilt from that history. Local files written by a shimmed command answered from the recording are not recreated, and the fidelity report names those commands.
+
+The same mechanism does two more jobs. An **echo** Replay puts the mark at the end of the run, so nothing runs live. Every difference between what the harness does and the recording is then a fidelity finding about Phoenix, the recipe, or the harness's own nondeterminism. This is the spec's "replay an original run, diff every response against the recording, and explain each difference". A harness that drifts on an echo Replay with no edits cannot replay from the mark and is limited to replays from the beginning. The second job is resuming an interrupted sample, which uses that sample's own partial trace as the prefix (section 3.10).
+
+### 3.8 Sandbox and the model route
+
+```ts
+interface Sandbox {
+  readonly clock: "guest" | "preload";
+  start(spec: { image: ImageRef; argv: string[]; env: Record<string, string>;
+                mounts: Mount[]; epoch: Instant }):
+    Promise<{ process: SandboxProcess; channel: EngineChannel }>;
+}
+```
+
+Both drivers keep the same contract: the workload has no route off its own host namespace, and exactly one byte channel leaves it, ending at the engine. Inside, a **relay** listens on loopback, answers every name lookup with loopback, accepts the connections that follow, and pipes each one to the engine along with its original destination. The relay has no policy and no secrets, and the engine decides everything. Where the runtime allows a redirect rule inside the workload's namespace, every other outbound TCP connection (raw addresses, unusual ports) is also sent to the relay and reported. Where it does not, those connections fail locally, and the fidelity report says raw-address reporting is off. Either way they reach nothing. Safety rests on the absence of a route, not on name resolution or firewall rules.
+
+- **Container driver.** The workload runs with [`--network none`](https://docs.docker.com/engine/network/drivers/none/), which leaves only a loopback device. It shares the network namespace of a small Phoenix container that runs the relay. The channel is a Unix socket shared only between the relay and the engine, and the workload cannot see it. Emulators and custom checks run in their own containers, with no network and with their own socket to the engine. An internal bridge network is not used, because Docker documents that containers on one can still reach the gateway address and host services listening there ([`--internal`](https://docs.docker.com/reference/cli/docker/network/create/#internal)).
+- **VM driver.** The same image runs in a hardware-accelerated QEMU guest started with `-nic none`, so the guest has no network device at all. A single virtio-serial channel connects the guest's relay to the engine ([QEMU invocation](https://www.qemu.org/docs/master/system/invocation.html)). The guest's init runs the same relay, has no time synchronization, and sets the guest clock to the captured time before the workload starts. Guest init and the relay are trusted. The candidate cannot reach the host side of the channel or the management interface.
+
+In both drivers, the harness tree is materialized fresh for each sample: the base tree plus only the Improver's changes to editable paths. The moment bundle, the recordings, the trace and the check are not mounted. The host's home directory, credentials, agent sockets and container socket are absent. Stdio MCP entries point at a shim that relays to the engine, and CLI shims do the same. Model and remote-MCP base URLs point at the relay over plain HTTP, so the main paths need no CA. Node's permission model is not relied on as a boundary anywhere, because Node states that it "does not protect against malicious code" ([Node permissions](https://nodejs.org/docs/latest-v24.x/api/permissions.html)).
+
+**Model route.** The route is an allow-list of operations, not hosts. Each dialect in `wire` lists its inference operations (method and path). The engine forwards only those, to the configured provider, adds the real credential there, and does not follow redirects on the harness's behalf. Two kinds of request are refused as a divergence with tier `blocked`:
+
+- A request that declares provider-run tools reaching outside systems, or names content for the provider to fetch by URL. Anthropic's web search and MCP connector are examples ([MCP connector](https://platform.claude.com/docs/en/agents-and-tools/mcp-connector)). The provider would act on the live world.
+- A request that points at a stored response or conversation the provider holds from the live run. That is vendor state outside the frozen copy.
+
+The sandbox reaches only the engine, the engine forwards only inference operations, and no real credential enters the sandbox. No flag turns any of these off.
+
+### 3.9 Virtual clock
+
+The clock is a small state owned by the engine: a virtual anchor and a real anchor. It is set to the captured time at Replay start and again at the mark. Plugin emulators read it from a `now` endpoint, and the engine uses it for the `Date` headers it writes. The harness gets it from the sandbox. The default is the VM driver, where the whole guest runs on the captured time, because nothing lighter covers every process. [libfaketime](https://github.com/wolfcw/libfaketime/blob/master/README) cannot affect statically linked binaries and is bypassed by runtimes that do not call libc for time. Linux time namespaces virtualize only the monotonic and boot clocks, not `CLOCK_REALTIME` ([time_namespaces(7)](https://man7.org/linux/man-pages/man7/time_namespaces.7.html)). The container driver with libfaketime preloaded is used only when the recipe declares `clock: preload`. A probe at start confirms that the harness's runtime sees the captured time. The probe can refute the declaration but not prove it, so the fidelity report shows `clock: preload (declared)`. If neither driver can give the harness the captured time, the Replay is refused with the reason. Host time is never used as virtual time. Supervision and provider transport use the host's real monotonic time, outside the simulated world.
+
+### 3.10 Runner
+
+```ts
+interface Runner {
+  replay(req: { moment: MomentRef; candidate: TreeDigest;
+                start: "beginning" | "mark" | "echo"; samples: number }): Promise<ReplayId>;
+  status(id: ReplayId): ReplayStatus;       // durable; safe to read after a crash
+}
+```
+
+The runner first writes a **resolved plan**, `plan.json`. It holds:
+
+- the bundle digest and check hash;
+- the base and candidate tree digests and the harness image digest;
+- the model identifier and parameters, with an alias labeled as an alias;
+- the start mode and sample count;
+- the resolved plugin versions;
+- the simulator model and configuration;
+- the sandbox driver and clock mode;
+- the version of the engine's matching rules.
+
+Everything after that is a function of the plan. The plan's hash is the Replay's identity, so asking for the same Replay twice returns the same one. It is also the key under which baseline results (base tree, same moment, same model) are stored and reused.
+
+The runner checks the bundle against its lock and the lock against the approvals ledger. It then writes the harness's endpoint overlay from the harness contract and bindings, starts one engine and one sandbox per sample, and runs samples in parallel up to a configured limit. Samples share only immutable inputs and the write-once simulator store. Each attempt at a sample writes into its own directory, and no attempt is ever deleted. A journal records each sample's state.
+
+**Recovery.** Only infrastructure counts as an interruption: the engine, sandbox, emulator or host dying, or a provider outage that stops the sample. When the candidate itself crashes, that is the sample's outcome. An interrupted sample resumes with a new attempt that uses the interrupted attempt's own trace as a frozen prefix. The model responses and answers it had already received are imposed again. Its writes are run against a fresh state holder started with the same seed and clock, and each re-executed write's response is compared with the trace. The resumed sample therefore continues the same history instead of drawing a new one. If the prefix drifts, the runner does the following:
+
+- An attempt that had already broken an expectation no later event can repair keeps that failure.
+- Otherwise a fresh attempt starts from the sample's start point, and the result says so.
+- If the fresh attempt is interrupted by the same cause, the sample is left unassessed and the cause is reported.
+
+A sample's outcome is the outcome of the first attempt to reach one. A finished sample is never re-run. Nothing real is ever retried to repair a Replay.
+
+### 3.11 Success checks
+
+`check.yaml` holds deterministic expectations, an optional custom check, an optional intent statement, the evidence scope and the sample count:
+
+```yaml
+phoenix_check: 1
+samples: <n>                   # required; no hidden default
+scope: continuation            # or: run
+expect:
+  - called:     { tool: calendar.move_event, args: { event_id: evt_3pm }, times: 1 }
+  - not_called: { tool: calendar.move_event, args: { event_id: { not: evt_3pm } } }
+  - order:      [calendar.list_events, calendar.move_event, slack.post_message]
+  - max_calls:  { tool: "*", count: 12 }
+  - end_state:  { connector: calendar, equals: data/expected-calendar.json }
+  - final_text: { contains: "moved" }      # or matches: <regex>
+  - custom:     checks/only-3pm.ts
+intent: "Move only the 3pm, notify attendees, leave recurring events alone."
+```
+
+Evaluators are pure functions over a sample's trace, and they see only agent-level actions. For a tool that has a tap, the action is the tap's call. For a tool nobody tapped, the action is the tool-use block in the model exchange. Each action therefore comes from exactly one source, and nothing is counted twice. With `scope: continuation`, evaluators see only what happened after the mark, so frozen history is not mistaken for the candidate's behavior. `order` compares actions by the model turn that issued them and their position within that turn. A tap call is placed in a turn by pairing it with that turn's tool-use block. When pairing is ambiguous, tap observation order is used, and the result notes it. `end_state` compares the connector's state holder at the end of the sample.
+
+A **custom check** is a TypeScript module that exports one function. It runs with Node's built-in type stripping ([Node TypeScript](https://nodejs.org/api/typescript.html)), so it uses erasable syntax only. It may import Node built-ins and other files under the bundle's `checks/` folder, and every one of those files is hashed in the lock. It runs in its own sandbox with no network, the sample's evidence mounted read-only, and nothing from the candidate tree. A shared moment's check is someone else's code.
+
+**Verdict rules:**
+
+- Every expectation is evaluated, and none is ever dropped. An expectation is **clean** when all the evidence it reads comes before the first synthesized answer in the sample, and **tainted** otherwise. Taint runs forward in time, because anything the model does after a synthesized answer may have been shaped by it. No finer dependency can be established through a model.
+- A sample **fails** if any clean expectation fails. That result is binding, and no intent judgment overrides it. A sample **passes** if every expectation passes and the intent, if present, was judged met. When a tainted expectation is among the deciding results, the sample's result stands but is marked **discounted**.
+- A sample that diverged **fails** if its trace up to the divergence already breaks an expectation that later events cannot repair (`not_called`, `max_calls`, a broken `order`). Otherwise it is **unassessed**. A sample whose check errored, or whose intent has no judgment yet, is also unassessed.
+- The Improver judges plain-language intent and records a judgment and a reason for each sample through the Workbench.
+- A moment's result is **incomplete** while any scheduled sample is unassessed. Unassessed samples are never dropped to shrink the count.
+- A complete moment **fails** when half or more of its samples fail. Otherwise it **meets the check**. A verdict that rests on any discounted sample is itself discounted and is never shown as a plain pass.
+- A target moment **passes** when it meets the check and has more passing samples than the baseline: the base harness, on the same model, on the same moment. If the baseline already meets the check, the result says that the failure did not reproduce at baseline.
+- A change **passes** a moment set when its target moments pass and every other moment that met its check at baseline still meets it. An incomplete moment establishes neither.
+
+**The lock is enforced in five places:**
+
+1. The Workbench has no operation that writes a check or the ledger, and it may not import the unit that does.
+2. The bundle is not mounted in the sandbox.
+3. The runner refuses a bundle whose hashes differ from `moment.lock.json`, and a lock whose hash is not in the ledger.
+4. Editable globs that match a bundle path are refused.
+5. Every result embeds the check's hash and its ledger entry, so whoever reviews the patch can see that it is the check they approved.
+
+### 3.12 Fidelity
+
+A connector's tier in a run is the lowest of three things: what its plugin declared, what its captured coverage supports, and the weakest source that actually answered. An emulator gives **stateful**. A recording, overlay, repeat or prefetch gives **recorded**. The simulator gives **synthesized**. A divergence or a refused call gives **blocked**. The run's grade is the weakest tier among connectors that were called, and connectors that went unused are listed separately.
+
+`fidelity` produces the fidelity report from the trace alone, as a file in the sample directory. The report lists:
+
+- the moment's source (snapshot or scenario) and each connector's data origin (captured or seeded);
+- for each connector, its tier and the counts of real, recorded, derived and synthesized responses;
+- every synthesized, derived and repeated answer, with its call;
+- read-only classifications that are unverified;
+- recorded answers refused as stale;
+- every divergence;
+- emulator answers that differed from the recording;
+- format mismatches between declared or inferred schemas and what came over the wire;
+- the start mode and `prefix_edits`;
+- shimmed commands whose local file effects were not recreated;
+- the sandbox driver and clock mode;
+- gaps and unknown tails in the source run;
+- what was redacted or withheld, by location.
+
+### 3.13 Workbench and export
+
+```ts
+interface WorkbenchApi {
+  listMoments(): MomentSummary[];
+  readTrace(ref: RunOrReplayRef, range?: Range): TraceEvent[];
+  listEditable(): string[];
+  readFile(path: string): string;
+  editFile(path: string, content: string): void;   // editable paths only
+  startReplay(req: ReplayRequest): ReplayId;        // target moments, optionally the whole set
+  getReplay(id: ReplayId): ReplayStatus;
+  runChecks(id: ReplayId): CheckResults;
+  judgeIntent(id: ReplayId, sample: number, met: boolean, reason: string): void;
+  fidelityReport(id: ReplayId): FidelityReport;
+  makePatch(opts?: { pullRequest?: boolean }): PatchRef;
+}
+```
+
+The MCP server (built on the official TypeScript SDK) and the CLI are both generated from this one interface, so they cannot drift apart. Replays are started and then polled rather than awaited, so they survive tool-call timeouts and reconnects. `editFile` returns after the file is on disk.
+
+A **workspace** is a working copy of the harness at a base tree. When the harness is a git repository, the workspace is a git worktree at a base commit. When it is not, Phoenix copies the directory into a private git repository under `PHOENIX_HOME` and uses that instead. The harness needs no git of its own, and such a harness gets a patch file. The Improver may edit through `editFile` or directly in the tree. At `startReplay`, the Workbench collects the changes against the base: modified, deleted and new files. Any changed or new path outside the editable globs refuses the Replay and names the paths. A symlink or path that escapes the tree is refused the same way. Files the repository ignores (dependencies, build output) are never part of a candidate. The candidate is the base tree plus exactly those editable changes, and its digest goes in the plan. Later edits become the next candidate and cannot change one that is already running.
+
+`makePatch` writes the diff of editable paths as a patch file, plus a result file: per-moment verdicts against baseline, sample counts, check hashes and ledger entries, discounts and the fidelity grade. With `pullRequest`, it pushes a branch with that patch and opens a pull request against the harness's own repository, with the results and grade in the description, using the person's own git credentials on the host. Before pushing again after an interruption, it checks whether the branch and the pull request already exist. Captured data never goes into the patch. Phoenix has no deploy command.
+
+An Improver that also has an unrestricted shell under the person's account could reach `PHOENIX_HOME`. Nothing local can stop a process that has the person's full rights. The Workbench gives no path to the ledger or the check. The check hash and ledger entry in every result, and a patch that can only contain editable paths, are what the reviewer relies on.
+
+### 3.14 Connector plugins
+
+A connector plugin is a separately installed package with a `phoenix-plugin.json`. The descriptor declares:
+
+- the plugin-interface major version and the connector name;
+- how to recognize the connector (MCP server names, hosts, CLI commands);
+- its declared tier and the operations it covers;
+- its read-only tools and volatile operations;
+- key rules for arguments;
+- an optional entity map;
+- up to two commands.
+
+`capture` is the sidecar described in section 3.2. `serve` starts an emulator from a Snapshot directory, at `http` or `tool` level, with a seed and a `now` endpoint from the engine. It also exposes its state for `end_state`. Replies distinguish four cases: an answer, an unsupported operation (a miss, never an empty success), invalid input, and execution failure. Both commands speak newline-delimited JSON on stdio or plain HTTP, so a plugin can be written in any language. Plugin processes get no production credentials and no network.
+
+Existing emulators are wrapped this way rather than linked into the core. A declared tier is a ceiling, never proof. `plugin-kit` seeds a plugin from a Snapshot, runs the recorded exchanges through it, and reports every difference in content, protocol behavior and end state. This is how people add connectors and check their fidelity themselves.
+
+## 4. Data flows
+
+**1. Fix a live failure.**
+1. The person runs the harness through `phoenix capture`. The calendar MCP proxy, the gateway and any CLI shims write redacted events to the run directory. If the calendar plugin's capture is on, its sidecar reads calendar state through the same connection and writes a statement of what it covered.
+2. The harness calls `phoenix flag` (or its opt-in tool), or the person picks an event from the trace later. Either way, a mark exists.
+3. The person runs `phoenix correct` with "it should only have moved the 3pm".
+4. `phoenix moment create` runs the setup step. It writes the bundle with the run's evidence split at the cut and drafts the check from the Correction. The person runs `phoenix check approve`, and the lock is written and its hash goes in the ledger.
+5. The person connects their coding agent to `phoenix workbench --mcp`. The agent calls `listMoments`, `readTrace` and `listEditable`.
+6. It calls `startReplay`. The runner writes the plan, computes or reuses the baseline, and then starts an engine and a sandbox with the frozen candidate for each sample. The prefix is imposed up to the mark. From there, the model is live and calendar calls go through the answer chain. A read the original also made, before any differing write, is answered from the recording. After the candidate moves a different event, reads come from the overlay or the emulator.
+7. Checks run on each sample's trace. The agent reads the results and the fidelity report, records intent judgments, edits the prompt and tool description, and replays.
+8. When the target moment passes, the agent calls `startReplay` on the whole set, which confirms that every moment that met its check at baseline still does.
+9. `makePatch` writes the patch and results, or opens the pull request. The person reviews and deploys it outside Phoenix.
+
+**2. Staging that was never live.**
+1. The person writes a Scenario: `moment.yaml` with `source: scenario`, a prompt, a clock time, seed files for each connector, and optionally a staged run with a mark.
+2. Setup runs from step 4 of section 3.5. The check is approved, or locked automatically if the manifest opts in.
+3. A Scenario with only world state starts from the beginning. One with a staged run starts from its mark.
+4. The loop is the same as in flow 1. Any sample's trace is also a run, so the person can mark a point in it and make a moment from it.
+
+**3. Regression sets.**
+1. The moment set is a directory of bundles kept with the harness.
+2. `startReplay` with the set runs every moment against the candidate and against the cached baseline, in independent per-sample worlds.
+3. The result gives per-moment verdicts and the set rule from section 3.11. A regression or an incomplete moment prevents a set pass, and discounts carry through.
+
+**4. Model or tool migration.**
+1. The person changes the model or a tool description in the workspace. Both are harness edits to editable paths.
+2. They replay the set, from the beginning when the change affects initialization.
+3. Where a tool's real MCP server is available, `serve: real` runs the changed tool code over replayed vendor traffic, so formatting and defaults are exercised.
+4. Each moment reports whether it still meets its check. Where an improvement is claimed, the baseline is the base tree run on the proposed model, so the comparison uses the same model.
+
+**5. Sharing.**
+1. `phoenix moment pack` verifies the bundle against its lock and runs the current redaction policy over it. It then writes an archive of the bundle with no absolute paths, listing any custom-check file as executable content.
+2. If the policy would change anything, packing refuses, and the person builds a new moment revision with a new lock.
+3. The recipient unpacks it next to their own harness, reads the check, and runs `phoenix moment accept`. They then write bindings, install any plugin the manifest names, and replay.
+4. Phoenix validates the bundle's versions, paths and hashes before running anything. It never downloads or runs code a manifest points to, and it runs the bundle's custom check only in the check sandbox. Raw run directories are never part of a pack.
+
+**6. A brand-new harness.**
+1. The person writes `phoenix.harness.yaml` and runs `phoenix capture` with the generic recipe, naming the CLI commands to shim.
+2. They run an echo Replay on one captured run to see what replays exactly.
+3. They continue as in flow 1, including replay from the mark. The reference harness is this flow, kept in the repository.
+
+## 5. Failure
+
+| What fails | What happens |
+|---|---|
+| A recorder is slower than the traffic | The tap stops reading until the queue drains. Calls are slower, and no record is lost. |
+| A recorder cannot write (disk full, permission, I/O error) or its worker died | Held frames are released at once and the call completes. The run continues unrecorded on that tap. The gap shows as missing sequence numbers or a segment with no `close`, and a `gap` event is written when possible. Tool results in the gap remain readable from the model-API record if that recorder is healthy. |
+| MCP stdio proxy or CLI shim crashes | That one server or invocation fails, as it would if the server crashed. Every message it delivered whole is in its segment. The one in flight is a `call` with a partial body. Other recorders are unaffected. |
+| Gateway crashes during Capture | The launcher restarts it on the same port. An in-flight model request fails and the harness's own retry applies. Completed exchanges are in the trace. |
+| Host loses power during Capture | Each recorder can lose the batch it had written but not synced, and every earlier line is intact. A torn last line is dropped on read and reported. A call dispatched in that window may be missing, its outcome at the vendor is unknown, and Phoenix does not guess it. |
+| Upstream connection drops mid-response | The partial response is recorded with an `aborted` result, and the harness sees the same drop it would have seen without Phoenix. Phoenix never retries a live call. |
+| Plugin capture sidecar crashes or misbehaves | The live path is untouched. A request for a tool not declared read-only is refused. With no coverage statement, the connector is `recorded`. |
+| Malformed or undecodable wire data during Capture | Forwarded unchanged. The recorded copy is withheld with its size, digest and reason, and no bytes. |
+| Bundle does not match its lock, its lock is not in the ledger, its format version is unsupported, or it has paths outside itself | The runner refuses to start and names the mismatch. |
+| A changed or new path is outside the editable set | The Replay is refused with the list of paths. Nothing is reset silently. |
+| A recorded answer is stale | The recorded resolver misses with that reason, and the chain continues. |
+| No resolver can answer a call | Divergence. The sample stops, and the call and all miss reasons are recorded. |
+| The candidate departs from the recording before the mark | Prefix-drift divergence naming the first differing field. The change needs a Replay from the beginning. |
+| Outbound traffic to an unknown destination in a Replay | It lands on the engine through the relay and is reported as a divergence, or it fails locally where redirect is unavailable. Either way it reaches nothing. |
+| Simulator output fails validation | It is retried within the resolver. If it is still invalid, divergence. An invalid answer is never served. |
+| Plugin emulator crashes mid-sample | The sample is interrupted and resumed. A fresh emulator starts from the Snapshot with the same seed, and the sample's recorded writes are run against it and compared. An empty world is never substituted. |
+| Engine or sandbox dies | The sample is interrupted and resumed from its own trace. No real system was reachable, so nothing needs undoing. |
+| Runner or Workbench process dies | Workspaces, plans, journals and attempts are on disk. On restart, `getReplay` returns the recorded state, and the Replay resumes its unfinished samples. |
+| Improver disconnects | Nothing is lost. All state is on disk and addressed by ids, and the Improver reconnects to the same workspace. Repeating `startReplay` returns the same Replay. |
+| Model provider errors or rate limits during a Replay | The error is passed to the harness as the provider sent it, and recorded. If the sample cannot finish, it is interrupted, not failed. |
+| No sandbox driver can give the harness the captured time | The Replay is refused with the reason. |
+| Custom check throws or exceeds its limit | That expectation is recorded as an error and the sample is unassessed. The error is shown to the person, because fixing it means a new check revision. |
+| Pull-request step fails or is interrupted | The patch and result files are already written. Before pushing again, Phoenix checks whether the branch and pull request already exist. |
+
+## 6. Data and versions
+
+- **Trace.** JSON Lines, one event per line. Each event has these fields:
+  - `v`, `run`, `rec` (recorder id) and `seq` (assigned by the tap);
+  - `ts` (wall time and monotonic time);
+  - `kind`: `call`, `result`, `meta`, `prefetch`, `mark`, `correction`, `gap`, `divergence` or `close`;
+  - `surface`, `layer`, `parent`, `parent_basis`, `connector`, `id` and `op`;
+  - `body`, inline or as a blob reference above the size threshold;
+  - `chunks` (offset and arrival time, for streamed bodies), `partial`, and `withheld` with its reason;
+  - `provenance` and `resolver` on replay results;
+  - `redactions` (location and rule for each).
+
+  Bodies are stored as received, after redaction, so a new provider API or MCP revision never breaks recording. Decoding into tool calls and model turns happens at read time in `wire`. Large integers and durations that do not fit a JSON number are strings.
+- **Moment bundle.** `moment.yaml`, in the JSON-compatible subset of YAML, holds:
+  - `phoenix_moment`, `id` and `source` (`snapshot` or `scenario`);
+  - the run and mark, and the default start point;
+  - the clock time and timezone, and the prompt;
+  - the model identifier and parameters, with an alias recorded as an alias;
+  - the harness name, tree digest and commit, and the recipe version;
+  - for each connector: surface, tier, origin, coverage, read-only operations and their source, plugin name and version range, recorded tool list, MCP protocol version and era, and paths to its data files, each marked prefix, after-mark or capture-time.
+
+  `check.yaml`, any `checks/*.ts` and `moment.lock.json` sit beside it.
+- **Approvals ledger.** Append-only JSON Lines in `PHOENIX_HOME`: moment id and revision, lock hash, how it was locked (`approved`, `auto` or `accepted`), who, and when.
+- **Replay plan and result.** JSON. The plan is described in section 3.10. The result holds:
+  - the plan hash;
+  - per-sample attempts and status, with per-expectation results and taint;
+  - intent judgments with reasons;
+  - baseline counts;
+  - whether the moment meets the check and whether it improved;
+  - the verdict and any discount;
+  - the start mode and `prefix_edits`;
+  - the fidelity grade.
+- **Harness contract, bindings, plugin descriptor, recipe descriptor.** YAML or JSON, as shown in sections 3.4 and 3.14.
+
+Versioning rules are the same for every format:
+
+1. Each file carries an integer major version in a named field (`phoenix_moment: 1`).
+2. Within a major version, changes only add optional fields that are safe to ignore. Readers ignore fields they do not know and preserve them when rewriting. A field that is not safe to ignore needs a new major version.
+3. A breaking change is a new major version with a new schema file. `phoenix migrate` writes new files beside the old ones and never edits recorded evidence in place. A reader refuses a major version it does not support, with a message naming both versions.
+4. The JSON Schemas in `spec/` are the source of truth and are published with stable `$id`s. TypeScript types are generated from them, never the reverse.
+5. A plugin states which plugin-interface major version it implements, and the host refuses others at load time.
+
+## 7. Repo layout
+
+```
+spec/                 JSON Schemas and prose for every format
+packages/
+  formats/  store/  redact/  wire/  taps/
+  capture/  model/  answer/  engine/  sandbox/
+  checks/   fidelity/  runner/  setup/  workbench/
+  plugin-host/  plugin-kit/  cli/
+recipes/              generic/ claude-code/ codex/ pi/ fx/ ozi/
+plugins/              first-party connector plugins, each its own package
+reference-harness/
+```
+
+There is one package per unit in section 2, with the same names. Package manifests and a lint on import paths enforce the import rules:
+
+- Dependencies point only in the directions given in the unit table. `formats` is the root, and `cli` is the only leaf that sees everything.
+- `redact` and `wire` do no I/O.
+- `capture` and its dependencies never import `answer`, `engine`, `runner`, `checks` or `workbench`, so what runs in production stays small.
+- `workbench` never imports `setup`. Functions that write a check or append to the approvals ledger exist only in `setup`.
+- Nothing under `packages/` imports from `recipes/`, `plugins/` or `reference-harness/`, and nothing in `reference-harness/` imports from `packages/`.
+- No package names a specific harness, vendor or connector in code. Those names appear only in recipes and plugins.
+
+## 8. Build order
+
+1. `spec` schemas for the trace, moment manifest, check, lock, ledger, plan, result, harness contract, bindings, recipe and plugin descriptor, with `formats`. These are published early and versioned so others can build against them.
+2. `store` and `redact`.
+3. `wire` and `taps`, then `capture` with the launcher, the tee, the MCP proxy, the CLI shim and model-API recording. The `reference-harness` and the generic recipe come alongside, because Capture needs a harness to record.
+4. `answer` with the recorded resolver, write histories and divergence only.
+5. `sandbox` with the relay and both drivers, the virtual clock, `engine` with the responders, the frozen prefix and the model route, `runner` with plans and resume, and `fidelity`. At this point a recorded run can be replayed safely on the captured time, with a report of what answered. The echo Replay arrives with this step and is the first thing run on any new recipe.
+6. Moment bundles, the lock and the ledger (the manual parts of `setup`), then `checks`.
+7. `workbench` with workspaces, frozen candidates, the MCP server, the CLI, and patch and pull-request output. The full loop of scenario 1 now works on a recorded-tier moment.
+8. `plugin-host`, then the entity overlay and plugin capture with prefetch and coverage.
+9. Emulator serving, which needs the clock and the plugin host, then `plugin-kit`.
+10. `model` and the simulator resolver, which need write histories and format inference.
+11. The automated parts of `setup`: connector discovery, operation classification, tier choice, format inference and check drafting.
+12. Recipes for Claude Code, Codex, pi, fx and Ozi, and first-party plugins. Each is independent and needs only steps 3, 5 and 8.
+
+## 9. Libraries
+
+| Choice | Why | Source |
+|---|---|---|
+| Node.js 24 LTS | Stable built-in type stripping for custom checks; worker threads for recorders; `http`, `http2`, `tls` and `net` for the gateway; `fs.fsync` already does the full flush on macOS through libuv | [Node TypeScript](https://nodejs.org/api/typescript.html), [libuv `fs.c`](https://github.com/libuv/libuv/blob/v1.x/src/unix/fs.c) |
+| Node core HTTP modules for the gateway, not a mocking proxy | The release rule needs frame-level control of a passing stream. mockttp's callbacks wait for whole bodies, and a non-blocking stream hook is still an open request | [mockttp #192](https://github.com/httptoolkit/mockttp/issues/192), [http](https://nodejs.org/api/http.html), [http2](https://nodejs.org/api/http2.html) |
+| `@peculiar/x509` | Mints the local CA and per-host certificates for forward and transparent modes | [PeculiarVentures/x509](https://github.com/PeculiarVentures/x509) |
+| `@modelcontextprotocol/server` and `/client` v2 | The Workbench MCP server, the reference harness's client, and per-era wire codecs for classifying recorded messages. Never used inside the MCP proxy, which relays untouched. 2026-07-28 support is an explicit opt-in | [SDK v2](https://ts.sdk.modelcontextprotocol.io/v2/), [2026-07-28 support](https://ts.sdk.modelcontextprotocol.io/v2/migration/support-2026-07-28.html) |
+| Docker-compatible CLI (Docker, Podman) | The container driver shells out to it; `--network none` leaves only loopback | [none driver](https://docs.docker.com/engine/network/drivers/none/) |
+| QEMU with hardware acceleration | The VM driver: a guest with its own clock, no network device, and one virtio-serial channel | [QEMU invocation](https://www.qemu.org/docs/master/system/invocation.html) |
+| libfaketime | Shifts the clock for dynamically linked processes that call libc, where a recipe declares it | [README](https://github.com/wolfcw/libfaketime/blob/master/README) |
+| node-pty | Gives a shimmed command a pseudoterminal on the descriptors that were terminals | [microsoft/node-pty](https://github.com/microsoft/node-pty) |
+| Ajv (2020-12 build) | Validates every format and every simulator and emulator answer. MCP schemas are JSON Schema 2020-12. External references are not fetched | [Ajv](https://ajv.js.org/json-schema.html), [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) |
+| json-schema-to-typescript | Generates `formats` types from `spec` | [bcherny/json-schema-to-typescript](https://github.com/bcherny/json-schema-to-typescript) |
+| `json-canonicalize` (RFC 8785) | Stable call keys that any language can reproduce | [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785), [npm](https://www.npmjs.com/package/json-canonicalize) |
+| `yaml` | Reads and writes manifests, checks and contracts | [eemeli.org/yaml](https://eemeli.org/yaml/) |
+| eventsource-parser | Decodes SSE in model-API streams and Streamable HTTP when reading traces | [rexxars/eventsource-parser](https://github.com/rexxars/eventsource-parser) |
+| picomatch | Matches editable-path globs | [micromatch/picomatch](https://github.com/micromatch/picomatch) |
+| secretlint rules | Secret patterns for the redactor | [secretlint/secretlint](https://github.com/secretlint/secretlint) |
+| git CLI | Worktrees for workspaces, the private repository for a harness outside git, diffs for patches, branches for pull requests | [git-worktree](https://git-scm.com/docs/git-worktree), [git-diff](https://git-scm.com/docs/git-diff) |
+| emulate (Apache-2.0) | Stateful local emulators for Google, Slack and other APIs. Wrapped by plugins, never a core dependency | [vercel-labs/emulate](https://github.com/vercel-labs/emulate) |
+| Backlot (Apache-2.0) | Python emulator for enterprise SaaS APIs over a supplied corpus. Wrapped by plugins | [PyPI](https://pypi.org/project/backlot/), [brekkylab/backlot](https://github.com/brekkylab/backlot) |
+
+Phoenix uses no database and no native add-on of its own. The trace files are the store, and the matcher's index is built in memory. Format inference and the expectation matchers are small enough to write in `wire` and `checks` without a dependency. Speed comes from these choices:
+
+- no flush on the call path;
+- independent per-recorder segments with no locks;
+- an in-memory matcher index;
+- content-addressed blobs;
+- baseline reuse keyed by plan hash;
+- a write-once simulator store;
+- parallel independent samples.
+
+## 10. Risks and open questions
+
+- **A gap instead of a halt.** When storage fails outright, Capture keeps the agent running and loses the record from that point. A power loss can take the batch in flight, which may include a write the vendor already applied. Both are always visible in the trace, and the model-API record is a second witness, but a hole at the model API itself is a real hole in that run. Sequence holes and unclosed segments in real runs show how often this happens.
+- **A wedged disk slows the agent.** Under backpressure, a write that never returns holds that tap's traffic. The harness's own logging carries the same exposure, but here Phoenix adds it.
+- **Frozen-prefix matching.** Harnesses that issue concurrent or background model calls may not repeat them in the same order. Content-first matching should hold, and a mismatch stops with prefix drift rather than guessing. State a harness keeps outside its model and tool calls is rebuilt by the candidate, not restored. An echo Replay on each recipe shows whether mark replay works for that harness.
+- **Local file state.** A shimmed command answered from the recording does not recreate the files it wrote, and an unshimmed command runs for real against the sandbox's copy of the tree. That copy starts from the base tree, not from the live working directory. Moments whose failure depends on local file state are `recorded` at best.
+- **Provider-held conversations.** A harness that relies on the provider storing the conversation is refused once its requests point at state from the live run. Recipes set such harnesses to send full history where a setting exists. Where it does not, mark replay is `blocked` for them.
+- **Sandbox plumbing differs by runtime.** Sharing a Unix socket only between the relay and the engine, and adding a redirect rule inside the workload's namespace, behave differently on Docker on Linux, Docker Desktop and rootless Podman. Without the redirect, raw-address attempts fail locally and go unreported. The way to find out is to try each runtime.
+- **The VM driver is the default clock path.** Each hypervisor and guest kernel has its own time-sync paths to turn off. An OCI image has to become a bootable guest. macOS-only tools cannot run in a Linux guest at all. The clock probe needs to be run inside the guest for each official harness.
+- **Write histories on connectors with no plugin.** With no read-only list, every operation counts as a write, and a recorded answer is current only while the candidate repeats the original's calls in order. With an unverified list taken from annotations, a tool wrongly marked read-only would leave a stale or repeated answer labeled recorded or derived. The classification is shown at lock time and in every fidelity report.
+- **Repeated reads that move with time.** A read-only call whose answer depends on "now" is only safe to repeat if its plugin marks it volatile. Without a plugin, the manifest switch is the only guard.
+- **Two MCP eras on the wire.** The proxy relays both, but the Replay responder must answer each era from what was recorded, including the probe behavior of current clients against older servers. An echo Replay of one recorded run per era settles it.
+- **Remote MCP with OAuth and TLS interception.** Swapping the URL can break authorization discovery, so the fallback is forward-proxy mode with a trusted CA. A native binary with its own trust roots refuses the gateway's certificate. Live, that surface goes uncaptured and is named in the coverage record. In a Replay, it is a reported divergence.
+- **Model-API recording for fx and subscription logins.** pi is covered by `models.json`. fx is covered through a custom connection, but its default provider and other logins use a different route, and a recipe must not swap the route silently. Codex with ChatGPT sign-in, and Claude Code installs whose managed settings pin the endpoint, raise the same question. This is the spec's fourth open question, and only trying each route answers it.
+- **Snapshots are not one instant.** Objects were observed at different times. Observed-at times and coverage are kept, and the world at the mark is built only from observations valid there, but a Snapshot is still a set of observations, not a vendor-wide image.
+- **Provider-run tools.** Harnesses that rely on a provider's own web search or MCP connector are `blocked`. That is safe, and it limits what can be replayed for them.
+- **Redaction changes the bytes.** In a Replay, the model reads placeholders where the live model read real values, and patterns cannot reliably find names in free text. A mistake caused by a redacted or withheld value may not reproduce. The fidelity report shows where redaction touched the evidence.
+- **Emulators holding real data.** emulate and Backlot are built for seeded data and cover part of each API, which is the spec's second open question. `plugin-kit` answers it per connector: seed from a Snapshot, run the recorded exchanges, diff. Recurrence rules and their exceptions, attendee data, ids and timestamps are the first things to diff. Both currently publish Apache-2.0 licenses, which answers the spec's third question for today's releases. The exact version a plugin pins, and that version's dependencies, still need checking.
+- **Entity maps are small on purpose.** They answer lookups by id and complete lists with simple filters. Recurrence expansion, search and permissions are misses by construction and need an emulator or stay recorded.
+- **How far recorded replay gets.** This is the spec's first open question. The stale-answer and divergence counts of the first real moments answer it and show which of overlay, emulator and simulator is worth building next.
+- **Simulator answers cleaner than real ones.** Taint keeps them out of the decision where possible, but a moment whose fix depends on synthesized data stays discounted.
+- **The Improver judges its own intent result.** The lock stops it from changing the target, not from misjudging it. Judgments carry a reason, clean deterministic failures stay binding, and the result file shows which verdicts rest on intent.
+- **Overfitting to one moment.** Only the set rule addresses this, and a set of one gives no protection.
+
+## 11. Questions for the user
+
+1. **Never stop the agent, or never lose a record?** The design never puts a disk flush on the call path. If storage fails, it keeps the agent running and shows the hole. There are two stricter levels. One flushes each request to disk before it is dispatched, so no real-world write can go unrecorded after a power loss, at the cost of one flush per call. The other flushes everything before delivery and stops the agent when the disk fails. Which do you want when the two conflict?
+2. **A hypervisor for replays.** Guest-wide time is the default, so most replays need a hypervisor as well as a container runtime. Only harnesses whose recipe declares a preloaded clock run on containers alone. Is that acceptable?
+3. **Mark replay for harnesses that cannot repeat their prefix.** Replay from the mark works by re-running the candidate against recorded answers. A harness that drifts on an echo Replay, or whose failure depends on local files the prefix wrote, is limited to replay from the beginning. Is that acceptable, or should the harness contract grow a fourth, optional item (a native continuation format) for such harnesses?
+4. **What is one Run for a long-lived harness?** The design treats one launch through `phoenix capture` as one Run. A server-style harness that handles many tasks in one process would need a way to mark task boundaries. Are such harnesses in scope?
+5. **Discounted passes.** A pass that rests on synthesized answers is reported as discounted. Should a discounted pass on a target moment count toward the set rule and the patch result, or must it be confirmed another way first?
+6. **Default sample count.** The spec says "several" and settable per moment. `samples` is a required field in the check, so there is no hidden default. What number should the setup step propose?
+7. **Personal data and media.** Should detected personal data be replaced with consistent placeholders, as designed, or removed outright? Media the redactor cannot scan is withheld by default. Should a person be able to opt in to keeping it in private runs, unscanned and refused at packing?
+8. **Capture-time read-only calls.** These send extra requests to real services during live runs, which costs rate limit and money on the person's accounts. Is opt-in per connector the right default?
+9. **Live corrections.** Corrections come from a CLI command during or after the run. Is there a live surface, such as a harness's own approve or reject prompt, that Phoenix should read Corrections from?
+10. **Working directory.** Should Capture also record the harness's working directory at the start of a run, so file-based tools replay against the files as they were? The spec's manifest list does not include it.
+11. **Auto-lock scope.** The opt-in to lock a Scenario's check without approval is set per moment. Should it instead be set per repository?
+12. **Which Ozi and which fx logins?** Which Ozi distribution, and which fx authentication modes, must the first recipes cover?
+13. **Capture overhead.** The spec has no performance goal, so the design carries none. Capture is the one part of Phoenix in a production call path, and "without changing what the agent does" may deserve a stated limit on added latency per call. If you want one, it belongs in the spec.
