@@ -1,6 +1,8 @@
 import type { TraceEvent } from "@phoenix/formats";
-import { decodeHttpHead, decodeJson, type HttpRequest, type Surface } from "@phoenix/wire";
+import { decodeHttpHead, decodeJson, header, type HttpRequest, type Surface } from "@phoenix/wire";
 import { httpShape, mcpShape, toCall } from "./normalize.ts";
+import { cliRecording, cliShape } from "./cli.ts";
+import { mcpHttpMessages, mcpHttpShape } from "./mcp-http.ts";
 import type { CallMessage, ConnectorPolicy, Exchange, ExchangeIndex, Provenance, WireMessage } from "./types.ts";
 
 export type StartPoint = "beginning" | "echo" | { at: string };
@@ -58,18 +60,20 @@ async function pairMcp(list: readonly TraceEvent[], body: (e: TraceEvent) => Pro
   return paired;
 }
 
-async function pairHttp(list: readonly TraceEvent[], body: (e: TraceEvent) => Promise<Uint8Array>): Promise<Paired[]> {
-  const call = list.find(e => e.kind === "call");
-  const result = list.find(e => e.kind === "result");
-  const [requestMeta, responseMeta] = list.filter(e => e.kind === "meta");
+async function pairHttp(list: readonly TraceEvent[], body: (e: TraceEvent) => Promise<Uint8Array>, surface: "http" | "mcp" = "http"): Promise<Paired[]> {
+  const framed = list.some(e => e.op === "open");
+  const call = list.find(e => framed ? e.op === "frame:out:0" : e.kind === "call");
+  const result = list.find(e => framed ? e.op === "frame:back:2" : e.kind === "result" && e.op !== "fragment:back:2");
+  const requestMeta = framed ? list.find(e => e.op === "open") : list.filter(e => e.kind === "meta")[0];
+  const responseMeta = framed ? list.find(e => e.op === "frame:back:1") : list.filter(e => e.kind === "meta")[1];
   if (!call || !result || !requestMeta || !responseMeta || call.partial || result.partial) return [];
   const head = decodeJson(await body(requestMeta));
   if (!head.ok) return [];
-  const request = { body: await body(call), head: head.value as HttpRequest };
-  const shape = httpShape(request.head, request.body);
+  const request = { body: await body(call), head: (framed ? (head.value as { meta: { request: HttpRequest } }).meta.request : head.value) as HttpRequest };
+  const shape = surface === "mcp" ? mcpHttpShape(request.head, request.body) : httpShape(request.head, request.body);
   const encoding = result.body?.content_encoding;
   return [{
-    call, result, surface: "http", op: shape.op, args: shape.args, request, during: [], after: [],
+    call, result, surface, op: shape.op, args: shape.args, request, during: [], after: [],
     response: { body: await body(result), head: decodeHttpHead(await body(responseMeta)), ...(encoding ? { contentEncoding: encoding } : {}) },
   }];
 }
@@ -93,10 +97,45 @@ export async function buildIndex(events: readonly TraceEvent[], options: {
   for (const list of streams.values()) {
     const connector = list[0]!.connector!;
     if (!notifications.has(connector)) notifications.set(connector, new Set());
-    if (list[0]!.surface === "mcp") paired.push(...await pairMcp(list, options.body, notifications.get(connector)!));
+    if (list[0]!.surface === "mcp") {
+      const open = list.find(e => e.op === "open");
+      const meta = open && decodeJson(await options.body(open));
+      const http = meta && meta.ok && (meta.value as { meta?: { transport?: string } }).meta?.transport === "http";
+      const head = list.find(e => e.kind === "meta" && e.op !== "open" && e.body);
+      const decoded = !http && head && decodeJson(await options.body(head));
+      if (http || decoded && decoded.ok && typeof (decoded.value as { method?: unknown }).method === "string") paired.push(...await pairHttp(list, options.body, "mcp"));
+      else paired.push(...await pairMcp(list, options.body, notifications.get(connector)!));
+    }
     else if (list[0]!.surface === "http") paired.push(...await pairHttp(list, options.body));
+    else if (list[0]!.surface === "cli") {
+      const cli = await cliRecording(list, options.body);
+      if (cli) paired.push({ ...cli, surface: "cli", ...cliShape(cli.invocation), request: { body: Buffer.from(JSON.stringify(cli.invocation)) }, response: { body: Buffer.from(JSON.stringify(cli.frames)) }, during: [], after: [] });
+    }
   }
   const position = new Map(events.map((e, i) => [e, i] as const));
+  const requestKeys = new Map<string, string>();
+  for (const p of [...paired].sort((a, b) => position.get(a.call)! - position.get(b.call)!)) {
+    if (p.surface !== "mcp" || !p.request.head) continue;
+    const rpc = mcpShape(p.request.body)?.message;
+    const identity = (id: unknown) => JSON.stringify([p.call.connector, header(p.request.head!.headers, "mcp-session-id") ?? null, id]);
+    if (rpc?.method === "notifications/cancelled") {
+      const params = rpc.params as { requestId?: unknown } | undefined;
+      const key = params && requestKeys.get(identity(params.requestId));
+      if (key) p.args = mcpHttpShape(p.request.head, Buffer.from(JSON.stringify({ ...rpc, params: { ...params, requestId: key } }))).args;
+    }
+    if (rpc?.method && "id" in rpc) requestKeys.set(identity(rpc.id), toCall({ surface: p.surface, connector: p.call.connector!, op: p.op, args: p.args, raw: p.request }, options.policy(p.call.connector!)).key);
+  }
+  for (const p of paired.filter(p => p.surface === "mcp" && p.request.head)) {
+    const bytes = p.response.body;
+    const blocks = mcpHttpMessages(bytes, header(p.response.head!.headers, "content-type") ?? "");
+    blocks.push({ bytes: new Uint8Array(), offset: bytes.length });
+    p.response.chunks = blocks.map(block => {
+      const end = block.offset + Math.max(0, block.bytes.length - 1);
+      const at = p.result.chunks?.findLast(c => c.offset <= end)?.at ?? p.result.ts.mono;
+      const before = (other: Paired) => at && other.call.ts.mono ? BigInt(other.call.ts.mono) <= BigInt(at) : position.get(other.call)! < position.get(p.result)!;
+      return { bytes: block.bytes, waitFor: paired.filter(other => other !== p && other.surface === "mcp" && other.call.connector === p.call.connector && other.request.head && before(other)).map(other => eventId(other.call)) };
+    });
+  }
   const drafts = paired.map(p => {
     const call = toCall({ surface: p.surface, layer: p.call.layer, connector: p.call.connector!, op: p.op, args: p.args, raw: p.request }, options.policy(p.call.connector!));
     return { p, call, position: position.get(p.call)!, completed: position.get(p.result)! };

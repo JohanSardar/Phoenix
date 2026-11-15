@@ -12,6 +12,7 @@ export interface WireMessage {
   body: Uint8Array;
   head?: HttpResponse;
   contentEncoding?: string;
+  chunks?: readonly { bytes: Uint8Array; waitFor: readonly string[] }[];
 }
 
 export interface CallMessage {
