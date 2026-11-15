@@ -5,7 +5,7 @@ import type { CallMessage, ConnectorPolicy, Exchange, ExchangeIndex, Provenance,
 
 export type StartPoint = "beginning" | "echo" | { at: string };
 
-export const eventId = (e: TraceEvent): string => e.id ?? `${e.stream}:${e.seq}`;
+const eventId = (e: TraceEvent): string => e.id ?? `${e.stream}:${e.seq}`;
 
 interface Paired {
   call: TraceEvent;
