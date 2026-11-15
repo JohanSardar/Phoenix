@@ -115,7 +115,8 @@ export async function fillGaps(o: {
     if (connector.tools) tools.set(name, connector.tools);
   }
   for (const call of o.evidence.mcp) {
-    if (!call.text || call.result || !call.op.startsWith("tools/call:")) continue;
+    if (call.result || !call.op.startsWith("tools/call:")) continue;
+    if (!call.text) { missing.push({ item: "mcp.tools/call.result", connector: call.connector, at: eventId(call.call), why: "The run holds no result body for this call" }); continue; }
     const location = { evidence: `event:${eventId(call.text.event)}`, connector: call.connector, at: eventId(call.call) };
     const derived = deriveResult(call.text.text, location);
     if (derived.ok) add(derived.fill);

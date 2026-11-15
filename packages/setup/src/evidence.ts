@@ -67,7 +67,7 @@ export async function readEvidence(events: readonly TraceEvent[], body: Body): P
         const bytes = (await body(e)) ?? new Uint8Array(), decoded = decodeMcp(bytes);
         if (!decoded.ok) {
           const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-          if (e.kind === "result" && e.route !== "tap" && !e.partial && open.size === 1) {
+          if (e.kind === "result" && e.route !== "tap" && !e.partial && e.body && open.size === 1) {
             const call = [...open.values()][0]!;
             open.clear();
             call.text = { event: e, text };

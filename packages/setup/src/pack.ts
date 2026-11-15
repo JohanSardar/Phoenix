@@ -104,9 +104,9 @@ export async function packMoment(root: string, out: string, o: { detector?: Pers
   if (bundle.manifest.workdir) {
     const snapshot = JSON.parse(Buffer.from(file(bundle.manifest.workdir)).toString()) as WorkdirSnapshot;
     const entries: WorkdirSnapshot["entries"] = [], unread: string[] = [];
-    for (const path of snapshot.unread) unread.push(await text(path, `${bundle.manifest.workdir}#/unread`));
-    for (const original of snapshot.entries) {
-      const at = `${bundle.manifest.workdir}#${original.path}`;
+    for (const [index, path] of snapshot.unread.entries()) unread.push(await text(path, `${bundle.manifest.workdir}#/unread/${index}`));
+    for (const [index, original] of snapshot.entries.entries()) {
+      const at = `${bundle.manifest.workdir}#/entries/${index}`;
       const entry = { ...original, path: await text(original.path, `${at}/path`) };
       if (!entry.blob) { entries.push(entry); continue; }
       const result = await blob(entry.blob, at, (entry as { secrets?: unknown }).secrets === "unscanned" ? { secrets: "unscanned" } : {});

@@ -236,7 +236,10 @@ export async function stripSecrets(msg: WireMessage, policy: SecretPolicy): Prom
   checkKey(policy.hmacKey);
   const changes: Change[] = [], unscanned: string[] = [];
   const next: WireMessage = { ...msg };
-  const scan = async (text: string, at: string) => {
+  const scan = async (text: string, at: string): Promise<string> => {
+    if (/^\s*[[{]/.test(text)) {
+      try { JSON.parse(text); return await transformJson(text, scan, policy, changes); } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+    }
     const result = await scanSecrets(text, policy);
     changes.push(...result.used.map((s) => ({ at: `${at}:${s.start}`, rule: s.rule })));
     return result.text;
