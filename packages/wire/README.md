@@ -27,4 +27,16 @@ failure with the original bytes; a relay must never depend on successful decodin
   strings even when they look like JSON. `inferToolFormat` also lists observed
   responses that fail a declared output schema. Empty evidence yields `{}`.
 
-Mechanical transcript/fill derivations are deliberately not part of this ticket.
+`deriveMcpResult(text, location, isError?)` wraps verbatim result text in an MCP
+CallToolResult. It does not invent a JSON-RPC id or claim side effects.
+`deriveToolList(request, dialect, location)` maps recorded function definitions
+to an MCP tools/list result. Recipes/setup must select only the definitions for
+the connector named in `location`; this rule never infers connector ownership.
+It accepts messages input_schema, function parameters in chat-completions and
+responses, and generate-content parametersJsonSchema. Unsupported built-in tools,
+missing schemas and duplicate names are reasoned misses, not invented schemas.
+Both functions return `{ok: true, fill}` or `{ok: false, why}` and validate the
+versioned Fill. Mechanical fills are always `derived`, cite the evidence
+location and rule, and name `wire:<rule>` as producer. Text stays text, even if
+it looks like JSON. No rule reconstructs an absent protocol version or a model
+response. Setup owns synthesized fills and the verbatim check on agent fills.
