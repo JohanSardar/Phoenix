@@ -100,7 +100,7 @@ export function mcpHttpResponder(options: Responder & {
     await trace.append(stream, { kind: "result", surface: "mcp", connector, op: "frame:back:2", body: Buffer.concat(sent), chunks: timing, provenance: answer.provenance, resolver: answer.resolver });
     out.push(HTTP_STREAM.responseBody, new Uint8Array(), true);
     out.end();
-    await options.advance();
+    await options.advance(answer);
   };
   return {
     async write(f) {

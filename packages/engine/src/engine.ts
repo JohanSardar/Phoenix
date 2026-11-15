@@ -105,6 +105,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
     });
   } catch (error) { await trace.close(); throw error; }
   const ctx = replayCtx(index, policy, emulators, options.simulator ? { ...options.simulator, clock: () => index.cutTime } : undefined);
+  const completed = new Set<string>();
   const edits = new Set<string>();
   for (const resume of resumes) for (const event of resume.events) if (event.op === "start-point" && event.kind === "meta") {
     const previous = JSON.parse(Buffer.from(await resume.body(event)).toString()) as { prefix_edits?: { field: string }[] };
@@ -132,15 +133,15 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
   const interrupt = (error: unknown) => halt({ kind: "interrupted", why: error instanceof Error ? error.message : String(error) });
 
   const goLiveIfDone = async (): Promise<void> => {
-    if (!startMarked && options.start !== "echo" && original.frozen.every(e => ctx.served.has(e.id))) {
+    if (!startMarked && options.start !== "echo" && original.frozen.every(e => completed.has(e.id))) {
       startMarked = true;
       await trace.append("engine", { kind: "meta", op: "start-point", body: Buffer.from(JSON.stringify({ prefix_edits: [...edits].sort().map(field => ({ field })) })) });
     }
-    if (recovery && !resumeMarked && recoveryFrozen.every(e => ctx.served.has(e.id))) {
+    if (recovery && !resumeMarked && recoveryFrozen.every(e => completed.has(e.id))) {
       resumeMarked = true;
       await trace.append("engine", { kind: "meta", op: "resume-point", body: Buffer.from(JSON.stringify({ recovered: recoveryFrozen.length })) });
     }
-    if (live || options.start === "echo" || !index.frozen.every(e => ctx.served.has(e.id))) return;
+    if (live || options.start === "echo" || !index.frozen.every(e => completed.has(e.id))) return;
     live = true;
     clock.anchor(recovery && original.frozen.every(e => covered.has(e.id)) ? [...recoveryFrozen].sort((a, b) => a.completed - b.completed).at(-1)?.observedAt ?? index.cutTime : index.cutTime);
   };
@@ -150,6 +151,15 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
     if (originalExchange) ctx.served.add(originalExchange.id);
     for (const wake of changed) wake();
     return answer;
+  };
+
+  const advance = async (answer: Answer): Promise<void> => {
+    if (answer.exchange) {
+      completed.add(answer.exchange.id);
+      const originalExchange = recovered.get(answer.exchange.id);
+      if (originalExchange) completed.add(originalExchange.id);
+    }
+    await goLiveIfDone();
   };
 
   const respond = async (call: Call): Promise<Answer | undefined> => {
@@ -179,7 +189,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
 
   const responder = (surface: string, connector: string): Responder => ({
     connector, stream: streamName(surface, connector, String(linkCount++)), out: opened(), trace, policy: policy(connector),
-    history: () => ctx.histories[connector] ?? [], respond, advance: goLiveIfDone, diverge, interrupt,
+    history: () => ctx.histories[connector] ?? [], respond, advance, diverge, interrupt,
   });
   const waitFor = async (ids: readonly string[]): Promise<boolean> => {
     while (!stop && !ids.every(id => ctx.served.has(id))) await new Promise<void>(resolve => {
@@ -221,7 +231,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       }
       await send(withId(answer.raw.body, shape.message.id), answer);
       for (const message of answer.exchange?.after ?? []) await send(message, answer);
-      await goLiveIfDone();
+      await advance(answer);
     };
     return {
       async write(f) {
@@ -269,10 +279,10 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
         const compared = comparePrefixRequest(model!.dialect, exchange.request.body, body);
         if (!compared.ok) { first ??= compared; continue; }
         ctx.served.add(exchange.id);
-        accepted({ raw: exchange.response, provenance: exchange.provenance, resolver: "frozen-prefix", exchange });
+        const answer = accepted({ raw: exchange.response, provenance: exchange.provenance, resolver: "frozen-prefix", exchange });
         compared.edits.forEach(field => edits.add(field));
         await serveHttp(out, stream, model!.connector, exchange.response, { provenance: exchange.provenance, resolver: "frozen-prefix" }, `${request.method} ${modelInferencePath(model!.dialect, path)}`);
-        await goLiveIfDone();
+        await advance(answer);
         return;
       }
       const next = index.frozen.find(e => !ctx.served.has(e.id));
@@ -332,7 +342,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       const answer = await respond(call);
       if (!answer) return;
       await serveHttp(out, stream, connector, answer.raw, answer, call.op);
-      await goLiveIfDone();
+      await advance(answer);
     };
     return {
       async write(f) {
@@ -382,7 +392,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       mcpStdioTap({ backend, connector, io: { stdin: stream, stdout: stream, stderr: new PassThrough() } }).then(() => stream.end(), () => stream.destroy());
     },
     phase: () => live ? "live" : "prefix",
-    prefixComplete: () => index.frozen.every(e => ctx.served.has(e.id)),
+    prefixComplete: () => index.frozen.every(e => completed.has(e.id)),
     prefixEdits: () => [...edits].sort().map(field => ({ field })),
     async close() { try { await emulators.close(); } finally { await trace.close(); } },
   };
