@@ -51,7 +51,7 @@ export async function setupSnapshotMoment(o: AutoSetupOptions): Promise<{ manife
   for (const { path, fill } of fills) prepared.files.set(path, JSON.stringify(fill, null, 2) + "\n");
   const model = modelIdentifier(evidence);
   const manifest: MomentManifest = {
-    ...prepared.manifest, ...(model ? { model } : {}), connectors,
+    ...prepared.manifest, ...(model ? { model } : {}), ...(o.correction ? { correction: o.correction } : {}), connectors,
     ...(fills.length ? { fills: fills.map(({ path, fill }) => ({ path, tag: fill.tag, basis: fill.basis, producer: fill.producer })) } : {}),
   };
   await writeMomentBundle(o.out, { manifest, files: prepared.files, blobs: prepared.blobs });
