@@ -1,6 +1,6 @@
 # Phoenix: Spec
 
-Status: November 15, 2026, written from the grill.
+Status: November 15, 2026, written from the grill and updated with answers to the first architecture's questions.
 
 ## 1. Goal
 
@@ -26,26 +26,32 @@ What makes it different: Palantir's Ontology Snapshots and AIP Evolve do this fo
 ## 3. What it does
 
 ### Capture
-- While a harness runs live, Phoenix records every tool call, every response and its timing, all the time and in production, without changing what the agent does.
+- While a harness runs live, Phoenix records every tool call, every response and its timing, all the time and in production, without changing what the agent does. Capture never slows, blocks or stops the agent. If recording falls behind or fails, the record gets a clearly marked gap and the agent carries on.
 - Out of the box Phoenix ships an **MCP proxy**, a **CLI proxy**, **model-API recording**, and a set of **capture recipes**. A capture recipe is a ready-made way to capture a particular agent or tool surface, run alongside the agent, so that setting up replay is easy. The defaults are broad enough that a typical setup needs no custom code.
+- Capture routes are the person's choice, and there are many: the harness's own thread transcripts or session logs read after the fact, with no proxy in the path; the CLI proxy; the MCP proxy; model-API recording; and more. Whatever a chosen route didn't capture, an agent in the setup step fills in, and each filled-in answer is tagged with its fidelity (derived or synthesized).
+- Capture recipes aim to cover any login mode of any harness, including Ozi, pi and fx.
+- By default one launch of a harness is one run. A long-lived server harness marks where each task starts and ends, using its session or thread id or a marker call.
+- The harness's working directory is captured at the start of a run. Files git ignores are listed by default, not copied. Copying them is an opt-in, set per capture or per moment.
+- Running read-only tools at capture time, over the objects the agent saw, is opt-in per connector.
 - Model-API recording keeps exactly what the model saw from every tool, including tools nobody proxied.
 - The MCP proxy is an ordinary MCP proxy on the wire. Official, community and self-built servers all work the same way, over local (stdio) and remote (Streamable HTTP) transports. A person points their harness at the proxy and leaves their server unchanged. The negotiated MCP protocol version is recorded, since servers differ by revision.
 - Where a server calls a vendor API, a standard HTTP gateway can send that traffic to Phoenix's replay layer or an emulator, so the real server code still runs.
-- Privacy: secrets and personal data are redacted when they are recorded, auth headers are stripped by default, and raw captures are never published.
+- Privacy: private local captures keep the raw data exactly as recorded, except that passwords, tokens and auth headers are always stripped. Personal data is scrubbed only when a moment is packed to share, and media that can't be scanned is withheld at packing. Raw captures are never published.
 
 ### Moments
 - A **moment** is a marked point in a run, which can be live or entirely synthetic. The agent can flag it itself while it runs, for example when it notices it went wrong. Because recording is always on, a person or another agent can also pick any step afterward.
-- The mistake can be anything at any step, from the very first action onward. A replay can start from the beginning of the run or from the moment's mark, with everything before the mark frozen exactly as it was.
+- The mistake can be anything at any step, from the very first action onward. A replay can start from the beginning of the run, from the moment's mark, or at any point in between, with everything before its starting point frozen exactly as it was. A harness that drifts when that frozen prefix is re-run is limited to replay from the beginning.
 - A moment comes from either a **Snapshot**, the captured real state behind a live run, or a **Scenario**, a staged or seeded world for a situation that never happened live (a calendar with chosen events, a Slack workspace with chosen threads). Both kinds replay the same way.
-- A moment is saved as a **moment manifest**: a plain text file that can sit in git next to the harness. It holds the connector snapshots or logs, the clock time, prompt, model, harness version, recorded tool lists, MCP protocol version, and the success check.
+- A moment is saved as a **moment manifest**: a plain text file that can sit in git next to the harness. It holds the connector snapshots or logs, the clock time, the working directory, prompt, model, harness version, recorded tool lists, MCP protocol version, and the success check.
 
 ### Success check
 - Every moment has a success check that says what the right thing is. It is written down before the loop starts.
 - It can be a **deterministic expectation**: a tool was called or not called with matching arguments, tools were called in a given order, the number of calls stayed under a cap, the end state of a stateful fake equals the expected state, or the final text contains or matches something. It can also be a custom check written in TypeScript. Or it can be a **plain-language statement of intent**, such as "move only the 3pm, notify attendees, leave recurring events alone."
-- Following Palantir, a person's **correction** is the default starting point: when someone fixes or rejects what the agent did, live or afterward, that becomes the expected behavior. A correction can be marked as a one-off so it never becomes a check.
-- A setup step researches the moment by reading the trace, the harness and any docs, then drafts the check, and the person approves it before it is locked. For seeded Scenarios where nobody is around to approve, the check can be locked without approval as an opt-in.
+- Following Palantir, a person's **correction** is the default starting point: when someone fixes or rejects what the agent did, live or afterward, that becomes the expected behavior. A correction can be marked as a one-off so it never becomes a check. For now, corrections are entered through Phoenix's CLI.
+- A setup step researches the moment by reading the trace, the harness and any docs, then drafts the check, and the person approves it before it is locked. For seeded Scenarios where nobody is around to approve, the check can be locked without approval as an opt-in, set per moment.
 - Phoenix runs deterministic checks itself, and their result is binding. Plain-language intent is judged by the Improver.
-- Model output varies, so each check runs on several samples. A moment fails when half or more of its samples fail. A pass means the harness did better than the baseline on the same model and the same moment. The number of samples can be set per moment.
+- Model output varies, so each check runs on several samples. By default the setup step proposes 2, plus a 3rd when the first two disagree, and the number can be changed per moment. A moment fails when half or more of its samples fail. A pass means the harness did better than the baseline on the same model and the same moment.
+- A pass that rests on synthesized answers is a **discounted** pass. It counts toward neither the moment-set rule nor a patch until it is confirmed, either by a stateful fake, by a fresh real recording, or by the person accepting the pass.
 
 ### The Workbench and the Improver
 - The **Workbench** is Phoenix's internal sandbox. Inside it, the prompt, model, tools and connectors match the original run, but every connector answers from the frozen copy. Changes made live after the moment never affect a replay.
@@ -66,6 +72,8 @@ In order:
 The most faithful setup runs the real MCP server and redirects only the API underneath it to the replay layer or an emulator. That way tool names, defaults, formatting and error text match production exactly, which is what lets a fix carry over to live. Vendor-hosted MCP servers can't be redirected, so they stay at recorded fidelity.
 
 A virtual clock makes "now" match the captured moment, both for the harness and for the connector fakes.
+
+Replays run in containers only, and Phoenix starts no hypervisor of its own. Container runtimes that run their own Linux VM, such as Docker Desktop and Podman on macOS, are fine. The clock is faked inside the container. A harness whose clock can't be faked, such as a statically linked binary, a Go program or Codex's default Linux build, still replays, on the real clock, and its fidelity grade is unchanged.
 
 ### Fidelity
 - Every connector falls into a fidelity tier: **stateful** (a fake holds the full state and handles new calls), **recorded** (only calls seen in the original run are answered), **synthesized** (a model invents the answer, tagged as such), or **blocked** (can't be replayed).
@@ -91,7 +99,7 @@ A virtual clock makes "now" match the captured moment, both for the harness and 
 - **Connector plugins.** These are small, separately installed packages with a short interface: capture, serve, and a declared fidelity tier, including which tools are read-only. A connector with no plugin still works through generic record and replay. A test kit lets people add connectors and check their fidelity themselves.
 - **Swappable parts.** The Improver, the simulator model and the model provider can all be replaced. Plugins live outside the core, and the core works with none installed.
 - **Reference harness.** Phoenix ships a small harness of its own, written from scratch in TypeScript with one model and a few MCP and CLI tools. It serves as the example and as the proof that the harness contract works without anyone else's code.
-- **Works with real harnesses.** Phoenix works with Claude Code, Codex, pi, fx, Ozi, and any harness someone builds themselves. A harness that doesn't let you point its model base URL elsewhere needs its own way of recording at the model API.
+- **Works with real harnesses.** Phoenix works with Claude Code, Codex, pi, fx, Ozi, and any harness someone builds themselves, including long-lived server harnesses that handle many tasks in one process. A harness that doesn't let you point its model base URL elsewhere needs its own way of recording at the model API.
 
 ## 4. Scenarios
 
@@ -119,6 +127,7 @@ Drafted: this shows intent. The architecture decides.
 |---|---|
 | Recording proxy (MCP and CLI) | Sits between the harness and its tools and logs every call, response and time |
 | Model-API recorder | Records the requests and responses at the model API |
+| Transcript reader | Reads a harness's own thread transcripts or session logs after the fact, with nothing in the live path |
 | Replay layer | Serves recorded answers, applies write overlays, derives answers, and fails loudly on a miss |
 | Moment manifest | The shareable unit described in section 3 |
 | Connector plugins | Optional packages: capture, serve, declared fidelity tier, read-only tools |
@@ -126,7 +135,7 @@ Drafted: this shows intent. The architecture decides.
 | Virtual clock | Makes "now" match the captured moment |
 | Divergence detector | Flags any call the sandbox can't answer truthfully |
 | Runner | Builds and runs a moment from its manifest and records a full trace |
-| Setup step | Finds the connectors used, captures state, picks fidelity tiers, drafts the success check, writes the manifest |
+| Setup step | Finds the connectors used, captures state, fills in what the chosen capture routes missed (tagged derived or synthesized), picks fidelity tiers, drafts the success check, writes the manifest |
 | Workbench interface | What the Improver drives: list moments, read a trace, see editable files, edit, replay, run checks, read the fidelity report. Exposed as an MCP server plus a matching CLI, so any agent can connect |
 
 The specs for the plugin interface, the manifest and the trace format come early and are versioned, so people can build against them.
@@ -139,6 +148,9 @@ The specs for the plugin interface, the manifest and the trace format come early
 - **No dependency on vendor snapshots or exports.** They are too slow or don't exist.
 - **No capture only at the MCP wire.** CLI and API tools would get past it.
 - **No dependency on Ozi.** Ozi is only one of the harnesses Phoenix is checked against.
+- **No holding up the live agent to protect the record.** There is no flush-before-write capture mode; a failed or lagging recorder leaves a marked gap instead.
+- **No hypervisor of Phoenix's own.** Replays run in containers only.
+- **No reading corrections from a harness's own approve or reject prompts, for now.** Corrections come from Phoenix's CLI; reading them from the harness is later.
 
 ## 9. Open questions
 
