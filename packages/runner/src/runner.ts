@@ -7,7 +7,7 @@ import { startEngine, type Engine, type EngineOptions } from "@phoenix/engine";
 import { ContainerSandbox, writeClockFile, type ClockReport, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
 import { compareBaseline, customCheckHost, evaluateCheck, momentVerdict, sampleVerdict } from "@phoenix/checks";
 import { fidelityReport, weakestTier, type FidelityContext, type FidelityReport } from "@phoenix/fidelity";
-import { BlobStore, bundleApproval, digest, readApprovalsLedger, readCapture, readMomentBundle, type MomentBundle } from "@phoenix/store";
+import { BlobStore, bundleApproval, createTraceWriter, digest, readApprovalsLedger, readCapture, readMomentBundle, type MomentBundle } from "@phoenix/store";
 import type { ReplayResult, TraceEvent } from "@phoenix/formats";
 import { bundleBody, bundleEvidence, canonical, checked, claim, eventId, load, optional, save } from "./files.ts";
 import { materialize, treeDigest } from "./materialize.ts";
@@ -87,8 +87,10 @@ export class Runner {
       if (bundle.lockHash !== plan.bundle || bundle.lock.check !== plan.check) throw new Error("Resolved bundle changed");
       const approval = bundleApproval(bundle, (await readApprovalsLedger(this.#options.ledger)).entries);
       for (const [name, hash] of [["base", plan.base_tree], ["candidate", plan.candidate_tree]] as const) if (await treeDigest(join(directory, "inputs", name)) !== hash) throw new Error("Resolved tree changed");
+      for (const [index, plugin] of plan.runner.plugins.entries()) if (await treeDigest(join(directory, "inputs/plugins", String(index))) !== plugin.tree) throw new Error(`Resolved plugin changed: ${plugin.name}`);
+      const plugins = plan.runner.plugins.map((plugin, index) => ({ name: plugin.name, version: plugin.version, directory: join(directory, "inputs/plugins", String(index)), image: plugin.image, snapshot: plugin.snapshot, seed: plugin.seed, env: plugin.env }));
       if (plan.start !== "echo") {
-        const echoId = await this.plan({ moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: "echo", samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, env: plan.runner.env });
+        const echoId = await this.plan({ moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: "echo", samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, env: plan.runner.env, plugins });
         await this.resume(echoId);
         const drift = await optional<{ result: string }>(join(this.#options.root, "echo-drift", plan.base_tree.slice(7) + ".json"));
         if (plan.start !== "beginning" && drift) throw new Error(`This base tree supports only beginning; echo drift: ${drift.result}`);
@@ -99,7 +101,7 @@ export class Runner {
         const baselineId = digest(canonical(baselinePlan));
         const baselineDirectory = this.directory(baselineId);
         if (!await optional(join(baselineDirectory, "plan.json"))) {
-          const request: ReplayRequest = { moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: plan.start, samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, env: plan.runner.env };
+          const request: ReplayRequest = { moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: plan.start, samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, env: plan.runner.env, plugins };
           const resolved = await this.plan(request);
           if (resolved !== baselineId) throw new Error("Baseline plan differs");
         }
@@ -204,6 +206,7 @@ export class Runner {
     let engine: Engine | undefined;
     let process: SandboxProcess | undefined;
     let clockWrites = Promise.resolve();
+    const states = new Map<string, unknown>();
     let outcome: { kind: "finished"; code: number | null } | { kind: "interrupted"; why: string } | { kind: "diverged"; trigger: string; detail: string };
     try {
       const tree = await materialize({ bundle, base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.candidate_tree, directory: join(directory, "inputs/candidate") }, contract: plan.runner.harness, bindings: plan.runner.bindings, directory: root, env: plan.runner.env });
@@ -215,7 +218,16 @@ export class Runner {
         headers[name] = value;
       }
       const start = plan.start === "mark" ? { at: bundle.manifest.mark! } : plan.start;
-      engine = await startEngine({ evidence: { events: evidence, body: event => bundleBody(bundle, event) }, ...(recovery?.events.length ? { resume: { events: recovery.events, body: recovery.body } } : {}), connectors: bundle.manifest.connectors, start,
+      const emulators: NonNullable<EngineOptions["emulators"]>[number][] = [];
+      for (const [index, plugin] of plan.runner.plugins.entries()) {
+        const pluginRoot = join(root, "emulators", String(index));
+        await mkdir(join(pluginRoot, "inputs"), { recursive: true, mode: 0o700 });
+        if (plugin.snapshot) await writeFile(join(pluginRoot, "inputs/snapshot"), bundle.files.get(plugin.snapshot)!);
+        await writeFile(join(pluginRoot, "inputs/seed"), plugin.seed ? bundle.files.get(plugin.seed)! : JSON.stringify({ seed: digest(`${id}:${sample.sample}`) }));
+        await writeClockFile(join(pluginRoot, "clock"), bundle.manifest.clock?.time ?? evidence[0]?.ts.wall ?? new Date(0));
+        emulators.push({ plugin: { directory: join(directory, "inputs/plugins", String(index)), descriptor: plugin.descriptor }, options: { context: { ...(plugin.snapshot ? { snapshot: "/inputs/snapshot" } : {}), seed: "/inputs/seed" }, env: plugin.env, replay: { sandbox, spec: { image: plugin.image, mounts: [{ source: join(directory, "inputs/plugins", String(index)), target: "/plugin", readOnly: true }, { source: join(pluginRoot, "inputs"), target: "/inputs", readOnly: true }], workdir: "/plugin", clockFile: join(pluginRoot, "clock"), dontFakeMonotonic: true } } } });
+      }
+      engine = await startEngine({ evidence: { events: evidence, body: event => bundleBody(bundle, event) }, ...(recovery?.events.length ? { resume: { events: recovery.events, body: recovery.body } } : {}), emulators, connectors: bundle.manifest.connectors, start,
         clock: { start: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall }, routes: { ...tree.routes, http: { ...tree.routes.http, "phoenix-model": plan.runner.model.connector, "phoenix-model:8080": plan.runner.model.connector } },
         model: { connector: plan.runner.model.connector, dialect: dialect as NonNullable<EngineOptions["model"]>["dialect"], provider: { url: plan.runner.model.url, headers } },
         sample: { root: join(root, "trace"), metadata: { capture: `${id.slice(7)}-${sample.sample}-${attempt.attempt}`, harness: { name: plan.runner.harness.name, tree: plan.candidate_tree }, recipe: { name: "runner", version: "1" }, routes: ["tap"], started_at: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall ?? new Date(0).toISOString(), boot_id: `${id}-${sample.sample}-${attempt.attempt}` } }, hmacKey });
@@ -235,6 +247,7 @@ export class Runner {
         connections,
       ]);
       if (outcome.kind === "finished" && plan.start === "echo" && !engine.prefixComplete()) outcome = { kind: "diverged", trigger: "prefix-drift", detail: "Harness exited before consuming the complete echo prefix" };
+      if (outcome.kind === "finished") for (const exp of bundle.check.expect ?? []) if ("end_state" in exp) states.set(exp.end_state.connector, await engine.state(exp.end_state.connector));
       await save(join(root, "clock-report.json"), process.clock);
     } catch (error) { outcome = { kind: "interrupted", why: error instanceof Error ? error.message : String(error) }; }
     finally {
@@ -242,17 +255,28 @@ export class Runner {
       await engine?.close();
       await clockWrites;
     }
+    const clockReport = await optional<ClockReport>(join(root, "clock-report.json"));
+    const context: FidelityContext = { source: bundle.manifest.source, connectors: Object.fromEntries(Object.entries(bundle.manifest.connectors ?? {}).map(([name, connector]) => [name, { coverage_tier: connector.tier, origin: connector.origin, routes: connector.routes, read_only: connector.read_only, ...(plan.runner.plugins.find(p => p.descriptor.connector === name) ? { plugin_tier: plan.runner.plugins.find(p => p.descriptor.connector === name)!.descriptor.tier } : {}) }])), start: plan.start, prefix_edits: engine?.prefixEdits() ?? [], container_runtime: plan.container_runtime, clock: clockReport ?? { clock: "unknown" }, processes: clockReport?.binaries ?? [], ...("serve" in plan.runner.harness.run ? { earlier_tasks_not_replayed: true } : {}) };
+    const capture = `${id.slice(7)}-${sample.sample}-${attempt.attempt}`;
+    const contextEvent: TraceEvent = { v: 1, capture, stream: "runner", seq: 0, id: "runner:0", kind: "meta", op: "fidelity.context", ts: { wall: engine?.clock.now().toISOString() ?? new Date().toISOString(), mono: globalThis.process.hrtime.bigint().toString() }, body: { inline: JSON.stringify(context) } };
+    const limitations: TraceEvent = { ...contextEvent, seq: 1, id: "runner:1", op: "fidelity.workdir", body: { inline: JSON.stringify({ raw_address_reporting: false, snapshot_unread: bundle.manifest.workdir ? JSON.parse(Buffer.from(bundle.files.get(bundle.manifest.workdir)!).toString()).unread : [] }) } };
+    if (engine) {
+      const writer = createTraceWriter(join(root, "trace"), { capture, stream: "runner" });
+      if (writer.append(contextEvent) !== "queued" || writer.append(limitations) !== "queued") throw new Error("Runner trace context was dropped");
+      let seq = 2;
+      for (const [connector, value] of states) {
+        const event: TraceEvent = { ...contextEvent, seq, id: `runner:${seq++}`, connector, op: "end_state", body: { inline: JSON.stringify(value) } };
+        if (writer.append(event) !== "queued") throw new Error("Runner end-state trace was dropped");
+      }
+      await writer.close();
+    }
     const recorded = await sampleTrace(join(root, "trace"));
     const trace = recorded.events;
     const expectedStates = Object.fromEntries((bundle.check.expect ?? []).flatMap(exp => "end_state" in exp ? [[exp.end_state.equals, JSON.parse(Buffer.from(bundle.files.get(exp.end_state.equals)!).toString())]] : []));
     const boundary = trace.find(e => e.kind === "meta" && e.op === "start-point");
     const assessed = await evaluateCheck(bundle.check, { trace, blobs: recorded.blobs, ...(boundary ? { startAfter: eventId(boundary) } : {}) }, { expectedStates, custom: customCheckHost({ checksDirectory: join(directory, "inputs/bundle/checks"), workDirectory: root, image: plan.harness_image, sandbox }) });
     const verdict = sampleVerdict({ ...assessed, diverged: outcome.kind === "diverged" });
-    const clockReport = await optional<ClockReport>(join(root, "clock-report.json"));
-    const context: FidelityContext = { source: bundle.manifest.source, connectors: Object.fromEntries(Object.entries(bundle.manifest.connectors ?? {}).map(([name, connector]) => [name, { coverage_tier: connector.tier, origin: connector.origin, routes: connector.routes, read_only: connector.read_only }])), start: plan.start, prefix_edits: engine?.prefixEdits() ?? [], container_runtime: plan.container_runtime, clock: clockReport ?? { clock: "unknown" }, processes: clockReport?.binaries ?? [], ...("serve" in plan.runner.harness.run ? { earlier_tasks_not_replayed: true } : {}) };
-    const contextEvent: TraceEvent = { v: 1, capture: id, stream: "runner", seq: 0, id: "runner:0", kind: "meta", op: "fidelity.context", ts: { wall: new Date().toISOString() }, body: { inline: JSON.stringify(context) } };
-    const limitations: TraceEvent = { ...contextEvent, seq: 1, id: "runner:1", op: "fidelity.workdir", body: { inline: JSON.stringify({ raw_address_reporting: false, snapshot_unread: bundle.manifest.workdir ? JSON.parse(Buffer.from(bundle.files.get(bundle.manifest.workdir)!).toString()).unread : [] }) } };
-    const report = fidelityReport([contextEvent, ...trace, limitations], recorded.blobs);
+    const report = fidelityReport(engine ? trace : [contextEvent, limitations], recorded.blobs);
     if (outcome.kind === "diverged") {
       if (!report.divergences.length) report.divergences.push({ event: "runner", detail: outcome });
       report.grade = "blocked";
