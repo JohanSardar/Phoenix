@@ -28,7 +28,7 @@ export function streamName(...parts: string[]): string {
 }
 
 export class SampleTrace {
-  readonly #writers = new Map<string, { writer: TraceWriter; seq: number }>();
+  readonly #writers = new Map<string, { writer: TraceWriter; seq: number; tail: Promise<unknown> }>();
   readonly #root: string;
   readonly #capture: string;
   readonly #clock: VirtualClock;
@@ -45,17 +45,24 @@ export class SampleTrace {
     return new SampleTrace(root, metadata.capture, clock, hmacKey);
   }
 
-  async append(stream: string, entry: TraceEntry): Promise<string> {
+  append(stream: string, entry: TraceEntry): Promise<string> {
     let slot = this.#writers.get(stream);
     if (!slot) {
-      slot = { writer: createTraceWriter(this.#root, { capture: this.#capture, stream }), seq: 0 };
+      slot = { writer: createTraceWriter(this.#root, { capture: this.#capture, stream }), seq: 0, tail: Promise.resolve() };
       this.#writers.set(stream, slot);
     }
+    const ts = { wall: this.#clock.now().toISOString(), mono: process.hrtime.bigint().toString() };
+    const written = slot.tail.then(() => this.#write(slot, stream, entry, ts));
+    slot.tail = written.catch(() => {});
+    return written;
+  }
+
+  async #write(slot: { writer: TraceWriter; seq: number }, stream: string, entry: TraceEntry, ts: TraceEvent["ts"]): Promise<string> {
     const seq = slot.seq++;
     const id = `${stream}:${seq}`;
     const event: TraceEvent = {
       v: 1, capture: this.#capture, stream, seq, id, kind: entry.kind, route: "tap",
-      ts: { wall: this.#clock.now().toISOString(), mono: process.hrtime.bigint().toString() },
+      ts,
       ...(entry.surface ? { surface: entry.surface, layer: "agent" as const } : {}),
       ...(entry.connector !== undefined ? { connector: entry.connector } : {}),
       ...(entry.op ? { op: entry.op } : {}),
@@ -92,7 +99,7 @@ export class SampleTrace {
   }
 
   async close(): Promise<void> {
-    for (const { writer } of this.#writers.values()) await writer.close();
+    for (const { writer, tail } of this.#writers.values()) { await tail; await writer.close(); }
     this.#writers.clear();
   }
 }
