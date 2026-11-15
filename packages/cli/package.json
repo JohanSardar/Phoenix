@@ -29,6 +29,7 @@
     "@phoenix/setup": "workspace:*",
     "@phoenix/workbench": "workspace:*",
     "@phoenix/plugin-host": "workspace:*",
-    "@phoenix/plugin-kit": "workspace:*"
+    "@phoenix/plugin-kit": "workspace:*",
+    "yaml": "^2.9.1"
   }
 }
