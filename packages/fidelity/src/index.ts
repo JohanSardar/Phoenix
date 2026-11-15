@@ -1,5 +1,5 @@
 import { validate, type TraceEvent, type ReplayResult } from "@phoenix/formats";
-import { modelDialects, object } from "@phoenix/wire";
+import { decodeMcpHttp, modelDialects, object } from "@phoenix/wire";
 
 export type Tier = NonNullable<ReplayResult["fidelity_grade"]>;
 export interface ConnectorContext {
@@ -69,11 +69,12 @@ export function fidelityReport(trace: readonly TraceEvent[], blobs: Readonly<Rec
   const connectors = new Map<string, ConnectorReport>();
   const lastCall = new Map<string, string>();
   const rpcCalls = new Map<string, string>();
-  const body = (event: TraceEvent): unknown => {
+  const text = (event: TraceEvent): string => {
     const text = event.body && ("inline" in event.body ? event.body.inline : blobs[event.body.blob]);
     if (text === undefined) throw new Error(`Missing fidelity metadata body: ${event.id ?? event.stream}`);
-    return JSON.parse(text);
+    return text;
   };
+  const body = (event: TraceEvent): unknown => JSON.parse(text(event));
   for (const event of trace) {
     const valid = validate("trace", event);
     if (!valid.ok) throw new Error(valid.errors.join("; "));
@@ -116,8 +117,10 @@ export function fidelityReport(trace: readonly TraceEvent[], blobs: Readonly<Rec
     let rpcKey: string | undefined;
     if (event.surface === "mcp") {
       try {
-        const rpc = object(body(event));
-        if (typeof rpc.id === "string" || typeof rpc.id === "number") rpcKey = JSON.stringify([event.connector, event.stream, rpc.id]);
+        const value = text(event);
+        const decoded = decodeMcpHttp(new TextEncoder().encode(value), /^\s*(event:|data:|:)/.test(value) ? "text/event-stream" : "application/json");
+        const rpc = decoded.find(d => d.ok && (event.kind === "call" ? d.value.method === "tools/call" : "result" in d.value || "error" in d.value));
+        if (rpc?.ok && (typeof rpc.value.id === "string" || typeof rpc.value.id === "number")) rpcKey = JSON.stringify([event.connector, event.stream, rpc.value.id]);
       } catch { report.notes.push(`Cannot correlate MCP response evidence at ${id}`); }
     }
     if (event.kind === "call") lastCall.set(key, id);
