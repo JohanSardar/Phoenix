@@ -114,13 +114,13 @@ export async function buildIndex(events: readonly TraceEvent[], options: {
   for (const [position, event] of events.entries()) {
     if (event.kind !== "prefetch" || event.partial || !event.connector || !event.surface) continue;
     const decoded = decodeJson(await options.body(event));
-    if (!decoded.ok) continue;
-    const data = decoded.value as { op?: string; args?: unknown; request?: { body: string; head?: HttpRequest }; response?: { body: string; head?: import("@phoenix/wire").HttpResponse } };
+    if (!decoded.ok || !decoded.value || typeof decoded.value !== "object") continue;
+    const data = decoded.value as { op?: string; args?: unknown; request?: { body: string; body_encoding?: "base64"; head?: HttpRequest }; response?: { body: string; body_encoding?: "base64"; contentEncoding?: string; head?: import("@phoenix/wire").HttpResponse } };
     if (typeof data.op !== "string" || typeof data.request?.body !== "string" || typeof data.response?.body !== "string") continue;
-    const request = { ...data.request, body: Buffer.from(data.request.body) };
+    const request = { ...data.request, body: Buffer.from(data.request.body, data.request.body_encoding === "base64" ? "base64" : "utf8") };
     const call = toCall({ surface: event.surface, connector: event.connector, op: data.op, args: data.args, raw: request }, options.policy(event.connector));
     if (!call.readOnly) continue;
-    prefetch.push({ ...call, id: eventId(event), request, response: { ...data.response, body: Buffer.from(data.response.body) },
+    prefetch.push({ ...call, id: eventId(event), request, response: { ...data.response, body: Buffer.from(data.response.body, data.response.body_encoding === "base64" ? "base64" : "utf8") },
       history: writes.filter(w => w.call.connector === call.connector && w.completed < position).map(w => w.call.key),
       frozen: false, position, completed: position, observedAt: event.ts.wall, provenance: "recorded", during: [], after: [],
     });

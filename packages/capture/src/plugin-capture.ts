@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { startPlugin, type InstalledPlugin, type PluginSession } from "@phoenix/plugin-host";
 import { appendCoverage, BlobStore, createTraceWriter, readCapture } from "@phoenix/store";
 import { sanitizeMessage, secretPolicy } from "./secrets.ts";
-import { captureConnection, type CaptureObservation, type CaptureTarget } from "./plugin-connection.ts";
+import { captureConnection, type CaptureTarget } from "./plugin-connection.ts";
 
 export interface PluginCaptureOptions {
   root: string;
@@ -37,15 +37,35 @@ export async function capturePlugin(options: PluginCaptureOptions): Promise<void
     if (!Array.isArray(calls)) throw new Error("Capture plan needs calls");
     if (calls.some(call => !call || typeof call.op !== "string" || !plugin.descriptor.read_only?.includes(call.op))) throw new Error("Capture request is not declared read-only");
     connection = await captureConnection(options.target, connector, options.timeoutMs ?? 30_000);
-    const results: { op: string; args: unknown; observation: CaptureObservation }[] = [];
+    const results: { op: string; args: unknown; observation: unknown }[] = [];
     for (const call of calls) {
       const observation = await connection.call(call.op, call.args);
       const ts = { wall: new Date().toISOString(), mono: process.hrtime.bigint().toString() };
-      const sanitized = await sanitizeMessage({ body: Buffer.from(JSON.stringify({ op: call.op, args: call.args, ...observation })) }, policy);
-      const clean = JSON.parse(Buffer.from(sanitized.msg.body!).toString()) as { op: string; args: unknown } & CaptureObservation;
+      const messages = await Promise.all([observation.request, observation.response].map(async message => {
+        let bytes = message.body;
+        if (options.target.surface === "mcp") {
+          const envelope = JSON.parse(Buffer.from(bytes).toString());
+          let changed = false;
+          for (const item of envelope.result?.content ?? []) if (item.type === "text" && typeof item.text === "string") {
+            const stripped = await sanitizeMessage({ body: Buffer.from(item.text) }, policy);
+            const text = Buffer.from(stripped.msg.body!).toString();
+            if (text !== item.text) { item.text = text; changed = true; }
+          }
+          if (changed) bytes = Buffer.from(JSON.stringify(envelope) + "\n");
+        }
+        const headers = message.head?.headers ?? [];
+        const header = (name: string) => { for (let i = 0; i < headers.length; i += 2) if (headers[i]!.toLowerCase() === name) return headers[i + 1]; return undefined; };
+        const result = await sanitizeMessage({ body: bytes, contentType: header("content-type"), contentEncoding: header("content-encoding") }, policy);
+        let body: string, body_encoding: "base64" | undefined;
+        try { body = new TextDecoder("utf-8", { fatal: true }).decode(result.msg.body!); }
+        catch { body = Buffer.from(result.msg.body!).toString("base64"); body_encoding = "base64"; }
+        return { message: { ...message, body, ...(body_encoding ? { body_encoding } : {}), ...(result.originalEncoding ? { contentEncoding: result.originalEncoding } : {}) }, result };
+      }));
+      const sanitized = await sanitizeMessage({ body: Buffer.from(JSON.stringify({ op: call.op, args: call.args, request: messages[0]!.message, response: messages[1]!.message })) }, policy);
+      const clean = JSON.parse(Buffer.from(sanitized.msg.body!).toString()) as { op: string; args: unknown; request: unknown; response: unknown };
       const body = await blobs.put(sanitized.msg.body!);
       if (writer.append({ v: 1, capture: capture.metadata.capture, stream, seq: seq++, ts, kind: "prefetch", connector, surface: options.target.surface, op: call.op,
-        provenance: "recorded", body: { blob: body }, secrets: sanitized.unscanned.length ? "unscanned" : sanitized.changes }) === "dropped") throw new Error("Prefetch recording dropped");
+        provenance: "recorded", body: { blob: body }, secrets: sanitized.unscanned.length || messages.some(m => m.result.unscanned.length) ? "unscanned" : [...sanitized.changes, ...messages.flatMap(m => m.result.changes)] }) === "dropped") throw new Error("Prefetch recording dropped");
       await writer.drain();
       results.push({ op: call.op, args: clean.args, observation: { request: clean.request, response: clean.response } });
     }

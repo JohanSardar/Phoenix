@@ -26,6 +26,15 @@ function put(pointer: string | undefined, value: unknown): unknown {
   return result;
 }
 
+function declaredArguments(value: unknown, pointers: readonly string[], prefix = ""): boolean {
+  if (pointers.includes(prefix)) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.entries(value).every(([key, child]) => {
+    const pointer = `${prefix}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+    return pointers.some(p => p === pointer || p.startsWith(`${pointer}/`)) && declaredArguments(child, pointers, pointer);
+  });
+}
+
 function payload(raw: WireMessage, surface: string): { value: unknown; encode(value: unknown): WireMessage } | undefined {
   if (raw.contentEncoding) return;
   try {
@@ -57,7 +66,7 @@ function absorb(state: State, map: MapEntry, call: Pick<Call, "args" | "surface"
   const id = path(call.args, map.id_path);
   const items = data ? path(data.value, map.items_path) : undefined;
   if (!call.readOnly) {
-    if (map.kind !== "create" && typeof id !== "string") c.entities.clear();
+    if (map.kind !== "create" && typeof id !== "string") { c.entities.clear(); c.complete = false; c.uncertain = true; }
     if (map.kind === "create" || typeof id !== "string") {
       if (typeof path(items, map.id_path) !== "string") { c.complete = false; c.uncertain = true; }
     }
@@ -152,7 +161,7 @@ export const overlay: Resolver = {
     } else {
       if (!c.complete || c.unknown.size || c.uncertain) return { miss: true, why: "collection is not completely known" };
       const args = call.args as Record<string, unknown>;
-      if (!args || typeof args !== "object" || Array.isArray(args) || Object.keys(args).some(key => !map.filters?.some(f => f.arg === `/${key}`))) return { miss: true, why: "undeclared list filter" };
+      if (!args || typeof args !== "object" || Array.isArray(args) || !declaredArguments(args, (map.filters ?? []).map(f => f.arg))) return { miss: true, why: "undeclared list filter" };
       if (map.filters?.some(f => {
         const bounds = path(args, f.arg);
         return f.match === "range" && bounds !== undefined && (!Array.isArray(bounds) || bounds.length !== 2 || !["string", "number"].includes(typeof bounds[0]) || typeof bounds[0] !== typeof bounds[1] || bounds[0] > bounds[1]);
