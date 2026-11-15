@@ -10,10 +10,12 @@ import { eventId } from "./evidence.ts";
 
 type Withheld = NonNullable<NonNullable<MomentManifest["packed"]>["withheld"]>[number];
 
+const PRESIDIO_ENTITIES = ["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD", "IBAN_CODE", "US_SSN", "US_PASSPORT", "IP_ADDRESS"];
+
 export function presidioDetector(url: string): PersonalDataDetector {
   return { async detect(text) {
     const response = await fetch(new URL("analyze", url.endsWith("/") ? url : url + "/"), {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, language: "en" }), redirect: "error", signal: AbortSignal.timeout(60_000),
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, language: "en", entities: PRESIDIO_ENTITIES }), redirect: "error", signal: AbortSignal.timeout(60_000),
     });
     if (!response.ok) { await response.body?.cancel(); throw new Error(`Presidio analyzer failed (HTTP ${response.status})`); }
     return (await response.json() as { start: number; end: number; entity_type: string }[]).map((d) => ({ start: d.start, end: d.end, type: d.entity_type }));

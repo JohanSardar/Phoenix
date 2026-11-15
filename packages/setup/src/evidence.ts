@@ -115,7 +115,8 @@ export async function readEvidence(events: readonly TraceEvent[], body: Body): P
   for (const exchange of evidence.models) {
     const tools = toolDefinitions(exchange.request.value);
     if (!evidence.definitions && tools.length) evidence.definitions = { event: exchange.request.event, tools };
-    for (const use of modelDialects.responses.toolUses(exchange.request.value)) {
+    const v = exchange.request.value;
+    for (const use of modelDialects.responses.toolUses([v.input, v.messages, v.contents].flatMap((h) => Array.isArray(h) ? h : []))) {
       if (!use.id || !("result" in use) || outputs.has(use.id)) continue;
       const value = typeof use.result === "string" ? use.result : Array.isArray(use.result) ? use.result.map(part => object(part).text).filter(t => typeof t === "string").join("") : undefined;
       if (value !== undefined) outputs.set(use.id, { text: value, event: exchange.request.event });
