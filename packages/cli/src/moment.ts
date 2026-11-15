@@ -3,18 +3,24 @@ import { createScenarioMoment, createSnapshotMoment } from "@phoenix/setup";
 import { acceptMoment } from "@phoenix/approvals";
 import { readMomentBundle } from "@phoenix/store";
 import { approver, confirm, phoenixHome } from "./approval-prompt.ts";
+import { runMomentAutoCommand } from "./moment-auto.ts";
+import { runMomentPackCommand } from "./moment-pack.ts";
 
 const USAGE = [
   "Usage: phoenix moment create --capture <dir> [--task <key>] --mark <event> [--start beginning|mark|<event>] --id <id>",
   "         [--connector <name>:<mcp|cli|http> ...] [--check <file> | --correction <event>]",
   "         [--workdir <snapshot> | --no-workdir] [--include-ignored | --no-include-ignored] [--prompt <text>] [--timezone <tz>] <out-dir>",
   "       phoenix moment create --scenario <dir> [--home <dir>] [--who <name>] <out-dir>",
+  "       phoenix moment create --auto ... (run with --auto for its options)",
   "       phoenix moment accept [--home <dir>] [--who <name>] <moment-dir>",
+  "       phoenix moment pack --out <packed-dir> [--archive <file.tar>] [--presidio <analyzer-url>] [--home <dir>] [--who <name>] <moment-dir>",
 ].join("\n");
 
 const SURFACES = ["mcp", "cli", "http"] as const;
 
 export async function runMomentCommand(args: string[]): Promise<number> {
+  if (args[0] === "create" && args.includes("--auto")) return runMomentAutoCommand(args.slice(1));
+  if (args[0] === "pack") return runMomentPackCommand(args.slice(1));
   const { values: v, positionals } = parseArgs({
     args, allowPositionals: true, options: {
       capture: { type: "string" }, task: { type: "string" }, mark: { type: "string" }, start: { type: "string" }, id: { type: "string" },

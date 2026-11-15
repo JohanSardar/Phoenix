@@ -279,8 +279,10 @@ export async function stripSecrets(msg: WireMessage, policy: SecretPolicy): Prom
   return { msg: next, changes, unscanned, ...(originalEncoding ? { originalEncoding } : {}) };
 }
 
+const PERSONAL_PATTERNS = ["EMAIL", "PHONE_US", "PHONE_UK", "PHONE_UK_MOBILE", "PHONE_INTERNATIONAL", "CREDIT_CARD", "IBAN", "SSN", "PASSPORT_US", "PASSPORT_UK", "NATIONAL_INSURANCE_UK", "NHS_NUMBER", "IPV4", "IPV6", "DATE_OF_BIRTH"];
+
 export function openRedactionDetector(): PersonalDataDetector {
-  const detector = new LiteOpenRedaction({ enableCache: false, debug: false, enableAuditLog: false, enableMetrics: false, enableContextAnalysis: false, enableFalsePositiveFilter: false, confidenceThreshold: 0 });
+  const detector = new LiteOpenRedaction({ patterns: PERSONAL_PATTERNS, enableCache: false, debug: false, enableAuditLog: false, enableMetrics: false, enableContextAnalysis: false, enableFalsePositiveFilter: false, confidenceThreshold: 0 });
   return { async detect(text) {
     const result = await detector.detect(text);
     return result.detections.map((d) => ({ start: d.position[0], end: d.position[1], type: d.type }));
