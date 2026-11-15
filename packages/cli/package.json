@@ -1,0 +1,31 @@
+{
+  "name": "@phoenix/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@phoenix/spec": "workspace:*",
+    "@phoenix/formats": "workspace:*",
+    "@phoenix/store": "workspace:*",
+    "@phoenix/redact": "workspace:*",
+    "@phoenix/wire": "workspace:*",
+    "@phoenix/taps": "workspace:*",
+    "@phoenix/capture": "workspace:*",
+    "@phoenix/transcripts": "workspace:*",
+    "@phoenix/model": "workspace:*",
+    "@phoenix/answer": "workspace:*",
+    "@phoenix/engine": "workspace:*",
+    "@phoenix/sandbox": "workspace:*",
+    "@phoenix/checks": "workspace:*",
+    "@phoenix/fidelity": "workspace:*",
+    "@phoenix/runner": "workspace:*",
+    "@phoenix/approvals": "workspace:*",
+    "@phoenix/setup": "workspace:*",
+    "@phoenix/workbench": "workspace:*",
+    "@phoenix/plugin-host": "workspace:*",
+    "@phoenix/plugin-kit": "workspace:*"
+  }
+}

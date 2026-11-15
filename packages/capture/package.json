@@ -1,0 +1,16 @@
+{
+  "name": "@phoenix/capture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@phoenix/taps": "workspace:*",
+    "@phoenix/store": "workspace:*",
+    "@phoenix/redact": "workspace:*",
+    "@phoenix/plugin-host": "workspace:*",
+    "@phoenix/formats": "workspace:*"
+  }
+}

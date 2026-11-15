@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:ledger:v1",
+  "title": "LedgerEntry",
+  "description": "One entry in the approvals ledger (append-only JSON Lines in PHOENIX_HOME).",
+  "type": "object",
+  "required": [
+    "phoenix_ledger",
+    "moment",
+    "revision",
+    "how",
+    "who",
+    "at"
+  ],
+  "properties": {
+    "phoenix_ledger": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "moment": {
+      "type": "string",
+      "description": "Moment id."
+    },
+    "revision": {
+      "type": "string",
+      "description": "Moment revision."
+    },
+    "lock_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+    },
+    "result_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+    },
+    "how": {
+      "enum": [
+        "approved",
+        "auto",
+        "accepted",
+        "pass-accepted"
+      ]
+    },
+    "who": {
+      "type": "string"
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "how": {
+            "const": "pass-accepted"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "result_hash"
+        ]
+      },
+      "else": {
+        "required": [
+          "lock_hash"
+        ]
+      }
+    }
+  ]
+}

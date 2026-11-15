@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:harness:v1",
+  "title": "HarnessContract",
+  "description": "A harness contract (phoenix.harness.yaml).",
+  "type": "object",
+  "required": [
+    "phoenix_harness",
+    "name",
+    "run",
+    "endpoints",
+    "editable"
+  ],
+  "properties": {
+    "phoenix_harness": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "description": "A command as an argv array, never a joined shell string."
+            },
+            "output": {
+              "type": "string"
+            },
+            "build": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "description": "A command as an argv array, never a joined shell string."
+            },
+            "image": {
+              "type": "object",
+              "required": [
+                "dockerfile"
+              ],
+              "properties": {
+                "dockerfile": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "serve",
+            "ready",
+            "submit"
+          ],
+          "properties": {
+            "serve": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "description": "A command as an argv array, never a joined shell string."
+            },
+            "ready": {
+              "type": "object",
+              "required": [
+                "http"
+              ],
+              "properties": {
+                "http": {
+                  "type": "string",
+                  "description": "e.g. GET /health"
+                }
+              }
+            },
+            "submit": {
+              "type": "object",
+              "required": [
+                "http"
+              ],
+              "properties": {
+                "http": {
+                  "type": "object",
+                  "required": [
+                    "method",
+                    "path"
+                  ],
+                  "properties": {
+                    "method": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "build": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "description": "A command as an argv array, never a joined shell string."
+            },
+            "image": {
+              "type": "object",
+              "required": [
+                "dockerfile"
+              ],
+              "properties": {
+                "dockerfile": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "endpoints": {
+      "type": "object",
+      "required": [
+        "model"
+      ],
+      "properties": {
+        "model": {
+          "type": "object",
+          "required": [
+            "env",
+            "dialect"
+          ],
+          "properties": {
+            "env": {
+              "type": "string"
+            },
+            "dialect": {
+              "type": "string"
+            }
+          }
+        },
+        "mcp": {
+          "type": "object",
+          "required": [
+            "file",
+            "format"
+          ],
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "format": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "editable": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "Globs of editable paths."
+    }
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:lock:v1",
+  "title": "MomentLock",
+  "description": "A moment lock (moment.lock.json).",
+  "type": "object",
+  "required": [
+    "phoenix_lock",
+    "moment",
+    "manifest",
+    "check",
+    "checks",
+    "data",
+    "fills",
+    "how",
+    "approved_at"
+  ],
+  "properties": {
+    "phoenix_lock": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "moment": {
+      "type": "string",
+      "description": "Moment id."
+    },
+    "manifest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+    },
+    "check": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+      },
+      "description": "Hash of every custom-check file, by path."
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+      },
+      "description": "Hash of every data file, by path."
+    },
+    "fills": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+      },
+      "description": "Hash of every fill, by path."
+    },
+    "how": {
+      "enum": [
+        "approved",
+        "auto"
+      ]
+    },
+    "approved_by": {
+      "type": "string"
+    },
+    "approved_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "how": {
+            "const": "approved"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "approved_by"
+        ]
+      }
+    }
+  ]
+}

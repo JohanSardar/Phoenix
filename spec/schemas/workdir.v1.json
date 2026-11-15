@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:workdir:v1",
+  "title": "WorkdirSnapshot",
+  "description": "A working-directory snapshot manifest (workdir/<run>.json).",
+  "type": "object",
+  "required": [
+    "phoenix_workdir",
+    "path",
+    "entries",
+    "ignored_copied",
+    "unread"
+  ],
+  "properties": {
+    "phoenix_workdir": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "path": {
+      "type": "string",
+      "description": "The working directory's path."
+    },
+    "commit": {
+      "type": "string",
+      "description": "HEAD commit, when the directory is a git repository."
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "state"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "pattern": "^[0-7]+$",
+            "description": "File mode, octal."
+          },
+          "blob": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+          },
+          "state": {
+            "enum": [
+              "committed",
+              "copied",
+              "uncertain",
+              "ignored",
+              "ignored-copied"
+            ]
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mtime": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "const": "ignored"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "size",
+                "mtime"
+              ],
+              "not": {
+                "required": [
+                  "blob"
+                ]
+              }
+            },
+            "else": {
+              "required": [
+                "mode",
+                "blob"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ignored_copied": {
+      "type": "boolean",
+      "description": "Whether ignored files were copied."
+    },
+    "unread": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Paths that were not read."
+    },
+    "incomplete": {
+      "type": "boolean",
+      "description": "The snapshot could not finish."
+    }
+  }
+}

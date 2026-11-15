@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:trace:v1",
+  "title": "TraceEvent",
+  "description": "One event in a trace: one line of a segment, import or notes JSON Lines file.",
+  "type": "object",
+  "required": [
+    "v",
+    "capture",
+    "stream",
+    "seq",
+    "ts",
+    "kind"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "capture": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Capture id."
+    },
+    "stream": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stream id, assigned by the tap."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Sequence number within the stream, assigned by the tap."
+    },
+    "ts": {
+      "type": "object",
+      "required": [
+        "wall"
+      ],
+      "properties": {
+        "wall": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Wall-clock time."
+        },
+        "mono": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Host monotonic time in nanoseconds, where the route has one. A string because it may not fit a JSON number."
+        }
+      }
+    },
+    "kind": {
+      "enum": [
+        "call",
+        "result",
+        "meta",
+        "prefetch",
+        "mark",
+        "task",
+        "correction",
+        "gap",
+        "divergence",
+        "close"
+      ]
+    },
+    "route": {
+      "enum": [
+        "tap",
+        "transcript",
+        "import"
+      ]
+    },
+    "task": {
+      "type": "string",
+      "description": "Task key."
+    },
+    "surface": {
+      "enum": [
+        "mcp",
+        "cli",
+        "http"
+      ]
+    },
+    "layer": {
+      "enum": [
+        "agent",
+        "under"
+      ]
+    },
+    "parent": {
+      "type": "string",
+      "minLength": 1,
+      "description": "For layer under: the agent-level call this event is linked to."
+    },
+    "parent_basis": {
+      "enum": [
+        "sole-in-flight"
+      ],
+      "description": "Why parent was chosen. sole-in-flight marks an inference, not proof."
+    },
+    "connector": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "An event id within a capture."
+    },
+    "op": {
+      "type": "string",
+      "description": "Operation, e.g. tools/call:move_event."
+    },
+    "body": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "inline"
+          ],
+          "properties": {
+            "inline": {
+              "type": "string",
+              "description": "The body as received, apart from stripped secrets."
+            },
+            "content_encoding": {
+              "type": "string",
+              "description": "Original content encoding, noted when the body is stored decoded."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "blob"
+          ],
+          "properties": {
+            "blob": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+            },
+            "content_encoding": {
+              "type": "string",
+              "description": "Original content encoding, noted when the body is stored decoded."
+            }
+          }
+        }
+      ]
+    },
+    "chunks": {
+      "type": "array",
+      "description": "Streamed body chunks.",
+      "items": {
+        "type": "object",
+        "required": [
+          "offset",
+          "at"
+        ],
+        "properties": {
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "at": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "Arrival time, host monotonic nanoseconds."
+          }
+        }
+      }
+    },
+    "partial": {
+      "type": "boolean",
+      "description": "The message lost frames; only the frames that arrived are present."
+    },
+    "dropped": {
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "bytes"
+      ],
+      "description": "Copies dropped before this one, carried after a drop.",
+      "properties": {
+        "from": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "to": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "verbatim": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "For imported events: the fields that came from the log as written."
+    },
+    "provenance": {
+      "enum": [
+        "real",
+        "recorded",
+        "derived",
+        "synthesized"
+      ]
+    },
+    "resolver": {
+      "type": "string",
+      "description": "On replay results: the resolver that answered."
+    },
+    "secrets": {
+      "oneOf": [
+        {
+          "const": "unscanned"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "at",
+              "rule"
+            ],
+            "properties": {
+              "at": {
+                "type": "string"
+              },
+              "rule": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

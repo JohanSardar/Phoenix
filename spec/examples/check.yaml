@@ -1,0 +1,12 @@
+phoenix_check: 1
+samples: { base: 2, tiebreak: 1 }
+scope: continuation
+expect:
+  - called:     { tool: calendar.move_event, args: { event_id: evt_3pm }, times: 1 }
+  - not_called: { tool: calendar.move_event, args: { event_id: { not: evt_3pm } } }
+  - order:      [calendar.list_events, calendar.move_event, slack.post_message]
+  - max_calls:  { tool: "*", count: 12 }
+  - end_state:  { connector: calendar, equals: data/expected-calendar.json }
+  - final_text: { contains: "moved" }
+  - custom:     checks/only-3pm.ts
+intent: "Move only the 3pm, notify attendees, leave recurring events alone."

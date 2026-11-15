@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:recipe:v1",
+  "title": "RecipeDescriptor",
+  "description": "A capture recipe (recipe.yaml).",
+  "type": "object",
+  "required": [
+    "phoenix_recipe",
+    "name",
+    "harness_versions",
+    "routes"
+  ],
+  "properties": {
+    "phoenix_recipe": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "harness_versions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "login_modes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "routes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "versions",
+          "login_mode",
+          "surfaces"
+        ],
+        "properties": {
+          "versions": {
+            "type": "string"
+          },
+          "login_mode": {
+            "type": "string"
+          },
+          "surfaces": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "Routes offered, by surface."
+          }
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "setting",
+        "dialect"
+      ],
+      "properties": {
+        "setting": {
+          "type": "string",
+          "description": "The model base-URL setting."
+        },
+        "dialect": {
+          "type": "string"
+        }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "required": [
+        "file",
+        "format"
+      ],
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        }
+      }
+    },
+    "shim": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "CLI commands to shim."
+    },
+    "transcript_reader": {
+      "type": "object",
+      "required": [
+        "command",
+        "harness_versions"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "A command as an argv array, never a joined shell string."
+        },
+        "harness_versions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "task_keys": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "header"
+            ],
+            "properties": {
+              "header": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "meta"
+            ],
+            "properties": {
+              "meta": {
+                "type": "string",
+                "description": "A field in a request's _meta."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "json_path"
+            ],
+            "properties": {
+              "json_path": {
+                "type": "string",
+                "description": "A JSON path in model requests."
+              }
+            }
+          }
+        ]
+      }
+    },
+    "image": {
+      "type": "string",
+      "description": "Sandbox image."
+    },
+    "clock": {
+      "type": "object",
+      "required": [
+        "probe"
+      ],
+      "properties": {
+        "probe": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "A command as an argv array, never a joined shell string."
+        },
+        "dont_fake_monotonic": {
+          "type": "boolean"
+        }
+      }
+    },
+    "copy_ignored": {
+      "type": "boolean"
+    }
+  }
+}

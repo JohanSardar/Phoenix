@@ -1,0 +1,19 @@
+{
+  "phoenix_lock": 1,
+  "moment": "moved-wrong-event",
+  "manifest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "check": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "checks": {
+    "checks/only-3pm.ts": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "data": {
+    "data/workdir/run.json": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "data/calendar/exchanges.jsonl": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+  },
+  "fills": {
+    "data/fills/move-event-envelope.json": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+  },
+  "how": "approved",
+  "approved_by": "sam@example.com",
+  "approved_at": "2026-11-12T16:10:00Z"
+}

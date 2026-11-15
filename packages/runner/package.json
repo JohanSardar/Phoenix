@@ -1,0 +1,17 @@
+{
+  "name": "@phoenix/runner",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@phoenix/engine": "workspace:*",
+    "@phoenix/sandbox": "workspace:*",
+    "@phoenix/checks": "workspace:*",
+    "@phoenix/fidelity": "workspace:*",
+    "@phoenix/store": "workspace:*",
+    "@phoenix/formats": "workspace:*"
+  }
+}

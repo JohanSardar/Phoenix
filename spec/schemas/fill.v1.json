@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:fill:v1",
+  "title": "Fill",
+  "description": "One filled item in a moment's data/fills/.",
+  "type": "object",
+  "required": [
+    "phoenix_fill",
+    "item",
+    "tag",
+    "basis",
+    "producer",
+    "value"
+  ],
+  "properties": {
+    "phoenix_fill": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "item": {
+      "type": "string",
+      "description": "What is filled, e.g. an MCP result envelope, a model response, a tool list or a protocol version."
+    },
+    "connector": {
+      "type": "string"
+    },
+    "at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The event the fill belongs to."
+    },
+    "tag": {
+      "enum": [
+        "derived",
+        "synthesized"
+      ]
+    },
+    "basis": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "type": "string",
+          "description": "Name of the mechanical derivation rule."
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Evidence locations the fill rests on."
+        }
+      }
+    },
+    "producer": {
+      "type": "string",
+      "description": "A wire rule or the setup agent's model."
+    },
+    "value": {
+      "type": [
+        "object",
+        "array",
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ],
+      "description": "The filled item."
+    }
+  }
+}

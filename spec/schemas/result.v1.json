@@ -1,0 +1,313 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:result:v1",
+  "title": "ReplayResult",
+  "description": "A replay result (one moment, one plan).",
+  "type": "object",
+  "required": [
+    "phoenix_result",
+    "plan",
+    "check",
+    "ledger_entry",
+    "start",
+    "prefix_edits",
+    "samples",
+    "tiebreak_ran",
+    "verdict",
+    "discount"
+  ],
+  "properties": {
+    "phoenix_result": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "plan": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Plan hash."
+    },
+    "check": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Check hash."
+    },
+    "ledger_entry": {
+      "type": "object",
+      "required": [
+        "phoenix_ledger",
+        "moment",
+        "revision",
+        "how",
+        "who",
+        "at"
+      ],
+      "properties": {
+        "phoenix_ledger": {
+          "const": 1
+        },
+        "moment": {
+          "type": "string",
+          "description": "Moment id."
+        },
+        "revision": {
+          "type": "string",
+          "description": "Moment revision."
+        },
+        "lock_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+        },
+        "result_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+        },
+        "how": {
+          "enum": [
+            "approved",
+            "auto",
+            "accepted",
+            "pass-accepted"
+          ]
+        },
+        "who": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "how": {
+                "const": "pass-accepted"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "result_hash"
+            ]
+          },
+          "else": {
+            "required": [
+              "lock_hash"
+            ]
+          }
+        }
+      ]
+    },
+    "start": {
+      "oneOf": [
+        {
+          "enum": [
+            "beginning",
+            "mark",
+            "echo"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "at"
+          ],
+          "properties": {
+            "at": {
+              "type": "string",
+              "minLength": 1,
+              "description": "An event id within a capture."
+            }
+          }
+        }
+      ]
+    },
+    "prefix_edits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "field"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The configuration field that differs from the recording."
+          }
+        }
+      }
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "sample",
+          "tiebreak",
+          "status",
+          "attempts",
+          "expectations"
+        ],
+        "properties": {
+          "sample": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tiebreak": {
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "unassessed"
+            ]
+          },
+          "discounted": {
+            "type": "boolean"
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "attempt",
+                "status"
+              ],
+              "properties": {
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "status": {
+                  "enum": [
+                    "running",
+                    "interrupted",
+                    "finished"
+                  ]
+                },
+                "cause": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "expectations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "expectation",
+                "outcome",
+                "tainted"
+              ],
+              "properties": {
+                "expectation": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Index into the check's expect list."
+                },
+                "outcome": {
+                  "enum": [
+                    "pass",
+                    "fail",
+                    "error"
+                  ]
+                },
+                "tainted": {
+                  "type": "boolean"
+                },
+                "error": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "intent": {
+            "type": "object",
+            "required": [
+              "met",
+              "reason"
+            ],
+            "properties": {
+              "met": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "tiebreak_ran": {
+      "type": "boolean"
+    },
+    "baseline": {
+      "type": "object",
+      "required": [
+        "pass",
+        "fail",
+        "unassessed"
+      ],
+      "properties": {
+        "pass": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fail": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unassessed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "meets_check": {
+      "type": "boolean"
+    },
+    "improved": {
+      "type": "boolean"
+    },
+    "verdict": {
+      "enum": [
+        "fails",
+        "meets-check",
+        "incomplete"
+      ]
+    },
+    "discount": {
+      "type": "object",
+      "required": [
+        "discounted"
+      ],
+      "properties": {
+        "discounted": {
+          "type": "boolean"
+        },
+        "confirmed": {
+          "enum": [
+            "stateful-fake",
+            "fresh-recording",
+            "pass-accepted"
+          ],
+          "description": "How a discounted verdict was confirmed. Absent while unconfirmed."
+        }
+      }
+    },
+    "fidelity_grade": {
+      "enum": [
+        "stateful",
+        "recorded",
+        "synthesized",
+        "blocked"
+      ]
+    }
+  }
+}

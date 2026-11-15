@@ -1,0 +1,44 @@
+{
+  "phoenix_workdir": 1,
+  "path": "/home/sam/harness",
+  "commit": "4be3c1f9a0d2e7b6c5a4f3e2d1c0b9a8f7e6d5c4",
+  "entries": [
+    {
+      "path": "prompts/system.md",
+      "mode": "100644",
+      "blob": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "state": "committed"
+    },
+    {
+      "path": "config/model.yaml",
+      "mode": "100644",
+      "blob": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "state": "copied"
+    },
+    {
+      "path": "notes/todo.md",
+      "mode": "100644",
+      "blob": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "state": "uncertain"
+    },
+    {
+      "path": ".env.local",
+      "state": "ignored",
+      "size": 212,
+      "mtime": "2026-11-12T14:58:03Z"
+    },
+    {
+      "path": "cache/index.json",
+      "mode": "100644",
+      "blob": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "state": "ignored-copied",
+      "size": 1803,
+      "mtime": "2026-11-12T14:40:00Z"
+    }
+  ],
+  "ignored_copied": true,
+  "unread": [
+    "tmp/socket"
+  ],
+  "incomplete": false
+}

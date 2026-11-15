@@ -1,0 +1,8 @@
+phoenix_harness: 1
+name: my-harness
+run:      { command: [node, dist/main.js, --task-file, "{task_file}"], output: stdout,
+            build: [npm, run, build], image: { dockerfile: Dockerfile } }
+endpoints:
+  model:  { env: ANTHROPIC_BASE_URL, dialect: anthropic-messages }
+  mcp:    { file: .mcp.json, format: mcpServers }
+editable: ["prompts/**", "tools/*.json", "config/model.yaml"]

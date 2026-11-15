@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:plan:v1",
+  "title": "ReplayPlan",
+  "description": "A resolved replay plan (plan.json). Its hash is the Replay's identity.",
+  "type": "object",
+  "required": [
+    "phoenix_plan",
+    "bundle",
+    "check",
+    "base_tree",
+    "candidate_tree",
+    "harness_image",
+    "model",
+    "start",
+    "samples",
+    "plugins",
+    "container_runtime",
+    "clock_probe",
+    "matching_rules"
+  ],
+  "properties": {
+    "phoenix_plan": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "bundle": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Bundle digest."
+    },
+    "check": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Check hash."
+    },
+    "base_tree": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+    },
+    "candidate_tree": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+    },
+    "harness_image": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The model identifier as the provider reported it."
+        },
+        "alias": {
+          "type": "boolean",
+          "description": "True when id is an alias rather than a pinned model."
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Model parameters.",
+          "additionalProperties": true
+        }
+      }
+    },
+    "start": {
+      "oneOf": [
+        {
+          "enum": [
+            "beginning",
+            "mark",
+            "echo"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "at"
+          ],
+          "properties": {
+            "at": {
+              "type": "string",
+              "minLength": 1,
+              "description": "An event id within a capture."
+            }
+          }
+        }
+      ]
+    },
+    "samples": {
+      "type": "object",
+      "required": [
+        "base",
+        "tiebreak"
+      ],
+      "properties": {
+        "base": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tiebreak": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "plugins": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Resolved plugin versions, by plugin name."
+    },
+    "simulator": {
+      "type": "object",
+      "required": [
+        "model"
+      ],
+      "properties": {
+        "model": {
+          "type": "object",
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "The model identifier as the provider reported it."
+            },
+            "alias": {
+              "type": "boolean",
+              "description": "True when id is an alias rather than a pinned model."
+            },
+            "parameters": {
+              "type": "object",
+              "description": "Model parameters.",
+              "additionalProperties": true
+            }
+          }
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "container_runtime": {
+      "type": "string"
+    },
+    "clock_probe": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "A command as an argv array, never a joined shell string."
+    },
+    "matching_rules": {
+      "type": "string",
+      "description": "Version of the engine's matching rules."
+    }
+  }
+}

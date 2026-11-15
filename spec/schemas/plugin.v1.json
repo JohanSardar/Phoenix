@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:plugin:v1",
+  "title": "PluginDescriptor",
+  "description": "A connector plugin descriptor (phoenix-plugin.json). phoenix_plugin is the plugin-interface major version.",
+  "type": "object",
+  "required": [
+    "phoenix_plugin",
+    "connector",
+    "recognize",
+    "tier",
+    "operations"
+  ],
+  "properties": {
+    "phoenix_plugin": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "connector": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recognize": {
+      "type": "object",
+      "properties": {
+        "mcp_servers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "tier": {
+      "enum": [
+        "stateful",
+        "recorded",
+        "synthesized"
+      ],
+      "description": "Declared tier, a ceiling."
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "read_only": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "volatile": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "key_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "op",
+          "version",
+          "remove"
+        ],
+        "properties": {
+          "op": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "remove": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Argument paths removed from the call key."
+          }
+        }
+      }
+    },
+    "entity_map": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "kind",
+          "entity"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "list",
+              "get",
+              "create",
+              "update",
+              "delete"
+            ]
+          },
+          "entity": {
+            "type": "string"
+          },
+          "id_path": {
+            "type": "string"
+          },
+          "items_path": {
+            "type": "string"
+          },
+          "complete": {
+            "type": "string",
+            "description": "How a list result shows it is complete."
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "arg",
+                "field",
+                "match"
+              ],
+              "properties": {
+                "arg": {
+                  "type": "string"
+                },
+                "field": {
+                  "type": "string"
+                },
+                "match": {
+                  "enum": [
+                    "equality",
+                    "range"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "description": "By tool."
+    },
+    "capture": {
+      "type": "object",
+      "required": [
+        "command",
+        "protocol"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "A command as an argv array, never a joined shell string."
+        },
+        "protocol": {
+          "enum": [
+            "stdio",
+            "http"
+          ],
+          "description": "Newline-delimited JSON on stdio, or plain HTTP."
+        }
+      }
+    },
+    "serve": {
+      "type": "object",
+      "required": [
+        "command",
+        "protocol",
+        "level"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "A command as an argv array, never a joined shell string."
+        },
+        "protocol": {
+          "enum": [
+            "stdio",
+            "http"
+          ],
+          "description": "Newline-delimited JSON on stdio, or plain HTTP."
+        },
+        "level": {
+          "enum": [
+            "http",
+            "tool"
+          ]
+        }
+      }
+    }
+  }
+}

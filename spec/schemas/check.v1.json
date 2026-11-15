@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:check:v1",
+  "title": "SuccessCheck",
+  "description": "A success check (check.yaml).",
+  "type": "object",
+  "required": [
+    "phoenix_check",
+    "samples",
+    "scope"
+  ],
+  "properties": {
+    "phoenix_check": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "samples": {
+      "type": "object",
+      "required": [
+        "base",
+        "tiebreak"
+      ],
+      "properties": {
+        "base": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tiebreak": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "scope": {
+      "enum": [
+        "continuation",
+        "run"
+      ]
+    },
+    "expect": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "called"
+            ],
+            "maxProperties": 1,
+            "properties": {
+              "called": {
+                "type": "object",
+                "required": [
+                  "tool"
+                ],
+                "properties": {
+                  "tool": {
+                    "type": "string"
+                  },
+                  "args": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "times": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "not_called"
+            ],
+            "maxProperties": 1,
+            "properties": {
+              "not_called": {
+                "type": "object",
+                "required": [
+                  "tool"
+                ],
+                "properties": {
+                  "tool": {
+                    "type": "string"
+                  },
+                  "args": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "order"
+            ],
+            "maxProperties": 1,
+            "properties": {
+              "order": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 2
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "max_calls"
+            ],
+            "maxProperties": 1,
+            "properties": {
+              "max_calls": {
+                "type": "object",
+                "required": [
+                  "tool",
+                  "count"
+                ],
+                "properties": {
+                  "tool": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "end_state"
+            ],
+            "maxProperties": 1,
+            "properties": {
+              "end_state": {
+                "type": "object",
+                "required": [
+                  "connector",
+                  "equals"
+                ],
+                "properties": {
+                  "connector": {
+                    "type": "string"
+                  },
+                  "equals": {
+                    "type": "string",
+                    "description": "Path of the expected state file in the bundle."
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "final_text"
+            ],
+            "maxProperties": 1,
+            "properties": {
+              "final_text": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "contains"
+                    ],
+                    "properties": {
+                      "contains": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "matches"
+                    ],
+                    "properties": {
+                      "matches": {
+                        "type": "string",
+                        "description": "A regular expression."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "custom"
+            ],
+            "maxProperties": 1,
+            "properties": {
+              "custom": {
+                "type": "string",
+                "pattern": "^checks/.+\\.ts$",
+                "description": "A custom check module under checks/."
+              }
+            }
+          }
+        ]
+      },
+      "minItems": 1
+    },
+    "intent": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "not": {
+          "required": [
+            "expect"
+          ]
+        }
+      },
+      "then": {
+        "required": [
+          "intent"
+        ]
+      }
+    }
+  ]
+}

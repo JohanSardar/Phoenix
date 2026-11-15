@@ -1,0 +1,418 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:moment:v1",
+  "title": "MomentManifest",
+  "description": "A moment manifest (moment.yaml).",
+  "type": "object",
+  "required": [
+    "phoenix_moment",
+    "id",
+    "source"
+  ],
+  "properties": {
+    "phoenix_moment": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "enum": [
+        "snapshot",
+        "scenario"
+      ]
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "capture"
+      ],
+      "properties": {
+        "capture": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string",
+          "description": "Task key; empty or absent when the capture is one run."
+        }
+      }
+    },
+    "mark": {
+      "type": "string",
+      "minLength": 1,
+      "description": "An event id within a capture."
+    },
+    "start": {
+      "oneOf": [
+        {
+          "enum": [
+            "beginning",
+            "mark"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "at"
+          ],
+          "properties": {
+            "at": {
+              "type": "string",
+              "minLength": 1,
+              "description": "An event id within a capture."
+            }
+          }
+        }
+      ],
+      "description": "Default start point."
+    },
+    "clock": {
+      "type": "object",
+      "required": [
+        "time",
+        "timezone"
+      ],
+      "properties": {
+        "time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "timezone": {
+          "type": "string"
+        }
+      }
+    },
+    "prompt": {
+      "type": "string"
+    },
+    "workdir": {
+      "type": "string",
+      "description": "Reference to the working-directory snapshot under data/workdir/."
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The model identifier as the provider reported it."
+        },
+        "alias": {
+          "type": "boolean",
+          "description": "True when id is an alias rather than a pinned model."
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Model parameters.",
+          "additionalProperties": true
+        }
+      }
+    },
+    "harness": {
+      "type": "object",
+      "required": [
+        "name",
+        "tree"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "A SHA-256 digest, written sha256:<64 hex digits>."
+        },
+        "commit": {
+          "type": "string"
+        }
+      }
+    },
+    "recipe_version": {
+      "type": "string"
+    },
+    "connectors": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "surface",
+          "routes",
+          "tier",
+          "origin"
+        ],
+        "properties": {
+          "surface": {
+            "enum": [
+              "mcp",
+              "cli",
+              "http"
+            ]
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tier": {
+            "enum": [
+              "stateful",
+              "recorded",
+              "synthesized",
+              "blocked"
+            ]
+          },
+          "origin": {
+            "enum": [
+              "captured",
+              "seeded"
+            ]
+          },
+          "coverage": {
+            "type": "object",
+            "description": "The connector's coverage statement.",
+            "additionalProperties": true
+          },
+          "read_only": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "op",
+                "source"
+              ],
+              "properties": {
+                "op": {
+                  "type": "string"
+                },
+                "source": {
+                  "enum": [
+                    "plugin",
+                    "annotation",
+                    "http-safe-method"
+                  ],
+                  "description": "Anything but plugin is unverified."
+                }
+              }
+            }
+          },
+          "plugin": {
+            "type": "object",
+            "required": [
+              "name",
+              "version"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string",
+                "description": "Version range."
+              }
+            }
+          },
+          "tools": {
+            "type": "array",
+            "description": "The recorded tool list.",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "mcp": {
+            "type": "object",
+            "properties": {
+              "protocol_version": {
+                "type": "string"
+              },
+              "era": {
+                "type": "string"
+              }
+            }
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "kind"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "run-evidence",
+                    "capture-time",
+                    "confirmation"
+                  ]
+                }
+              }
+            }
+          },
+          "allow_synthesized": {
+            "type": "boolean",
+            "description": "Allow the simulator for this connector. Off unless set."
+          },
+          "repeat_reads": {
+            "type": "boolean",
+            "description": "Set false to turn off answering read-only calls with the last current observation."
+          },
+          "skip_resolvers": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "recorded",
+                "overlay",
+                "emulator",
+                "prefetch",
+                "simulator"
+              ]
+            },
+            "description": "Answer-chain steps removed for this connector."
+          }
+        }
+      }
+    },
+    "fills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "tag",
+          "basis",
+          "producer"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The fill file under data/fills/."
+          },
+          "tag": {
+            "enum": [
+              "derived",
+              "synthesized"
+            ]
+          },
+          "basis": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "type": "string",
+                "description": "Name of the mechanical derivation rule."
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Evidence locations the fill rests on."
+              }
+            }
+          },
+          "producer": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "executable": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Custom-check files, named as executable content."
+    },
+    "lock": {
+      "const": "auto",
+      "description": "Lock without approval. Seeded scenarios only."
+    },
+    "include_ignored": {
+      "type": "boolean"
+    },
+    "packed": {
+      "type": "object",
+      "required": [
+        "from"
+      ],
+      "description": "Set on a packed revision.",
+      "properties": {
+        "from": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Hash of the revision this was packed from."
+        },
+        "scrubbed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Locations scrubbed of personal data."
+        },
+        "withheld": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "at",
+              "size",
+              "reason"
+            ],
+            "properties": {
+              "at": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "const": "snapshot"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "run",
+          "mark"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "lock"
+        ]
+      },
+      "then": {
+        "properties": {
+          "source": {
+            "const": "scenario"
+          }
+        }
+      }
+    }
+  ]
+}
