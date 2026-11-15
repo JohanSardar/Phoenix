@@ -7,8 +7,8 @@ export type CaptureTarget =
   | { surface: "mcp"; command: string[]; cwd?: string; env?: NodeJS.ProcessEnv }
   | { surface: "http"; url: string; headers?: Record<string, string> };
 export interface CaptureObservation {
-  request: { body: string; head?: { method: string; url: string; headers: string[] } };
-  response: { body: string; head?: { status: number; headers: string[] } };
+  request: { body: Uint8Array; head?: { method: string; url: string; headers: string[] } };
+  response: { body: Uint8Array; head?: { status: number; headers: string[] } };
 }
 
 export async function captureConnection(target: CaptureTarget, connector: string, timeoutMs: number) {
@@ -25,7 +25,7 @@ export async function captureConnection(target: CaptureTarget, connector: string
         timer = setTimeout(() => reject(new Error("Capture read timed out")), timeoutMs);
       });
       await link!.write(frame("out", current, Buffer.from(body), true));
-      return { request: { body }, response: { body: await response } };
+      return { request: { body: Buffer.from(body) }, response: { body: Buffer.from(await response) } };
     } finally { clearTimeout(timer); pending.delete(current); }
   };
   if (target.surface === "mcp") {
@@ -50,7 +50,7 @@ export async function captureConnection(target: CaptureTarget, connector: string
     })();
     try {
       const initialized = await request("initialize", { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "phoenix-capture-sidecar", version: "1" } });
-      if (JSON.parse(initialized.response.body).error) throw new Error("Capture connection initialization failed");
+      if (JSON.parse(Buffer.from(initialized.response.body).toString()).error) throw new Error("Capture connection initialization failed");
       await link.write(frame("out", ++id, Buffer.from(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n"), true));
     } catch (error) { link.abort("Capture initialization failed"); throw error; }
   }
@@ -72,13 +72,13 @@ export async function captureConnection(target: CaptureTarget, connector: string
           const parts: Buffer[] = [];
           res.on("data", part => parts.push(part));
           res.once("error", reject);
-          res.once("end", () => resolve({ body: Buffer.concat(parts).toString(), head: { status: res.statusCode!, headers: res.rawHeaders } }));
+          res.once("end", () => resolve({ body: Buffer.concat(parts), head: { status: res.statusCode!, headers: res.rawHeaders } }));
         });
         const timer = setTimeout(() => req.destroy(new Error("Capture read timed out")), timeoutMs);
         req.once("close", () => clearTimeout(timer));
         req.once("error", reject); req.end(body);
       });
-      return { request: { body, head: { method, url: url.toString(), headers: Object.entries(headers).flat() } }, response };
+      return { request: { body: Buffer.from(body), head: { method, url: url.toString(), headers: Object.entries(headers).flat() } }, response };
     },
     close() { link?.abort("Capture sidecar finished"); },
   };
