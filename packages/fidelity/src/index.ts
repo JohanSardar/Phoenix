@@ -118,7 +118,9 @@ export function fidelityReport(trace: readonly TraceEvent[], blobs: Readonly<Rec
     if (event.surface === "mcp") {
       try {
         const value = text(event);
-        const decoded = decodeMcpHttp(new TextEncoder().encode(value), /^\s*(event:|data:|:)/.test(value) ? "text/event-stream" : "application/json");
+        const bytes = new TextEncoder().encode(value);
+        const json = decodeMcpHttp(bytes, "application/json");
+        const decoded = json.some(d => d.ok) ? json : decodeMcpHttp(bytes, "text/event-stream");
         const rpc = decoded.find(d => d.ok && (event.kind === "call" ? d.value.method === "tools/call" : "result" in d.value || "error" in d.value));
         if (rpc?.ok && (typeof rpc.value.id === "string" || typeof rpc.value.id === "number")) rpcKey = JSON.stringify([event.connector, event.stream, rpc.value.id]);
       } catch { report.notes.push(`Cannot correlate MCP response evidence at ${id}`); }
