@@ -1,5 +1,6 @@
 import type { TraceEvent } from "@phoenix/formats";
 import { stripSecrets } from "@phoenix/redact";
+import { decodeHttpBody } from "@phoenix/taps";
 import { BlobStore, createCapture, createTraceWriter, type CaptureMetadata, type TraceWriter } from "@phoenix/store";
 import type { VirtualClock } from "./clock.ts";
 
@@ -85,15 +86,17 @@ export class SampleTrace {
       event.body = { inline: JSON.stringify({ ...entry.head, headers, ...(msg.url !== undefined ? { url: msg.url } : {}) }) };
       if (msg.secrets) event.secrets = msg.secrets;
     } else if (entry.body) {
+      const decoded = decodeHttpBody(entry.body, ["content-encoding", entry.contentEncoding ?? "identity"]);
+      if (!decoded.ok) throw new Error(`Cannot decode sample trace body: ${decoded.why}`);
       const { msg, originalEncoding } = await stripSecrets({
-        body: entry.body,
-        ...(entry.contentEncoding ? { contentEncoding: entry.contentEncoding } : {}),
+        body: decoded.value,
         ...(entry.contentType ? { contentType: entry.contentType } : {}),
       }, { hmacKey: this.#hmacKey });
       const bytes = msg.body ?? entry.body;
       const inline = bytes.length <= INLINE_LIMIT ? text(bytes) : undefined;
       event.body = inline !== undefined ? { inline } : { blob: await this.#blobs.put(bytes) };
-      if (originalEncoding ?? entry.decodedFrom) event.body.content_encoding = (originalEncoding ?? entry.decodedFrom)!;
+      const encoding = originalEncoding ?? entry.decodedFrom ?? entry.contentEncoding;
+      if (encoding && encoding !== "identity") event.body.content_encoding = encoding;
       if (msg.secrets) event.secrets = msg.secrets;
     }
     if (slot.writer.append(event) !== "queued") throw new Error(`Sample trace dropped an event on ${stream}`);

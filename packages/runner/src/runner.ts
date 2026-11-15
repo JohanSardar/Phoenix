@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { startEngine, type Engine, type EngineOptions } from "@phoenix/engine";
+import { createSimulator, resolveModelDialect, startEngine, type Engine, type EngineOptions } from "@phoenix/engine";
 import { ContainerSandbox, writeClockFile, type ClockReport, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
 import { compareBaseline, customCheckHost, evaluateCheck, momentVerdict, sampleVerdict } from "@phoenix/checks";
 import { fidelityReport, weakestTier, type FidelityContext, type FidelityReport } from "@phoenix/fidelity";
@@ -33,6 +33,13 @@ export interface RunnerOptions {
 }
 
 const execute = promisify(execFile);
+function modelHeaders(refs: ReplayRequest["model"]["headers"]): Record<string, string> {
+  return Object.fromEntries(Object.entries(refs ?? {}).map(([name, ref]) => {
+    const value = process.env[ref.env];
+    if (!value) throw new Error(`Missing host model environment variable: ${ref.env}`);
+    return [name, value];
+  }));
+}
 async function sampleTrace(root: string): Promise<{ events: TraceEvent[]; body(event: TraceEvent): Promise<Uint8Array>; blobs: Record<string, string> }> {
   const blobs = new BlobStore(root);
   const body = async (event: TraceEvent): Promise<Uint8Array> => !event.body ? new Uint8Array() : "inline" in event.body ? Buffer.from(event.body.inline) : blobs.get(event.body.blob);
@@ -90,7 +97,7 @@ export class Runner {
       for (const [index, plugin] of plan.runner.plugins.entries()) if (await treeDigest(join(directory, "inputs/plugins", String(index))) !== plugin.tree) throw new Error(`Resolved plugin changed: ${plugin.name}`);
       const plugins = plan.runner.plugins.map((plugin, index) => ({ name: plugin.name, version: plugin.version, directory: join(directory, "inputs/plugins", String(index)), image: plugin.image, snapshot: plugin.snapshot, seed: plugin.seed, env: plugin.env }));
       if (plan.start !== "echo" && bundleEvidence(bundle).length) {
-        const echoId = await this.plan({ moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: "echo", samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, env: plan.runner.env, plugins });
+        const echoId = await this.plan({ moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: "echo", samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, env: plan.runner.env, plugins, simulator: plan.runner.simulator });
         await this.resume(echoId);
         const drift = await optional<{ result: string }>(join(this.#options.root, "echo-drift", plan.base_tree.slice(7) + ".json"));
         if (plan.start !== "beginning" && drift) throw new Error(`This base tree supports only beginning; echo drift: ${drift.result}`);
@@ -101,7 +108,7 @@ export class Runner {
         const baselineId = digest(canonical(baselinePlan));
         const baselineDirectory = this.directory(baselineId);
         if (!await optional(join(baselineDirectory, "plan.json"))) {
-          const request: ReplayRequest = { moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: plan.start, samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, env: plan.runner.env, plugins };
+          const request: ReplayRequest = { moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: plan.start, samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, env: plan.runner.env, plugins, simulator: plan.runner.simulator };
           const resolved = await this.plan(request);
           if (resolved !== baselineId) throw new Error("Baseline plan differs");
         }
@@ -196,7 +203,18 @@ export class Runner {
         return;
       }
       previous.status = "interrupted"; previous.cause = "runner interrupted";
-      if (previous.container && !this.#options.sandbox) await execute(plan.runner.cli[0]!, [...plan.runner.cli.slice(1), "rm", "-f", previous.container, previous.container.replace("phoenix-workload-", "phoenix-relay-")]).catch(() => {});
+      if (!this.#options.sandbox) {
+        const command = (args: string[]) => execute(plan.runner.cli[0]!, [...plan.runner.cli.slice(1), ...args]);
+        const containers = new Set(previous.container ? [previous.container] : []);
+        try {
+          const ids = (await command(["ps", "-aq", "--filter", "name=phoenix-workload-"])).stdout.trim().split(/\s+/).filter(Boolean);
+          if (ids.length) for (const line of (await command(["inspect", "--format", '{"name":{{json .Name}},"mounts":{{json .Mounts}}}', ...ids])).stdout.trim().split("\n")) {
+            const container = JSON.parse(line) as { name: string; mounts: { Source: string }[] };
+            if (container.mounts.some(m => m.Source.startsWith(previousRoot + "/"))) containers.add(container.name.replace(/^\//, ""));
+          }
+        } catch {}
+        if (containers.size) await command(["rm", "-f", ...[...containers].flatMap(name => [name, name.replace("phoenix-workload-", "phoenix-relay-")])]).catch(() => {});
+      }
       await persist();
     }
     const recovery = previous?.status === "interrupted" ? await sampleTrace(join(directory, "samples", String(sample.sample), String(previous.attempt), "trace")) : undefined;
@@ -208,17 +226,16 @@ export class Runner {
     let engine: Engine | undefined;
     let process: SandboxProcess | undefined;
     let clockWrites = Promise.resolve();
+    const submission = new AbortController();
     const states = new Map<string, unknown>();
     let outcome: { kind: "finished"; code: number | null } | { kind: "interrupted"; why: string } | { kind: "diverged"; trigger: string; detail: string };
     try {
       const tree = await materialize({ bundle, base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.candidate_tree, directory: join(directory, "inputs/candidate") }, contract: plan.runner.harness, bindings: plan.runner.bindings, directory: root, env: plan.runner.env });
-      const dialect = plan.runner.harness.endpoints.model.dialect;
-      const headers: Record<string, string> = {};
-      for (const [name, ref] of Object.entries(plan.start === "echo" ? {} : plan.runner.model.headers ?? {})) {
-        const value = globalThis.process.env[ref.env];
-        if (!value) throw new Error(`Missing host model environment variable: ${ref.env}`);
-        headers[name] = value;
-      }
+      const dialect = resolveModelDialect(plan.runner.harness.endpoints.model.dialect);
+      if (!dialect) throw new Error(`Unsupported model dialect: ${plan.runner.harness.endpoints.model.dialect}`);
+      const headers = modelHeaders(plan.start === "echo" ? undefined : plan.runner.model.headers);
+      const simulation = plan.start !== "echo" && plan.runner.simulator;
+      const simulator = simulation ? createSimulator({ moment: plan.bundle, root: join(this.#options.root, "simulator"), configuration: { ...simulation.config, model: simulation.model.id }, headers: modelHeaders(simulation.headers), improverModel: simulation.improverModel, attempts: simulation.config.attempts, outputSchemas: simulation.config.outputSchemas }) : undefined;
       const start = plan.start === "mark" ? { at: bundle.manifest.mark! } : plan.start;
       const emulators: NonNullable<EngineOptions["emulators"]>[number][] = [];
       for (const [index, plugin] of plan.runner.plugins.entries()) {
@@ -229,9 +246,9 @@ export class Runner {
         await writeClockFile(join(pluginRoot, "clock"), bundle.manifest.clock?.time ?? evidence[0]?.ts.wall ?? new Date(0));
         emulators.push({ plugin: { directory: join(directory, "inputs/plugins", String(index)), descriptor: plugin.descriptor }, options: { context: { ...(plugin.snapshot ? { snapshot: "/inputs/snapshot" } : {}), seed: "/inputs/seed" }, env: plugin.env, replay: { sandbox, spec: { image: plugin.image, mounts: [{ source: join(directory, "inputs/plugins", String(index)), target: "/plugin", readOnly: true }, { source: join(pluginRoot, "inputs"), target: "/inputs", readOnly: true }], workdir: "/plugin", clockFile: join(pluginRoot, "clock"), dontFakeMonotonic: true } } } });
       }
-      engine = await startEngine({ evidence: { events: evidence, body: event => bundleBody(bundle, event) }, ...(recovery?.events.length ? { resume: { events: recovery.events, body: recovery.body } } : {}), emulators, connectors: bundle.manifest.connectors, start,
+      engine = await startEngine({ evidence: { events: evidence, body: event => bundleBody(bundle, event) }, ...(recovery?.events.length ? { resume: { events: recovery.events, body: recovery.body } } : {}), emulators, simulator, connectors: bundle.manifest.connectors, start,
         clock: { start: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall }, routes: { ...tree.routes, http: { ...Object.fromEntries(plan.runner.plugins.flatMap(plugin => (plugin.descriptor.recognize.hosts ?? []).map(host => [host, plugin.descriptor.connector]))), ...tree.routes.http, "phoenix-model": plan.runner.model.connector, "phoenix-model:8080": plan.runner.model.connector } },
-        model: { connector: plan.runner.model.connector, dialect: dialect as NonNullable<EngineOptions["model"]>["dialect"], provider: { url: plan.runner.model.url, headers } },
+        model: { connector: plan.runner.model.connector, dialect, selection: plan.model, provider: { url: plan.runner.model.url, headers } },
         sample: { root: join(root, "trace"), metadata: { capture: `${id.slice(7)}-${sample.sample}-${attempt.attempt}`, harness: { name: plan.runner.harness.name, tree: plan.candidate_tree }, recipe: { name: "runner", version: "1" }, routes: ["tap"], started_at: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall ?? new Date(0).toISOString(), boot_id: `${id}-${sample.sample}-${attempt.attempt}` } }, hmacKey });
       await writeClockFile(join(root, "clock"), engine.clock.now());
       engine.clock.onAnchor(time => { clockWrites = clockWrites.then(() => writeClockFile(join(root, "clock"), time)); });
@@ -242,7 +259,7 @@ export class Runner {
       process.stdout.resume(); process.stderr.resume();
       const connections = (async () => { for await (const connection of running.channel) engine!.accept(connection); })().then(() => ({ kind: "interrupted" as const, why: "engine channel closed" }), () => ({ kind: "interrupted" as const, why: "engine channel closed" }));
       outcome = await Promise.race([
-        ...("serve" in plan.runner.harness.run ? [submitTask(running.channel, plan.runner.harness.run, bundle.manifest.prompt ?? "")] : []),
+        ...("serve" in plan.runner.harness.run ? [submitTask(running.channel, plan.runner.harness.run, bundle.manifest.prompt ?? "", submission.signal)] : []),
         process.exited.then(({ code }) => ({ kind: "finished" as const, code })),
         process.interrupted.then(error => ({ kind: "interrupted" as const, why: error.message })),
         engine.stopped.then(stop => stop.kind === "diverged" ? { kind: "diverged" as const, trigger: stop.divergence.trigger, detail: stop.divergence.detail } : stop),
@@ -253,6 +270,7 @@ export class Runner {
       await save(join(root, "clock-report.json"), process.clock);
     } catch (error) { outcome = { kind: "interrupted", why: error instanceof Error ? error.message : String(error) }; }
     finally {
+      submission.abort();
       await process?.stop().catch(() => {});
       await engine?.close();
       await clockWrites;

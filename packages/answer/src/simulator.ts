@@ -1,4 +1,4 @@
-import type { ModelProvider } from "@phoenix/model";
+import { HttpModelProvider, type ModelConfiguration, type ModelProvider } from "@phoenix/model";
 import { canonicalJson } from "@phoenix/wire";
 import { SimulatorStore } from "./simulator-store.ts";
 
@@ -10,6 +10,13 @@ export interface SimulatorOptions {
   clock(): unknown;
   outputSchemas?: Readonly<Record<string, Readonly<Record<string, object | boolean>>>>;
   attempts?: number;
+}
+
+export function createSimulator(options: { moment: string; root: string; configuration: ModelConfiguration; headers: Readonly<Record<string, string>>; improverModel: string; attempts?: number; outputSchemas?: SimulatorOptions["outputSchemas"] }): Omit<SimulatorOptions, "clock"> {
+  const { root, configuration, headers, ...rest } = options;
+  const provider = new HttpModelProvider(configuration, headers);
+  const { clock: _, ...resolved } = simulatorConfig({ ...rest, provider, store: new SimulatorStore(root), clock: () => undefined });
+  return resolved;
 }
 
 export function simulatorConfig(options: SimulatorOptions): SimulatorOptions {
