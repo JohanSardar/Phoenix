@@ -1,6 +1,7 @@
 import type { MomentManifest, TraceEvent } from "@phoenix/formats";
 import type { HttpRequest, HttpResponse, Surface, WriteHistories } from "@phoenix/wire";
 import type { Emulators } from "./emulators.ts";
+import type { SimulatorOptions } from "./simulator.ts";
 
 export type Provenance = NonNullable<TraceEvent["provenance"]>;
 export type ConnectorEntry = NonNullable<MomentManifest["connectors"]>[string];
@@ -71,6 +72,7 @@ export interface ExchangeIndex {
 
 export interface ReplayCtx {
   emulators?: Emulators;
+  simulator?: SimulatorOptions;
   index: ExchangeIndex;
   histories: WriteHistories;
   served: Set<string>;
