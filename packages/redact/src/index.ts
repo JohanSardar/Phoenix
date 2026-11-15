@@ -293,7 +293,10 @@ export async function scrubPersonalData(msg: WireMessage, policy: PackPolicy): P
   checkKey(policy.hmacKey);
   const detector = policy.detector ?? openRedactionDetector();
   const changes: Change[] = [], next: WireMessage = { ...msg };
-  const scan = async (text: string, at: string) => {
+  const scan = async (text: string, at: string): Promise<string> => {
+    if (/^\s*[[{]/.test(text)) {
+      try { JSON.parse(text); return await transformJson(text, scan); } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+    }
     const spans = (await detector.detect(text)).map((d) => ({ start: d.start, end: d.end, replacement: placeholder(text.slice(d.start, d.end), "personal", policy.hmacKey), rule: d.type }));
     const result = applySpans(text, spans);
     changes.push(...result.used.map((s) => ({ at: `${at}:${s.start}`, rule: s.rule })));
