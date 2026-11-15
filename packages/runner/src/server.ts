@@ -8,9 +8,8 @@ export async function submitTask(channel: EngineChannel, run: Extract<HarnessCon
   const ready = new URL(parts.join(" "), "http://localhost");
   if (ready.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(ready.hostname)) throw new Error("Server ready URL must be HTTP on container loopback");
   const call = (url: URL, method: string, body?: string): Promise<number> => new Promise((resolve, reject) => {
-    const req = request(url, { method, createConnection: () => channel.connect(Number(url.port || 80)), headers: body === undefined ? {} : { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, response => { response.resume(); response.once("end", () => resolve(response.statusCode ?? 500)); response.once("error", reject); });
+    const req = request(url, { method, signal: AbortSignal.timeout(10000), createConnection: () => channel.connect(Number(url.port || 80)), headers: body === undefined ? {} : { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, response => { response.resume(); response.once("end", () => resolve(response.statusCode ?? 500)); response.once("error", reject); });
     req.once("error", reject);
-    req.setTimeout(10000, () => req.destroy(new Error("Harness server request timed out")));
     req.end(body);
   });
   const deadline = performance.now() + 30000;
