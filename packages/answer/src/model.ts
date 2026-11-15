@@ -4,6 +4,19 @@ import type { Divergence } from "./divergence.ts";
 
 export type PrefixComparison = { ok: true; edits: string[] } | { ok: false; field: string; why: string };
 
+export const isModelDialect = (value: string): value is ModelDialectName => Object.hasOwn(modelDialects, value);
+
+export function selectModelRequest(dialect: ModelDialectName, path: string, body: Uint8Array, selection: { id: string; parameters?: Readonly<Record<string, unknown>> }): { path: string; body: Uint8Array } {
+  const decoded = decodeJson(body);
+  if (!decoded.ok) throw new Error("The model request is not JSON");
+  const request = object(decoded.value);
+  if (dialect === "generate-content") {
+    request.generationConfig = { ...object(request.generationConfig), ...selection.parameters };
+    path = path.replace(/\/models\/[^/:]+(?=:)/, `/models/${encodeURIComponent(selection.id)}`);
+  } else Object.assign(request, selection.parameters, { model: selection.id });
+  return { path, body: Buffer.from(JSON.stringify(request)) };
+}
+
 function firstDifference(a: unknown, b: unknown, path: string): string | undefined {
   if (Array.isArray(a) && Array.isArray(b)) {
     for (let i = 0; i < Math.max(a.length, b.length); i++) {

@@ -38,7 +38,7 @@ export class Emulators {
 
   has(connector: string): boolean { return this.#plugins.has(connector); }
 
-  async observe(call: Call, answer: Answer, at?: string): Promise<void> {
+  async observe(call: Call, answer: Answer, at?: string): Promise<EmulatorDifference | undefined> {
     if (!this.#plugins.has(call.connector) || answer.resolver === "emulator" || answer.provenance === "synthesized") return;
     const actual = await this.resolve(call, at);
     if ("miss" in actual) {
@@ -47,7 +47,11 @@ export class Emulators {
     }
     const describe = (a: Answer) => canonicalJson({ body: Buffer.from(a.raw.body).toString("base64"), head: a.raw.head ?? null });
     const expected = describe(answer), observed = describe(actual);
-    if (expected !== observed) await this.#difference({ connector: call.connector, op: call.op, expected, actual: observed });
+    if (expected !== observed) {
+      const difference = { connector: call.connector, op: call.op, expected, actual: observed };
+      await this.#difference(difference);
+      return difference;
+    }
   }
 
   async state(connector: string): Promise<unknown> {

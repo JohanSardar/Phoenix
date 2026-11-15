@@ -8,6 +8,7 @@ const INLINE_LIMIT = 64 * 1024;
 export interface TraceEntry {
   kind: TraceEvent["kind"];
   surface?: TraceEvent["surface"];
+  layer?: TraceEvent["layer"];
   connector?: string;
   op?: string;
   body?: Uint8Array;
@@ -17,6 +18,7 @@ export interface TraceEntry {
   contentType?: string;
   provenance?: TraceEvent["provenance"];
   resolver?: string;
+  chunks?: TraceEvent["chunks"];
 }
 
 const text = (bytes: Uint8Array): string | undefined => {
@@ -63,11 +65,12 @@ export class SampleTrace {
     const event: TraceEvent = {
       v: 1, capture: this.#capture, stream, seq, id, kind: entry.kind, route: "tap",
       ts,
-      ...(entry.surface ? { surface: entry.surface, layer: "agent" as const } : {}),
+      ...(entry.surface ? { surface: entry.surface, layer: entry.layer ?? "agent" as const } : {}),
       ...(entry.connector !== undefined ? { connector: entry.connector } : {}),
       ...(entry.op ? { op: entry.op } : {}),
       ...(entry.provenance ? { provenance: entry.provenance } : {}),
       ...(entry.resolver ? { resolver: entry.resolver } : {}),
+      ...(entry.chunks ? { chunks: entry.chunks } : {}),
     };
     if (entry.head) {
       const grouped: Record<string, string[]> = {};
