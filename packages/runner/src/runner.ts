@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { startEngine, type Engine, type EngineOptions } from "@phoenix/engine";
-import { ContainerSandbox, writeClockFile, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
+import { ContainerSandbox, writeClockFile, type ClockReport, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
 import { compareBaseline, customCheckHost, evaluateCheck, momentVerdict, sampleVerdict } from "@phoenix/checks";
 import { fidelityReport, weakestTier, type FidelityContext, type FidelityReport } from "@phoenix/fidelity";
 import { BlobStore, bundleApproval, digest, readApprovalsLedger, readCapture, readMomentBundle, type MomentBundle } from "@phoenix/store";
@@ -181,12 +181,13 @@ export class Runner {
     const previous = sample.attempts.at(-1);
     if (previous?.status === "running") {
       const previousRoot = join(directory, "samples", String(sample.sample), String(previous.attempt));
-      const completed = await optional<{ kind: string; code?: number }>(join(previousRoot, "outcome.json"));
+      const completed = await optional<{ kind: string; code?: number; detail?: string }>(join(previousRoot, "outcome.json"));
       const assessment = await optional<Awaited<ReturnType<typeof evaluateCheck>>>(join(previousRoot, "assessment.json"));
       if (completed && completed.kind !== "interrupted" && assessment && !(previous.recovered && completed.kind === "diverged")) {
         Object.assign(sample, sampleVerdict({ ...assessment, diverged: completed.kind === "diverged" }), { expectations: assessment.expectations, complete: true });
         if (completed.kind === "finished" && completed.code !== 0) sample.status = "fail";
         previous.status = "finished";
+        if (plan.start === "echo" && completed.kind === "diverged") await save(join(this.#options.root, "echo-drift", plan.base_tree.slice(7) + ".json"), { result: id, cause: completed.detail });
         await persist();
         return;
       }
@@ -208,7 +209,7 @@ export class Runner {
       const tree = await materialize({ bundle, base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.candidate_tree, directory: join(directory, "inputs/candidate") }, contract: plan.runner.harness, bindings: plan.runner.bindings, directory: root, env: plan.runner.env });
       const dialect = plan.runner.harness.endpoints.model.dialect;
       const headers: Record<string, string> = {};
-      for (const [name, ref] of Object.entries(plan.runner.model.headers ?? {})) {
+      for (const [name, ref] of Object.entries(plan.start === "echo" ? {} : plan.runner.model.headers ?? {})) {
         const value = globalThis.process.env[ref.env];
         if (!value) throw new Error(`Missing host model environment variable: ${ref.env}`);
         headers[name] = value;
@@ -247,11 +248,15 @@ export class Runner {
     const boundary = trace.find(e => e.kind === "meta" && e.op === "start-point");
     const assessed = await evaluateCheck(bundle.check, { trace, blobs: recorded.blobs, ...(boundary ? { startAfter: eventId(boundary) } : {}) }, { expectedStates, custom: customCheckHost({ checksDirectory: join(directory, "inputs/bundle/checks"), workDirectory: root, image: plan.harness_image, sandbox }) });
     const verdict = sampleVerdict({ ...assessed, diverged: outcome.kind === "diverged" });
-    const context: FidelityContext = { source: bundle.manifest.source, connectors: Object.fromEntries(Object.entries(bundle.manifest.connectors ?? {}).map(([name, connector]) => [name, { coverage_tier: connector.tier, origin: connector.origin, routes: connector.routes, read_only: connector.read_only }])), start: plan.start, prefix_edits: engine?.prefixEdits() ?? [], container_runtime: plan.container_runtime, clock: await optional(join(root, "clock-report.json")) ?? { clock: "unknown" }, processes: [], ...("serve" in plan.runner.harness.run ? { earlier_tasks_not_replayed: true } : {}) };
+    const clockReport = await optional<ClockReport>(join(root, "clock-report.json"));
+    const context: FidelityContext = { source: bundle.manifest.source, connectors: Object.fromEntries(Object.entries(bundle.manifest.connectors ?? {}).map(([name, connector]) => [name, { coverage_tier: connector.tier, origin: connector.origin, routes: connector.routes, read_only: connector.read_only }])), start: plan.start, prefix_edits: engine?.prefixEdits() ?? [], container_runtime: plan.container_runtime, clock: clockReport ?? { clock: "unknown" }, processes: clockReport?.binaries ?? [], ...("serve" in plan.runner.harness.run ? { earlier_tasks_not_replayed: true } : {}) };
     const contextEvent: TraceEvent = { v: 1, capture: id, stream: "runner", seq: 0, id: "runner:0", kind: "meta", op: "fidelity.context", ts: { wall: new Date().toISOString() }, body: { inline: JSON.stringify(context) } };
     const limitations: TraceEvent = { ...contextEvent, seq: 1, id: "runner:1", op: "fidelity.workdir", body: { inline: JSON.stringify({ raw_address_reporting: false, snapshot_unread: bundle.manifest.workdir ? JSON.parse(Buffer.from(bundle.files.get(bundle.manifest.workdir)!).toString()).unread : [] }) } };
     const report = fidelityReport([contextEvent, ...trace, limitations], recorded.blobs);
-    if (outcome.kind === "diverged" && !report.divergences.length) report.divergences.push({ event: "runner", detail: outcome });
+    if (outcome.kind === "diverged") {
+      if (!report.divergences.length) report.divergences.push({ event: "runner", detail: outcome });
+      report.grade = "blocked";
+    }
     await save(join(root, "fidelity.json"), report);
     await save(join(root, "assessment.json"), assessed);
     await save(join(root, "outcome.json"), outcome);
