@@ -4,7 +4,7 @@ import type { Resolver } from "../types.ts";
 export const recorded: Resolver = {
   name: "recorded",
   async resolve(call, ctx) {
-    const history = ctx.histories[call.connector] ?? [];
+    const history = call.history ?? ctx.histories[call.connector] ?? [];
     const sameKey = ctx.index.exchanges.filter(e => e.connector === call.connector && e.key === call.key);
     if (!sameKey.length) return { miss: true, why: "no recorded exchange has this call key" };
     const later = sameKey.filter(e => !e.frozen);
