@@ -84,6 +84,7 @@ function externalAccess(request: Record<string, unknown>): string[] {
     const v = object(value);
     if (typeof v.type === "string" && /^(web_search|web_fetch|computer|mcp|code_interpreter|file_search)/.test(v.type)) paths.push(path);
     for (const [key, item] of Object.entries(v)) {
+      if (["googleSearch", "googleSearchRetrieval", "enterpriseWebSearch", "urlContext", "codeExecution", "computerUse", "googleMaps"].includes(key)) paths.push(`${path}/${key}`);
       if (["image_url", "file_url", "video_url", "audio_url"].includes(key) && (typeof item === "string" || typeof object(item).url === "string")) {
         const url = typeof item === "string" ? item : object(item).url as string;
         if (/^https?:/i.test(url)) paths.push(`${path}/${key}`);

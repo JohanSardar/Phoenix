@@ -18,8 +18,9 @@ interface Paired {
   during: { message: Uint8Array; reply?: Uint8Array }[];
 }
 
-async function pairMcp(list: readonly TraceEvent[], body: (e: TraceEvent) => Promise<Uint8Array>): Promise<Paired[]> {
+async function pairMcp(list: readonly TraceEvent[], body: (e: TraceEvent) => Promise<Uint8Array>, notifications: Set<string>): Promise<Paired[]> {
   const paired: Paired[] = [];
+  let unsolicited: { message: Uint8Array; reply?: Uint8Array }[] = [];
   const open = new Map<string, Omit<Paired, "result" | "response">>();
   const order: Omit<Paired, "result" | "response">[] = [];
   const awaitingReply = new Map<string, { message: Uint8Array; reply?: Uint8Array }>();
@@ -30,8 +31,11 @@ async function pairMcp(list: readonly TraceEvent[], body: (e: TraceEvent) => Pro
     const { message } = shape;
     const id = JSON.stringify(message.id);
     if (event.kind === "call" && message.method && "id" in message) {
-      const draft = { call: event, surface: "mcp" as const, op: shape.op!, args: shape.args, request: { body: bytes }, during: [] };
+      const draft = { call: event, surface: "mcp" as const, op: shape.op!, args: shape.args, request: { body: bytes }, during: unsolicited };
+      unsolicited = [];
       open.set(id, draft); order.push(draft);
+    } else if (event.kind === "call" && message.method) {
+      notifications.add(message.method);
     } else if (event.kind === "call" && !message.method && awaitingReply.has(id)) {
       awaitingReply.get(id)!.reply = bytes;
       awaitingReply.delete(id);
@@ -40,9 +44,9 @@ async function pairMcp(list: readonly TraceEvent[], body: (e: TraceEvent) => Pro
       open.delete(id);
       order.splice(order.indexOf(draft), 1);
       paired.push({ ...draft, result: event, response: { body: bytes } });
-    } else if (event.kind === "result" && message.method && order.length) {
+    } else if (event.kind === "result" && message.method) {
       const during: { message: Uint8Array; reply?: Uint8Array } = { message: bytes };
-      order.at(-1)!.during.push(during);
+      (order.at(-1)?.during ?? unsolicited).push(during);
       if ("id" in message) awaitingReply.set(id, during);
     }
   }
@@ -80,8 +84,13 @@ export async function buildIndex(events: readonly TraceEvent[], options: {
     streams.set(event.stream, [...streams.get(event.stream) ?? [], event]);
   }
   const paired: Paired[] = [];
-  for (const list of streams.values())
-    paired.push(...await (list[0]!.surface === "mcp" ? pairMcp : list[0]!.surface === "http" ? pairHttp : async () => [])(list, options.body));
+  const notifications = new Map<string, Set<string>>();
+  for (const list of streams.values()) {
+    const connector = list[0]!.connector!;
+    if (!notifications.has(connector)) notifications.set(connector, new Set());
+    if (list[0]!.surface === "mcp") paired.push(...await pairMcp(list, options.body, notifications.get(connector)!));
+    else if (list[0]!.surface === "http") paired.push(...await pairHttp(list, options.body));
+  }
   const position = new Map(events.map((e, i) => [e, i] as const));
   const drafts = paired.map(p => {
     const call = toCall({ surface: p.surface, layer: p.call.layer, connector: p.call.connector!, op: p.op, args: p.args, raw: p.request }, options.policy(p.call.connector!));
@@ -92,12 +101,12 @@ export async function buildIndex(events: readonly TraceEvent[], options: {
     id: eventId(p.call), surface: call.surface, layer: call.layer, connector: call.connector, op: call.op, args: call.args, key: call.key, readOnly: call.readOnly,
     history: writes.filter(w => w.call.connector === call.connector && w.completed < position).map(w => w.call.key),
     frozen: completed < cut, position, completed, observedAt: p.result.ts.wall,
-    provenance: (p.result.provenance ?? "recorded") as Provenance,
+    provenance: (p.result.provenance === "derived" || p.result.provenance === "synthesized" ? p.result.provenance : "recorded") as Provenance,
     request: p.request, response: p.response, during: p.during,
   }));
   const startTime = options.startTime ?? events[0]?.ts.wall ?? new Date(0).toISOString();
   return {
-    exchanges, frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), startTime,
+    exchanges, frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), notifications, startTime,
     cutTime: cut === 0 ? startTime : events[Math.min(cut, events.length - 1)]!.ts.wall,
   };
 }
