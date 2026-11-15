@@ -17,7 +17,7 @@ export const recorded: Resolver = {
     const policy = ctx.policy(call.connector);
     const observed = sameKey.filter(e => (e.frozen || ctx.served.has(e.id)) && sameWriteHistory(e.history, history)).at(-1);
     if (call.readOnly && observed && policy.repeat_reads !== false && !policy.volatile?.includes(call.op))
-      return { raw: observed.response, provenance: "derived", resolver: "recorded", note: "repeat of last observation", exchange: observed };
+      return { raw: observed.response, provenance: "derived", resolver: "recorded", note: "repeat of last observation" };
     if (later.length && !current.length)
       return { miss: true, why: `stale: ${later.length} recorded answer(s) with this key were observed after a different write history on ${call.connector}` };
     return { miss: true, why: `all ${current.length} current recorded answer(s) with this key were already served` };
