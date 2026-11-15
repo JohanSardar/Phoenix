@@ -6,7 +6,7 @@ import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "nod
 import type { MomentManifest, TraceEvent } from "@phoenix/formats";
 import {
   answerCall, buildIndex, checkModelRequest, comparePrefixRequest, httpHost, httpShape, matchFrozen, mcpShape, replayCtx, sameReply, toCall,
-  Emulators, type EmulatorConfig, type Answer, type Call, type ConnectorPolicy, type Divergence, type ModelDialectName, type StartPoint, type WireMessage,
+  Emulators, type EmulatorConfig, type Answer, type Call, type ConnectorPolicy, type Divergence, type ModelDialectName, type SimulatorOptions, type StartPoint, type WireMessage,
 } from "@phoenix/answer";
 import type { CaptureMetadata } from "@phoenix/store";
 import { HTTP_STREAM, encodeHttpHead, httpGatewayTap, mcpStdioTap, type Backend, type Frame, type Link } from "@phoenix/taps";
@@ -15,6 +15,7 @@ import { SampleTrace, streamName } from "./trace.ts";
 
 export interface EngineOptions {
   emulators?: readonly EmulatorConfig[];
+  simulator?: Omit<SimulatorOptions, "clock">;
   evidence: { events: readonly TraceEvent[]; body(event: TraceEvent): Promise<Uint8Array> };
   connectors?: MomentManifest["connectors"];
   volatile?: Readonly<Record<string, readonly string[]>>;
@@ -97,7 +98,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       await trace.append("engine", { kind: "meta", connector: difference.connector, op: "fidelity.emulator_differences", body: Buffer.from(JSON.stringify(difference)) });
     });
   } catch (error) { await trace.close(); throw error; }
-  const ctx = replayCtx(index, policy, emulators);
+  const ctx = replayCtx(index, policy, emulators, options.simulator ? { ...options.simulator, clock: () => index.cutTime } : undefined);
   const edits = new Set<string>();
   const links = new Set<Outbox>();
   let live = false, linkCount = 0;

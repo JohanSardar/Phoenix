@@ -1,11 +1,12 @@
 import { completeCall, sameWriteHistory, type WriteHistories } from "@phoenix/wire";
 import type { Divergence } from "./divergence.ts";
 import { resolvers } from "./resolvers/index.ts";
+import { simulatorConfig, type SimulatorOptions } from "./simulator.ts";
 import type { Answer, Call, ConnectorPolicy, Exchange, ExchangeIndex, ReplayCtx } from "./types.ts";
 import type { Emulators } from "./emulators.ts";
 
-export function replayCtx(index: ExchangeIndex, policy: (connector: string) => ConnectorPolicy, emulators?: Emulators): ReplayCtx {
-  return { index, histories: {}, served: new Set(), policy, emulators };
+export function replayCtx(index: ExchangeIndex, policy: (connector: string) => ConnectorPolicy, emulators?: Emulators, simulator?: SimulatorOptions): ReplayCtx {
+  return { index, histories: {}, served: new Set(), policy, emulators, ...(simulator ? { simulator: simulatorConfig(simulator) } : {}) };
 }
 
 const served = (call: Call, ctx: ReplayCtx): void => { ctx.histories = completeCall(ctx.histories, call) as WriteHistories; };
