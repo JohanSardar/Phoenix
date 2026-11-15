@@ -5,3 +5,5 @@ Phoenix is an open-source system that records everything an agent harness does w
 - [Spec](docs/SPEC.md)
 - [Glossary](GLOSSARY.md)
 - [Architecture decision records](docs/adr/)
+
+License: MIT, see LICENSE
