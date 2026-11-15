@@ -4,7 +4,7 @@ import { canonicalJson, decodeCliInvocation, decodeHttpBody, decodeJson, decodeM
 export type Body = (event: TraceEvent) => Promise<Uint8Array | undefined>;
 export const eventId = (e: TraceEvent): string => e.id ?? `${e.stream}:${e.seq}`;
 
-export interface McpCall { connector: string; call: TraceEvent; request: RpcMessage; op: string; result?: { event: TraceEvent; message: RpcMessage } }
+export interface McpCall { connector: string; call: TraceEvent; request: RpcMessage; op: string; result?: { event: TraceEvent; message: RpcMessage }; text?: { event: TraceEvent; text: string } }
 export interface ModelExchange { connector: string; request: { event: TraceEvent; value: Record<string, unknown> }; response?: { event: TraceEvent; values: unknown[] } }
 export interface CliCall { connector: string; event: TraceEvent; argv: string[] }
 export interface HttpCall { connector: string; method: string; op: string; response?: { status: number; body?: unknown } }
@@ -20,7 +20,7 @@ export interface RunEvidence {
   cli: CliCall[];
   http: HttpCall[];
   toolUses: ToolUse[];
-  definitions?: { event: TraceEvent; tools: ToolDefinition[] };
+  definitions?: { event: TraceEvent; request: Record<string, unknown>; tools: ToolDefinition[] };
 }
 
 const json = (bytes: Uint8Array | undefined): unknown => {
@@ -64,8 +64,16 @@ export async function readEvidence(events: readonly TraceEvent[], body: Body): P
       const open = new Map<string, McpCall>();
       for (const e of list) {
         if (e.kind !== "call" && e.kind !== "result") continue;
-        const decoded = decodeMcp((await body(e)) ?? new Uint8Array());
-        if (!decoded.ok) continue;
+        const bytes = (await body(e)) ?? new Uint8Array(), decoded = decodeMcp(bytes);
+        if (!decoded.ok) {
+          const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+          if (e.kind === "result" && e.route !== "tap" && !e.partial && open.size === 1) {
+            const call = [...open.values()][0]!;
+            open.clear();
+            call.text = { event: e, text };
+          }
+          continue;
+        }
         const message = decoded.value, id = JSON.stringify(message.id);
         if (e.kind === "call" && message.method && "id" in message) {
           const call: McpCall = { connector, call: e, request: message, op: mcpInfo(message).op! };
@@ -114,7 +122,7 @@ export async function readEvidence(events: readonly TraceEvent[], body: Body): P
   const outputs = new Map<string, { text: string; event: TraceEvent }>();
   for (const exchange of evidence.models) {
     const tools = toolDefinitions(exchange.request.value);
-    if (!evidence.definitions && tools.length) evidence.definitions = { event: exchange.request.event, tools };
+    if (!evidence.definitions && tools.length) evidence.definitions = { event: exchange.request.event, request: exchange.request.value, tools };
     const v = exchange.request.value;
     for (const use of modelDialects.responses.toolUses([v.input, v.messages, v.contents].flatMap((h) => Array.isArray(h) ? h : []))) {
       if (!use.id || !("result" in use) || outputs.has(use.id)) continue;

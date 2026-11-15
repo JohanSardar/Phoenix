@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { promisify } from "node:util";
 import { parse, stringify } from "yaml";
 import type { MomentManifest, TraceEvent, WorkdirSnapshot } from "@phoenix/formats";
-import { openRedactionDetector, scrubPersonalData, type Detection, type PersonalDataDetector } from "@phoenix/redact";
+import { openRedactionDetector, scrubPersonalData, stripSecrets, type Detection, type PersonalDataDetector } from "@phoenix/redact";
 import { digest, readMomentBundle, writeMomentBundle } from "@phoenix/store";
 import { object } from "@phoenix/wire";
 import { eventId } from "./evidence.ts";
@@ -43,10 +43,24 @@ export async function packMoment(root: string, out: string, o: { detector?: Pers
     return bytes;
   };
   const scrub = async (bytes: Uint8Array, at: string, extra: { contentType?: string; contentEncoding?: string; secrets?: TraceEvent["secrets"] } = {}) => {
-    const result = await scrubPersonalData({ body: bytes, ...extra }, policy);
+    let msg = { body: bytes, ...extra }, encoding: string | undefined, changed = false;
+    if (extra.secrets !== "unscanned") {
+      const stripped = await stripSecrets(msg, policy);
+      if (!stripped.unscanned.length) {
+        changed = stripped.changes.length > 0;
+        encoding = stripped.originalEncoding;
+        msg = { ...stripped.msg, body: stripped.msg.body ?? bytes, secrets: undefined };
+      }
+    }
+    const result = await scrubPersonalData(msg, policy);
     if (result.withheld) { withheld.push({ at, ...result.withheld }); return undefined; }
-    if (result.changes.length) scrubbed.push(at);
-    return { bytes: result.msg.body ?? bytes, ...(result.originalEncoding ? { encoding: result.originalEncoding } : {}) };
+    if (changed || result.changes.length) scrubbed.push(at);
+    encoding ??= result.originalEncoding;
+    return { bytes: result.msg.body ?? msg.body, ...(encoding ? { encoding } : {}) };
+  };
+  const text = async (value: string, at: string) => {
+    const result = await scrub(Buffer.from(value), at, { contentType: "text/plain" });
+    return result ? Buffer.from(result.bytes).toString() : value;
   };
   const blob = async (hash: string, at: string, extra: Parameters<typeof scrub>[2] = {}) => {
     const result = await scrub(file(`data/blobs/${hash.slice(7)}`), at, extra);
@@ -69,9 +83,10 @@ export async function packMoment(root: string, out: string, o: { detector?: Pers
   }
   const header = (stream: string, name: string) => { const h = heads.get(stream) ?? []; return h.find((_, i) => i % 2 === 1 && h[i - 1]!.toLowerCase() === name); };
   const packedEvents: TraceEvent[] = [];
-  for (const e of events) {
+  for (const original of events) {
+    const at = `data/run.jsonl#${eventId(original)}`;
+    const e = original.task ? { ...original, task: await text(original.task, `${at}/task`) } : original;
     if (!e.body) { packedEvents.push(e); continue; }
-    const at = `data/run.jsonl#${eventId(e)}`;
     const http = e.surface === "http" && e.kind === "result" && !e.body.content_encoding;
     const extra = { ...(e.secrets === "unscanned" ? { secrets: "unscanned" as const } : {}), ...(http && header(e.stream, "content-encoding") ? { contentEncoding: header(e.stream, "content-encoding")! } : {}) };
     const { body, ...rest } = e;
@@ -88,15 +103,18 @@ export async function packMoment(root: string, out: string, o: { detector?: Pers
 
   if (bundle.manifest.workdir) {
     const snapshot = JSON.parse(Buffer.from(file(bundle.manifest.workdir)).toString()) as WorkdirSnapshot;
-    const entries: WorkdirSnapshot["entries"] = [], unread = [...snapshot.unread];
-    for (const entry of snapshot.entries) {
+    const entries: WorkdirSnapshot["entries"] = [], unread: string[] = [];
+    for (const path of snapshot.unread) unread.push(await text(path, `${bundle.manifest.workdir}#/unread`));
+    for (const original of snapshot.entries) {
+      const at = `${bundle.manifest.workdir}#${original.path}`;
+      const entry = { ...original, path: await text(original.path, `${at}/path`) };
       if (!entry.blob) { entries.push(entry); continue; }
-      const at = `${bundle.manifest.workdir}#${entry.path}`;
       const result = await blob(entry.blob, at, (entry as { secrets?: unknown }).secrets === "unscanned" ? { secrets: "unscanned" } : {});
       if (result) entries.push({ ...entry, blob: result.hash });
       else unread.push(entry.path);
     }
-    files.set(bundle.manifest.workdir, JSON.stringify({ ...snapshot, entries, unread }, null, 2) + "\n");
+    const path = await text(snapshot.path, `${bundle.manifest.workdir}#/path`);
+    files.set(bundle.manifest.workdir, JSON.stringify({ ...snapshot, path, entries, unread }, null, 2) + "\n");
     references.add(bundle.manifest.workdir);
   }
 
@@ -114,7 +132,8 @@ export async function packMoment(root: string, out: string, o: { detector?: Pers
     [name, c.tools ? { ...c, tools: await scrubJson(c.tools, `moment.yaml#/connectors/${name}/tools`) } : c] as const)));
   const manifest: MomentManifest = {
     ...bundle.manifest,
-    ...(bundle.manifest.prompt !== undefined ? { prompt: await scrubJson(bundle.manifest.prompt, "moment.yaml#/prompt") } : {}),
+    ...(bundle.manifest.prompt !== undefined ? { prompt: await text(bundle.manifest.prompt, "moment.yaml#/prompt") } : {}),
+    ...(bundle.manifest.run?.task ? { run: { ...bundle.manifest.run, task: await text(bundle.manifest.run.task, "moment.yaml#/run/task") } } : {}),
     ...(bundle.manifest.connectors ? { connectors } : {}),
     packed: { from: bundle.lockHash, scrubbed, withheld },
   };
