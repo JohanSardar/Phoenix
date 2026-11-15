@@ -22,7 +22,14 @@ for fd, name in enumerate(("stdin", "stdout", "stderr")):
         fds.append(slave)
     else:
         fds.append(fd)
-child = subprocess.Popen(sys.argv[2:], stdin=fds[0], stdout=fds[1], stderr=fds[2])
+controlling_fd = next(fd for fd, name in enumerate(("stdin", "stdout", "stderr")) if sizes[name])
+
+def terminal_session():
+    os.setsid()
+    fcntl.ioctl(controlling_fd, termios.TIOCSCTTY, 0)
+    os.tcsetpgrp(controlling_fd, os.getpgrp())
+
+child = subprocess.Popen(sys.argv[2:], stdin=fds[0], stdout=fds[1], stderr=fds[2], preexec_fn=terminal_session)
 for fd in slaves:
     os.close(fd)
 selector = selectors.DefaultSelector()
@@ -55,7 +62,8 @@ while child.poll() is None or any(isinstance(key.data, int) for key in selector.
                     fd = masters.get(control["fd"])
                     if fd is not None:
                         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", control["rows"], control["columns"], 0, 0))
-                        child.send_signal(signal.SIGWINCH)
+                        if control["fd"] != controlling_fd:
+                            child.send_signal(signal.SIGWINCH)
         else:
             view = memoryview(data)
             while view:
