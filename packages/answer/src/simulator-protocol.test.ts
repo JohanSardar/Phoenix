@@ -46,7 +46,7 @@ async function replay(t: TestContext, version: string, schema: object, recorded:
     assert.ok(event.body && "inline" in event.body);
     return Buffer.from(event.body.inline);
   }, policy, start: "beginning" });
-  const ctx = replayCtx(index, policy, { moment: "protocol-review", provider, improverModel: "test-improver", store: new SimulatorStore(root), clock: () => index.cutTime });
+  const ctx = replayCtx(index, policy, undefined, { moment: "protocol-review", provider, improverModel: "test-improver", store: new SimulatorStore(root), clock: () => index.cutTime });
   const args = { query: "unseen" };
   return answerCall(toCall({ surface: "mcp", connector: "lookup", op: "tools/call:lookup", args, raw: { body: encodeMcp({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "lookup", arguments: args, _meta: meta } }) } }, policy()), ctx);
 }
@@ -71,4 +71,17 @@ test("simulator retries invalid MCP content annotations instead of serving them"
   const decoded = decodeMcp(result.answer.raw.body);
   assert.ok(decoded.ok);
   assert.deepEqual(decoded.value.result, expected, "annotations.priority must be a number in [0, 1], so the invalid first answer must never be served");
+});
+
+test("simulator retries a resource link with a non-string description", async t => {
+  const link = { type: "resource_link", name: "status", uri: "file:///reports/status.json" };
+  const recorded = { content: [link], structuredContent: { ready: true } };
+  const expected = { ...recorded, content: [{ ...link, description: "Latest status" }] };
+  const invalid = { ...recorded, content: [{ ...link, description: 42 }] };
+  const schema = { type: "object", properties: { ready: { type: "boolean" } }, required: ["ready"], additionalProperties: false };
+  const result = await replay(t, "2025-11-25", schema, recorded, [invalid, expected]);
+  assert.ok("answer" in result);
+  const decoded = decodeMcp(result.answer.raw.body);
+  assert.ok(decoded.ok);
+  assert.deepEqual(decoded.value.result, expected, "resource link descriptions must be strings, so the invalid first answer must never be served");
 });

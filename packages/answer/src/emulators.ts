@@ -39,7 +39,7 @@ export class Emulators {
   has(connector: string): boolean { return this.#plugins.has(connector); }
 
   async observe(call: Call, answer: Answer, at?: string): Promise<void> {
-    if (!this.#plugins.has(call.connector) || answer.resolver === "emulator") return;
+    if (!this.#plugins.has(call.connector) || answer.resolver === "emulator" || answer.provenance === "synthesized") return;
     const actual = await this.resolve(call, at);
     if ("miss" in actual) {
       if (!call.readOnly) throw new Error(`Emulator cannot mirror write on ${call.connector}: ${actual.why}`);
