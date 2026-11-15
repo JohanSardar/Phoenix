@@ -1,9 +1,9 @@
-import { lstat, mkdir, open, readFile, readdir, rename, rm, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rename, rm, truncate, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { parse } from "yaml";
-import { validate, type FormatName, type FormatTypes, type LedgerEntry, type MomentLock, type MomentManifest, type ReplayResult, type SuccessCheck } from "@phoenix/formats";
-import { digest, readApprovalsLedger, readMomentBundle, type MomentBundle } from "@phoenix/store";
+import { validate, type FormatName, type FormatTypes, type LedgerEntry, type MomentLock, type MomentManifest, type ReplayResult, type SuccessCheck, type TraceEvent } from "@phoenix/formats";
+import { digest, readApprovalsLedger, readJsonLines, readMomentBundle, type MomentBundle } from "@phoenix/store";
 
 export const ledgerPath = (home: string): string => join(home, "approvals.jsonl");
 
@@ -36,6 +36,10 @@ async function writeFileAtomic(path: string, bytes: Uint8Array | string): Promis
 async function appendLedger(home: string, entry: LedgerEntry): Promise<LedgerEntry> {
   checked("ledger", entry);
   await mkdir(home, { recursive: true, mode: 0o700 });
+  const existing = await readFile(ledgerPath(home)).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return Buffer.alloc(0); throw error;
+  });
+  if (existing.length && existing.at(-1) !== 0x0a) await truncate(ledgerPath(home), existing.lastIndexOf(0x0a) + 1);
   const file = await open(ledgerPath(home), "a", 0o600);
   try { await file.writeFile(JSON.stringify(entry) + "\n"); await file.sync(); }
   finally { await file.close(); }
@@ -116,7 +120,7 @@ export async function acceptMoment(root: string, o: { home: string; who: string;
   return { bundle, entry };
 }
 
-export async function reviewPass(resultPath: string, moment: string, home: string): Promise<{ result: ReplayResult; hash: string; revision: string }> {
+export async function reviewPass(resultPath: string, traces: readonly string[], moment: string, home: string): Promise<{ result: ReplayResult; hash: string; revision: string; synthesized: TraceEvent[] }> {
   const bytes = await readFile(resultPath);
   const result = checked("result", JSON.parse(bytes.toString()));
   const ran = result.ledger_entry;
@@ -125,11 +129,14 @@ export async function reviewPass(resultPath: string, moment: string, home: strin
   if (!entries.some((e) => e.moment === moment && e.how !== "pass-accepted" && e.lock_hash === ran.lock_hash))
     throw new Error(`Result ran against a lock that is not in the approvals ledger: ${ran.lock_hash}`);
   if (result.verdict !== "meets-check" || !result.discount?.discounted) throw new Error("Only a discounted pass needs acceptance");
-  return { result, hash: digest(bytes), revision: ran.revision };
+  const synthesized: TraceEvent[] = [];
+  for (const trace of traces) synthesized.push(...(await readJsonLines(trace, (value) => checked("trace", value))).values.filter((e) => e.provenance === "synthesized"));
+  if (!synthesized.length) throw new Error("No synthesized answers found in the sample traces; give the traces the pass rests on");
+  return { result, hash: digest(bytes), revision: ran.revision, synthesized };
 }
 
-export async function acceptPass(resultPath: string, o: { moment: string; home: string; who: string; reviewed: string }): Promise<LedgerEntry> {
-  const review = await reviewPass(resultPath, o.moment, o.home);
+export async function acceptPass(resultPath: string, o: { traces: readonly string[]; moment: string; home: string; who: string; reviewed: string }): Promise<LedgerEntry> {
+  const review = await reviewPass(resultPath, o.traces, o.moment, o.home);
   if (review.hash !== o.reviewed) throw new Error("Result changed since it was reviewed; review it again");
   return appendLedger(o.home, {
     phoenix_ledger: 1, moment: o.moment, revision: review.revision, result_hash: review.hash, how: "pass-accepted", who: o.who, at: new Date().toISOString(),
