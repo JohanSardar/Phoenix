@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { validate, type RecipeDescriptor } from "@phoenix/formats";
+import { parse } from "yaml";
+import { checkVersion, validate, type RecipeDescriptor } from "@phoenix/formats";
 import { digest } from "@phoenix/store";
 import type { SecretPolicy } from "@phoenix/redact";
 import { importEvents, type ImportResult } from "./import.ts";
@@ -11,8 +12,10 @@ export interface InstalledReader { directory: string; recipe: RecipeDescriptor }
 export async function readRecipe(path: string): Promise<InstalledReader> {
   const file = resolve(path);
   let value: unknown;
-  try { value = JSON.parse(await readFile(file, "utf8")); }
+  try { value = parse(await readFile(file, "utf8"), { schema: "core", logLevel: "silent" }); }
   catch { throw new Error("Cannot read recipe as JSON-compatible YAML"); }
+  const version = checkVersion("recipe", value);
+  if (!version.ok) throw new Error(version.error);
   const checked = validate("recipe", value);
   if (!checked.ok) throw new Error("Invalid recipe descriptor");
   if (!checked.value.transcript_reader) throw new Error("Recipe has no transcript reader");
