@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, rm, lstat } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, lstat, link } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { parse, stringify } from "yaml";
@@ -29,6 +29,7 @@ function references(manifest: MomentManifest): string[] {
 export async function writeMomentBundle(root: string, bundle: {
   manifest: MomentManifest;
   files: ReadonlyMap<string, Uint8Array | string>;
+  blobs?: ReadonlyMap<string, string>;
 }): Promise<void> {
   checked("moment", bundle.manifest);
   const stage = join(dirname(root), `.moment-${randomUUID()}`);
@@ -39,6 +40,15 @@ export async function writeMomentBundle(root: string, bundle: {
       if (!(path.startsWith("data/") || path.startsWith("checks/") || path === "check.draft.yaml"))
         throw new Error(`Bundle drafts cannot write ${path}; approvals owns check.yaml and moment.lock.json`);
       await atomicWrite(localPath(stage, path), bytes);
+    }
+    for (const [hash, source] of bundle.blobs ?? []) {
+      if (!/^sha256:[a-f0-9]{64}$/.test(hash)) throw new Error("Invalid blob digest");
+      if (!(await lstat(source)).isFile()) throw new Error(`Not a plain blob file: ${hash}`);
+      const path = localPath(stage, `data/blobs/${hash.slice(7)}`);
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      await link(source, path);
+      if (digest(await readFile(path)) !== hash) throw new Error(`Blob digest mismatch: ${hash}`);
+      await syncDirectory(dirname(path));
     }
     for (const path of references(bundle.manifest)) await safePath(stage, path);
     try { await lstat(root); throw new Error("Moment revision already exists"); }

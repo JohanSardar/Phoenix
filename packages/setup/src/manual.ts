@@ -2,7 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { parse, stringify } from "yaml";
 import { validate, type MomentManifest, type TraceEvent, type WorkdirSnapshot } from "@phoenix/formats";
-import { readCapture, writeMomentBundle } from "@phoenix/store";
+import { BlobStore, readCapture, writeMomentBundle } from "@phoenix/store";
 import { autoLock } from "@phoenix/approvals";
 
 type Start = "beginning" | "mark" | { at: string };
@@ -99,12 +99,15 @@ export async function createSnapshotMoment(o: SnapshotMomentOptions): Promise<Mo
   }
 
   const files = new Map<string, string>([["data/run.jsonl", events.map((e) => JSON.stringify(e) + "\n").join("")], ["check.draft.yaml", check]]);
+  const hashes = new Set(events.flatMap((e) => e.body && "blob" in e.body ? [e.body.blob] : []));
   const snapshot = chosenWorkdir(view.snapshots, o.workdir, run.task);
   let workdir: Pick<MomentManifest, "workdir" | "include_ignored"> = {};
   if (snapshot) {
     if (o.includeIgnored && !snapshot.ignored_copied) throw new Error("The capture did not copy ignored files, so the moment cannot include them");
     const include = o.includeIgnored ?? snapshot.ignored_copied;
-    files.set("data/workdir/run.json", JSON.stringify(withIgnoredChoice(snapshot, include), null, 2) + "\n");
+    const selected = withIgnoredChoice(snapshot, include);
+    files.set("data/workdir/run.json", JSON.stringify(selected, null, 2) + "\n");
+    for (const entry of selected.entries) if (entry.blob) hashes.add(entry.blob);
     workdir = { workdir: "data/workdir/run.json", include_ignored: include };
   } else if (o.includeIgnored) throw new Error("No working-directory snapshot to include ignored files from");
 
@@ -118,7 +121,8 @@ export async function createSnapshotMoment(o: SnapshotMomentOptions): Promise<Mo
     ...(recipe.version !== "unknown" ? { recipe_version: recipe.version } : {}),
     connectors,
   };
-  await writeMomentBundle(o.out, { manifest, files });
+  const store = new BlobStore(o.capture);
+  await writeMomentBundle(o.out, { manifest, files, blobs: new Map([...hashes].map((hash) => [hash, store.path(hash)])) });
   return manifest;
 }
 
