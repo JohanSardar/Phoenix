@@ -89,7 +89,7 @@ export class Runner {
       for (const [name, hash] of [["base", plan.base_tree], ["candidate", plan.candidate_tree]] as const) if (await treeDigest(join(directory, "inputs", name)) !== hash) throw new Error("Resolved tree changed");
       for (const [index, plugin] of plan.runner.plugins.entries()) if (await treeDigest(join(directory, "inputs/plugins", String(index))) !== plugin.tree) throw new Error(`Resolved plugin changed: ${plugin.name}`);
       const plugins = plan.runner.plugins.map((plugin, index) => ({ name: plugin.name, version: plugin.version, directory: join(directory, "inputs/plugins", String(index)), image: plugin.image, snapshot: plugin.snapshot, seed: plugin.seed, env: plugin.env }));
-      if (plan.start !== "echo") {
+      if (plan.start !== "echo" && bundleEvidence(bundle).length) {
         const echoId = await this.plan({ moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: "echo", samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, env: plan.runner.env, plugins });
         await this.resume(echoId);
         const drift = await optional<{ result: string }>(join(this.#options.root, "echo-drift", plan.base_tree.slice(7) + ".json"));
@@ -113,7 +113,9 @@ export class Runner {
       const persist = () => journalWrites = journalWrites.then(() => save(join(directory, "journal.json"), status));
       await persist();
       const evidence = bundleEvidence(bundle);
-      const sandbox = this.#options.sandbox ?? new ContainerSandbox({ cli: plan.runner.cli, relayPorts: [8080] });
+      const run = plan.runner.harness.run;
+      const serverPort = "serve" in run ? Number(new URL(run.ready.http.split(" ").slice(1).join(" "), "http://localhost").port || 80) : undefined;
+      const sandbox = this.#options.sandbox ?? new ContainerSandbox({ cli: plan.runner.cli, relayPorts: [80, 443, 8080].filter(port => port !== serverPort) });
       const keyPath = join(directory, "hmac.key");
       try { await writeFile(keyPath, randomBytes(32), { flag: "wx", mode: 0o600 }); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
@@ -228,7 +230,7 @@ export class Runner {
         emulators.push({ plugin: { directory: join(directory, "inputs/plugins", String(index)), descriptor: plugin.descriptor }, options: { context: { ...(plugin.snapshot ? { snapshot: "/inputs/snapshot" } : {}), seed: "/inputs/seed" }, env: plugin.env, replay: { sandbox, spec: { image: plugin.image, mounts: [{ source: join(directory, "inputs/plugins", String(index)), target: "/plugin", readOnly: true }, { source: join(pluginRoot, "inputs"), target: "/inputs", readOnly: true }], workdir: "/plugin", clockFile: join(pluginRoot, "clock"), dontFakeMonotonic: true } } } });
       }
       engine = await startEngine({ evidence: { events: evidence, body: event => bundleBody(bundle, event) }, ...(recovery?.events.length ? { resume: { events: recovery.events, body: recovery.body } } : {}), emulators, connectors: bundle.manifest.connectors, start,
-        clock: { start: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall }, routes: { ...tree.routes, http: { ...tree.routes.http, "phoenix-model": plan.runner.model.connector, "phoenix-model:8080": plan.runner.model.connector } },
+        clock: { start: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall }, routes: { ...tree.routes, http: { ...Object.fromEntries(plan.runner.plugins.flatMap(plugin => (plugin.descriptor.recognize.hosts ?? []).map(host => [host, plugin.descriptor.connector]))), ...tree.routes.http, "phoenix-model": plan.runner.model.connector, "phoenix-model:8080": plan.runner.model.connector } },
         model: { connector: plan.runner.model.connector, dialect: dialect as NonNullable<EngineOptions["model"]>["dialect"], provider: { url: plan.runner.model.url, headers } },
         sample: { root: join(root, "trace"), metadata: { capture: `${id.slice(7)}-${sample.sample}-${attempt.attempt}`, harness: { name: plan.runner.harness.name, tree: plan.candidate_tree }, recipe: { name: "runner", version: "1" }, routes: ["tap"], started_at: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall ?? new Date(0).toISOString(), boot_id: `${id}-${sample.sample}-${attempt.attempt}` } }, hmacKey });
       await writeClockFile(join(root, "clock"), engine.clock.now());
@@ -247,7 +249,7 @@ export class Runner {
         connections,
       ]);
       if (outcome.kind === "finished" && plan.start === "echo" && !engine.prefixComplete()) outcome = { kind: "diverged", trigger: "prefix-drift", detail: "Harness exited before consuming the complete echo prefix" };
-      if (outcome.kind === "finished") for (const exp of bundle.check.expect ?? []) if ("end_state" in exp) states.set(exp.end_state.connector, await engine.state(exp.end_state.connector));
+      if (outcome.kind === "finished") for (const plugin of plan.runner.plugins) if (!bundle.manifest.connectors?.[plugin.descriptor.connector]?.skip_resolvers?.includes("emulator")) states.set(plugin.descriptor.connector, await engine.state(plugin.descriptor.connector));
       await save(join(root, "clock-report.json"), process.clock);
     } catch (error) { outcome = { kind: "interrupted", why: error instanceof Error ? error.message : String(error) }; }
     finally {
@@ -286,7 +288,6 @@ export class Runner {
     await save(join(root, "outcome.json"), outcome);
     if (outcome.kind === "interrupted") {
       attempt.status = "interrupted"; attempt.cause = outcome.why;
-      if (sample.attempts.slice(0, -1).some(a => a.status === "interrupted" && a.cause === outcome.why)) sample.complete = true;
     } else if (recovery?.events.length && outcome.kind === "diverged" && outcome.trigger === "prefix-drift" && verdict.status !== "fail") {
       const prior = await optional<Awaited<ReturnType<typeof evaluateCheck>>>(join(directory, "samples", String(sample.sample), String(previous!.attempt), "assessment.json"));
       if (prior?.expectations.some(e => e.outcome === "fail" && e.irreversible && !e.tainted)) {
