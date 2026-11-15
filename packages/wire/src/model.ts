@@ -84,7 +84,6 @@ function externalAccess(request: Record<string, unknown>): string[] {
     const v = object(value);
     if (typeof v.type === "string" && /^(web_search|web_fetch|computer|mcp|code_interpreter|file_search)/.test(v.type)) paths.push(path);
     for (const [key, item] of Object.entries(v)) {
-      if (["googleSearch", "googleSearchRetrieval", "enterpriseWebSearch", "urlContext", "codeExecution", "computerUse", "googleMaps"].includes(key)) paths.push(`${path}/${key}`);
       if (["image_url", "file_url", "video_url", "audio_url"].includes(key) && (typeof item === "string" || typeof object(item).url === "string")) {
         const url = typeof item === "string" ? item : object(item).url as string;
         if (/^https?:/i.test(url)) paths.push(`${path}/${key}`);
@@ -95,6 +94,9 @@ function externalAccess(request: Record<string, unknown>): string[] {
   };
   visit(request, "");
   if (Array.isArray(request.mcp_servers) && request.mcp_servers.length) paths.push("/mcp_servers");
+  const providerTools = ["googleSearch", "googleSearchRetrieval", "enterpriseWebSearch", "urlContext", "codeExecution", "computerUse", "googleMaps"];
+  const names = new Set(providerTools.flatMap(name => [name, name.replace(/[A-Z]/g, c => "_" + c.toLowerCase())]));
+  if (Array.isArray(request.tools)) request.tools.forEach((tool, i) => { for (const key of Object.keys(object(tool))) if (names.has(key)) paths.push(`/tools/${i}/${key}`); });
   return [...new Set(paths)];
 }
 

@@ -11,7 +11,7 @@ const served = (call: Call, ctx: ReplayCtx): void => { ctx.histories = completeC
 const described = (call: Call) => ({ connector: call.connector, surface: call.surface, op: call.op, key: call.key });
 
 export function matchFrozen(call: Call, ctx: ReplayCtx): Exchange | Divergence {
-  const exchange = ctx.index.frozen.find(e => !ctx.served.has(e.id) && e.connector === call.connector && e.key === call.key && sameWriteHistory(e.history, ctx.histories[call.connector] ?? []));
+  const exchange = ctx.index.frozen.find(e => !ctx.served.has(e.id) && e.connector === call.connector && e.key === call.key && sameWriteHistory(e.history, call.history ?? ctx.histories[call.connector] ?? []));
   if (!exchange) return { trigger: "prefix-drift", detail: `${call.op} on ${call.connector} is not a recorded call of the frozen prefix`, call: described(call) };
   ctx.served.add(exchange.id);
   served(call, ctx);

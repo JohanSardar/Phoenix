@@ -145,7 +145,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       await trace.append(stream, { kind: "result", surface: "mcp", connector, op: mcpShape(bytes)?.op ?? "", body: bytes, provenance: answer.provenance, resolver: answer.resolver });
       out.push(back++, bytes, true);
     };
-    const handle = async (bytes: Uint8Array): Promise<void> => {
+    const handle = async (bytes: Uint8Array, history: readonly string[]): Promise<void> => {
       const shape = mcpShape(bytes);
       await trace.append(stream, { kind: "call", surface: "mcp", connector, op: shape?.op ?? "", body: bytes });
       if (!shape) return diverge({ trigger: "lifecycle", detail: `a message on ${connector} is not JSON-RPC` });
@@ -154,7 +154,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
         if (index.notifications.get(connector)?.has(shape.message.method)) return;
         return diverge({ trigger: "lifecycle", detail: `the recording of ${connector} never has the harness send ${shape.message.method}` });
       }
-      const call = toCall({ surface: "mcp", connector, op: shape.op!, args: shape.args, raw: { body: bytes } }, policy(connector));
+      const call = { ...toCall({ surface: "mcp", connector, op: shape.op!, args: shape.args, raw: { body: bytes } }, policy(connector)), history };
       const answer = await respond(call);
       if (!answer) return;
       for (const during of answer.exchange?.during ?? []) {
@@ -165,6 +165,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
           return diverge({ trigger: "lifecycle", detail: `the harness answered a server request during ${call.op} differently from the recording`, call: { connector, surface: "mcp", op: call.op, key: call.key } });
       }
       await send(withId(answer.raw.body, shape.message.id), answer);
+      for (const message of answer.exchange?.after ?? []) await send(message, answer);
       await goLiveIfDone();
     };
     return {
@@ -183,7 +184,8 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
           waiting(bytes);
           return;
         }
-        queue = queue.then(() => handle(bytes)).catch(interrupt);
+        const history = ctx.histories[connector] ?? [];
+        queue = queue.then(() => handle(bytes, history)).catch(interrupt);
       },
       frames: () => out.frames(),
       abort: () => out.end(),

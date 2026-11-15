@@ -26,6 +26,7 @@ export interface Call {
   key: string;
   readOnly: boolean;
   raw: CallMessage;
+  history?: readonly string[];
 }
 
 export interface Exchange {
@@ -46,6 +47,7 @@ export interface Exchange {
   request: CallMessage;
   response: WireMessage;
   during: readonly { message: Uint8Array; reply?: Uint8Array }[];
+  after: readonly Uint8Array[];
 }
 
 export interface Answer {

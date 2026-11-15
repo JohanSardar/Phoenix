@@ -16,13 +16,15 @@ interface Paired {
   request: CallMessage;
   response: WireMessage;
   during: { message: Uint8Array; reply?: Uint8Array }[];
+  after: Uint8Array[];
 }
 
 async function pairMcp(list: readonly TraceEvent[], body: (e: TraceEvent) => Promise<Uint8Array>, notifications: Set<string>): Promise<Paired[]> {
   const paired: Paired[] = [];
   let unsolicited: { message: Uint8Array; reply?: Uint8Array }[] = [];
-  const open = new Map<string, Omit<Paired, "result" | "response">>();
-  const order: Omit<Paired, "result" | "response">[] = [];
+  let previous: Paired | undefined;
+  const open = new Map<string, Omit<Paired, "result" | "response" | "after">>();
+  const order: Omit<Paired, "result" | "response" | "after">[] = [];
   const awaitingReply = new Map<string, { message: Uint8Array; reply?: Uint8Array }>();
   for (const event of list) {
     const bytes = await body(event);
@@ -43,10 +45,13 @@ async function pairMcp(list: readonly TraceEvent[], body: (e: TraceEvent) => Pro
       const draft = open.get(id)!;
       open.delete(id);
       order.splice(order.indexOf(draft), 1);
-      paired.push({ ...draft, result: event, response: { body: bytes } });
+      previous = { ...draft, result: event, response: { body: bytes }, after: [] };
+      paired.push(previous);
     } else if (event.kind === "result" && message.method) {
       const during: { message: Uint8Array; reply?: Uint8Array } = { message: bytes };
-      (order.at(-1)?.during ?? unsolicited).push(during);
+      if (order.length) order.at(-1)!.during.push(during);
+      else if (previous && !("id" in message)) previous.after.push(bytes);
+      else unsolicited.push(during);
       if ("id" in message) awaitingReply.set(id, during);
     }
   }
@@ -64,7 +69,7 @@ async function pairHttp(list: readonly TraceEvent[], body: (e: TraceEvent) => Pr
   const shape = httpShape(request.head, request.body);
   const encoding = result.body?.content_encoding;
   return [{
-    call, result, surface: "http", op: shape.op, args: shape.args, request, during: [],
+    call, result, surface: "http", op: shape.op, args: shape.args, request, during: [], after: [],
     response: { body: await body(result), head: decodeHttpHead(await body(responseMeta)), ...(encoding ? { contentEncoding: encoding } : {}) },
   }];
 }
@@ -102,7 +107,7 @@ export async function buildIndex(events: readonly TraceEvent[], options: {
     history: writes.filter(w => w.call.connector === call.connector && w.completed < position).map(w => w.call.key),
     frozen: completed < cut, position, completed, observedAt: p.result.ts.wall,
     provenance: (p.result.provenance === "derived" || p.result.provenance === "synthesized" ? p.result.provenance : "recorded") as Provenance,
-    request: p.request, response: p.response, during: p.during,
+    request: p.request, response: p.response, during: p.during, after: p.after,
   }));
   const startTime = options.startTime ?? events[0]?.ts.wall ?? new Date(0).toISOString();
   return {
