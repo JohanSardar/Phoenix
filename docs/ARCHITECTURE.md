@@ -201,7 +201,7 @@ At the start of each run, the snapshotter records the harness's working director
 
 - In a git repository, it first records HEAD's commit. It then reads that commit's tree from git's object store into the blob store. The objects don't change, so this copy is exact whenever it finishes. It also copies the files that differ from HEAD and the untracked files git doesn't ignore ([git-status](https://git-scm.com/docs/git-status), [git-ls-files](https://git-scm.com/docs/git-ls-files)).
 - Outside git, it copies every file.
-- Files git ignores are listed by path, size and modification time, without content.
+- Files git ignores are listed by path, size and modification time, without content, by default. Copying them is an opt-in, set per capture (`phoenix capture --copy-ignored` or the recipe's option of the same name) or per moment (`include_ignored` in `moment.yaml`). A capture that copied them stores them like any other copied file, secrets stripped. A moment includes them only when its own opt-in is set, or when the capture's was and the moment doesn't turn it off. A moment can only include ignored files its capture copied.
 - A copied file whose change time is later than the run's start, or that changes while it is being read, is stored as `uncertain`. Its content is what the snapshotter read, not provably what was there at the start.
 
 Secrets are stripped from copied files by the same rules as traffic. The result is a content-addressed tree plus a `workdir/<run>.json` manifest. A snapshot that can't finish is marked incomplete, with the paths it didn't read.
@@ -376,7 +376,7 @@ A **mark** is a cut in a run's merged order, named by an event id. A **start poi
    - the prompt;
    - the model identifier as the provider reported it, with an alias recorded as an alias;
    - the clock time and timezone;
-   - the working directory's path, commit, and its uncertain, ignored and unread paths;
+   - the working directory's path, commit, and its uncertain, ignored and unread paths, and whether copied ignored files are included;
    - the harness tree digest, and the git commit when there is one;
    - the recipe version and the tool lists;
    - the MCP protocol version and era.
@@ -518,7 +518,7 @@ The same mechanism does two more jobs.
 
 ### 3.9 Sandbox and the model route
 
-Replays run in containers only, with no hypervisor.
+Replays run in containers only. Phoenix starts no hypervisor of its own. Container runtimes that run their own Linux VM, such as Docker Desktop and Podman on macOS, are supported, because Phoenix drives only the container CLI and never the VM.
 
 ```ts
 interface Sandbox {
@@ -534,7 +534,7 @@ The container driver guarantees two things: the workload has no route off its ow
 - **The relay.** The workload shares the network namespace of a small Phoenix container that runs the relay. The relay listens on loopback, answers every name lookup with loopback, accepts the connections that follow, and pipes each one to the engine along with its original destination. It has no policy and no secrets, and the engine decides everything. Where the runtime allows a redirect rule inside the namespace, every other outbound TCP connection (raw addresses, unusual ports) is also sent to the relay and reported. Where it doesn't, those connections fail locally, and the fidelity report says raw-address reporting is off. Either way they reach nothing. Safety rests on the absence of a route, not on name resolution or firewall rules.
 - **The channel.** It is a Unix socket shared only between the relay and the engine, and the workload can't see it. Emulators and custom checks run in their own containers, with no network and with their own socket to the engine.
 
-For each sample, the file tree is materialized fresh. The working-directory snapshot comes first, then the harness tree at its path. Where the two overlap, editable paths come from the candidate (the base tree plus only the Improver's changes) and every other path comes from the snapshot. Ignored files that the snapshot only listed are absent, and uncertain files are present as read. Several things are never mounted:
+For each sample, the file tree is materialized fresh. The working-directory snapshot comes first, then the harness tree at its path. Where the two overlap, editable paths come from the candidate (the base tree plus only the Improver's changes) and every other path comes from the snapshot. Ignored files are present only when the moment includes copied ignored files, and absent otherwise. Uncertain files are present as read. Several things are never mounted:
 
 - the moment bundle, the recordings, the trace and the check;
 - the host's home directory, credentials and agent sockets;
@@ -555,13 +555,13 @@ The clock is a small state owned by the engine: a virtual anchor and a real anch
 
 Inside the container, the clock is faked with [libfaketime](https://github.com/wolfcw/libfaketime/blob/master/README). It is preloaded into every process through `LD_PRELOAD` and reads its time specification from a clock file that the engine writes and mounts read-only (`FAKETIME_TIMESTAMP_FILE`). Re-anchoring is a rewrite of that file. Runtimes that need a real monotonic clock, such as the JVM, get `FAKETIME_DONT_FAKE_MONOTONIC` from their recipe, as the README advises. libfaketime can't reach a process that doesn't take time from the dynamic libc. That includes statically linked binaries, setuid binaries, runtimes that read the vDSO directly (Go is one), and runtimes that load their time library themselves after startup ([README](https://github.com/wolfcw/libfaketime/blob/master/README)).
 
-So before the harness starts, the runner runs a probe in the same container:
+A process that libfaketime can't reach still runs, on the host's real clock. That includes a statically linked harness, a Go program and Codex's default Linux build. The Replay is never refused for it, and the clock never lowers a fidelity grade. Before the harness starts, the runner runs a probe in the same container, only to record what happened:
 
-1. It runs the recipe's clock probe command, which asks the harness's own runtime for the time. If the time it sees isn't the virtual time, the Replay is refused with the reason.
-2. It checks the ELF header of the harness's entry binary and of every binary the recipe names. A binary with no program interpreter is statically linked and can't be preloaded. For the harness's entry binary, that also refuses the Replay.
-3. Other processes the probe didn't cover are listed in the fidelity report as `clock: unverified`. A real MCP server run with `serve: real` is probed the same way.
+1. It runs the recipe's clock probe command, which asks the harness's own runtime for the time, and records whether it saw the virtual time.
+2. It checks the ELF header of the harness's entry binary and of every binary the recipe names. A binary with no program interpreter is statically linked, and is recorded as `clock: real`.
+3. A real MCP server run with `serve: real` is probed the same way. Processes the probe didn't cover are recorded as `clock: unknown`.
 
-Host time is never used as virtual time. Supervision and provider transport use the host's real monotonic time, outside the simulated world.
+The fidelity report lists these as information. The engine's own clock, the emulators and the `Date` headers it writes always use virtual time. Supervision and provider transport use the host's real monotonic time, outside the simulated world.
 
 ### 3.11 Runner
 
@@ -675,7 +675,7 @@ A connector's tier in a run is the lowest of three things: what its plugin decla
 - shimmed commands whose local file effects weren't recreated;
 - working-directory paths that were uncertain, ignored or unread;
 - for a server harness, that earlier tasks in the live process were not replayed;
-- the container runtime, the clock probe result, and processes with `clock: unverified`;
+- the container runtime, the clock probe result, and which processes ran on the real clock (`clock: real`) or weren't probed (`clock: unknown`);
 - gaps, drop ranges, unknown tails and unattributed events in the source run;
 - where secrets were stripped, and bodies marked unscanned;
 - discounted verdicts and whether each was confirmed, and how.
@@ -801,7 +801,7 @@ Existing emulators are wrapped this way rather than linked into the core. A decl
 | The runner or Workbench process dies | Workspaces, plans, journals and attempts are on disk. On restart, `getReplay` returns the recorded state, and the Replay resumes its unfinished samples, including any tiebreak sample already scheduled. |
 | The Improver disconnects | Nothing is lost. All state is on disk and addressed by ids, and the Improver reconnects to the same workspace. Repeating `startReplay` returns the same Replay. |
 | The model provider errors or rate-limits during a Replay | The error is passed to the harness as the provider sent it, and recorded. If the sample can't finish, it is interrupted, not failed. |
-| The clock probe fails, or the harness's entry binary is statically linked | The Replay is refused with the reason. |
+| A harness process can't be reached by the faked clock (statically linked, Go, setuid) | It runs on the host's real clock. The Replay goes ahead, its fidelity grade is unchanged, and the fidelity report lists the process. |
 | A custom check throws or exceeds its limit | That expectation is recorded as an error and the sample is unassessed. The error is shown to the person, because fixing it means a new check revision. |
 | A discounted verdict is never confirmed | It counts toward neither the set rule nor the patch, and the result file lists it as unconfirmed. |
 | The pull-request step fails or is interrupted | The patch and result files are already written. Before pushing again, Phoenix checks whether the branch and the pull request already exist. |
@@ -820,7 +820,7 @@ Existing emulators are wrapped this way rather than linked into the core. A decl
   - `secrets` (location and rule for each stripped value, or `unscanned`).
 
   Bodies are stored as received, apart from stripped secrets, so a new provider API or MCP revision never breaks recording. Decoding into tool calls and model turns happens at read time in `wire`. Large integers and durations that don't fit a JSON number are strings.
-- **Working-directory snapshot.** JSON: the path, git commit if any, and for each entry its path, mode, blob hash, and one of `committed`, `copied`, `uncertain` or `ignored` (with size and modification time only), plus the list of paths not read.
+- **Working-directory snapshot.** JSON: the path, git commit if any, and for each entry its path, mode, blob hash, and one of `committed`, `copied`, `uncertain`, `ignored` (listed with size and modification time only) or `ignored-copied`, plus whether ignored files were copied and the list of paths not read.
 - **Moment bundle.** `moment.yaml`, in the JSON-compatible subset of YAML, holds:
   - `phoenix_moment`, `id` and `source` (`snapshot` or `scenario`);
   - the run (capture and task key), the mark, and the default start point;
@@ -829,7 +829,8 @@ Existing emulators are wrapped this way rather than linked into the core. A decl
   - the harness name, tree digest and commit, and the recipe version;
   - for each connector: surface and routes, tier, origin, coverage, read-only operations and their source, plugin name and version range, recorded tool list, MCP protocol version and era, and paths to its data files, each marked run evidence, capture-time or confirmation;
   - the fills, each with its tag (`derived` or `synthesized`), basis and producer;
-  - `lock: auto` where the moment opts in.
+  - `lock: auto` where the moment opts in;
+  - `include_ignored` where the moment includes copied ignored files.
 
   `check.yaml`, any `checks/*.ts` and `moment.lock.json` sit beside it. A packed revision also records the hash of the revision it was packed from and what was scrubbed or withheld, by location.
 - **Approvals ledger.** Append-only JSON Lines in `PHOENIX_HOME`. Each entry holds the moment id and revision, the lock hash or result hash, how it was recorded (`approved`, `auto`, `accepted` or `pass-accepted`), who, and when.
@@ -935,11 +936,11 @@ Phoenix uses no database and no native add-on of its own. The trace files are th
 - **Transcript formats are the harness's own.** They change between versions and may leave out raw envelopes, system prompts or tool lists. Readers pin the versions they read and list what they can't. Fills cover the rest, and every fill is tagged.
 - **Fills that look better than they are.** A derived fill from the setup agent is checked for verbatim support in the evidence. A synthesized fill taints every expectation after it, so a moment that rests on fills can stay discounted until it is confirmed.
 - **Server harnesses.** When tasks run concurrently and share a stdio MCP server with no task key, tool calls are placed only by pairing with model exchanges, and the rest stay unattributed. In a Replay, in-process state left by earlier tasks isn't rebuilt. An echo Replay of one task per server harness shows how much that matters.
-- **Working directory at the start.** Files that changed during the snapshot are `uncertain`, and ignored files are listed without content. Moments whose failure depends on such files are weaker, and the fidelity report names the paths.
+- **Working directory at the start.** Files that changed during the snapshot are `uncertain`. Ignored files are listed without content unless the capture copied them. Moments whose failure depends on files that weren't copied are weaker, and the fidelity report names the paths.
 - **Frozen-prefix matching.** Harnesses that issue concurrent or background model calls may not repeat them in the same order. Content-first matching should hold, and a mismatch stops with prefix drift rather than guessing. Prefixes built from transcripts compare fewer fields. An echo Replay on each recipe shows whether later start points work for that harness.
 - **Local file state.** A shimmed command answered from the recording doesn't recreate the files it wrote. An unshimmed command runs for real against the sample's copy of the captured working directory.
 - **Provider-held conversations.** A harness that relies on the provider storing the conversation is refused once its requests point at state from the live run. Recipes set such harnesses to send full history where a setting exists. Where it doesn't, replays from later start points are `blocked` for them.
-- **Clock coverage without a hypervisor.** libfaketime can't reach static, setuid or vDSO-reading binaries. Codex's default Linux release target is a static musl build ([targets.py](https://github.com/openai/codex/blob/main/scripts/codex_package/targets.py)), so its recipe needs a glibc build in the image. That package script also defines `linux-gnu` targets. The probe catches the harness itself, but other processes may run on host time and show as `clock: unverified`. The probe has to be run for each official harness.
+- **Clock coverage.** libfaketime can't reach static, setuid or vDSO-reading binaries. Codex's default Linux release target is one of these, a static musl build ([targets.py](https://github.com/openai/codex/blob/main/scripts/codex_package/targets.py)). Such processes replay on the real clock, so anything they compute from "now" (relative dates, expiry checks, "today") can differ from the original run, while the connectors answer as of the captured time. The fidelity report lists those processes, so a surprising result can be traced to the clock.
 - **Container runtimes differ.** Sharing a Unix socket only between the relay and the engine, and adding a redirect rule inside the namespace, behave differently on Docker on Linux, Docker Desktop and rootless Podman. Without the redirect, raw-address attempts fail locally and go unreported. On macOS, Docker Desktop runs its daemon and containers inside a Linux VM it manages ([Docker Desktop](https://docs.docker.com/desktop/setup/install/mac-permission-requirements/)). macOS-only tools can't run inside the container, so those connectors are answered from recordings. The way to find out is to try each runtime.
 - **Write histories on connectors with no plugin.** With no read-only list, every operation counts as a write, and a recorded answer is current only while the candidate repeats the original's calls in order. With an unverified list taken from annotations, a tool wrongly marked read-only would leave a stale or repeated answer labeled recorded or derived. The classification is shown at lock time and in every fidelity report.
 - **Repeated reads that move with time.** A read-only call whose answer depends on "now" is safe to repeat only if its plugin marks it volatile. Without a plugin, the manifest switch is the only guard.
@@ -956,10 +957,3 @@ Phoenix uses no database and no native add-on of its own. The trace files are th
 - **Simulator answers cleaner than real ones.** Taint keeps them out of the decision where possible, and a pass that rests on them counts only once it is confirmed.
 - **The Improver judges its own intent result.** The lock stops it from changing the target, not from misjudging it. Judgments carry a reason, clean deterministic failures stay binding, and the result file shows which verdicts rest on intent.
 - **Overfitting to one moment.** Only the set rule addresses this, and a set of one gives no protection.
-
-## 11. Questions for the user
-
-1. **Harnesses whose clock libfaketime can't reach.** Without a hypervisor, a container can fake time only for processes that read it through the dynamic libc. Statically linked binaries, such as Codex's default Linux release, and Go programs bypass it. The design refuses a Replay when the harness's own process fails the clock probe, and expects such harnesses to ship a glibc build in their recipe's image. Is refusing right, or should such a Replay run with the real clock and be marked down in its fidelity grade?
-2. **Container runtimes on macOS.** Docker Desktop and Podman run containers inside a Linux VM they manage. Phoenix starts no hypervisor itself and drives only the container CLI. Does "containers only, with no hypervisor" allow this?
-3. **Ignored files in the working directory.** The snapshot lists files git ignores (dependencies, build output, local env files) without copying them, so a Replay rebuilds them or goes without them. Should they be copied instead?
-4. **Bodies the secret scanner can't read.** These are kept locally as received, marked unscanned, and never packed, so a token inside one would not be stripped. Is that right, or should such bodies be withheld at capture even though that departs from keeping raw data exactly?

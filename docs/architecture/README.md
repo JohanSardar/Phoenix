@@ -13,4 +13,4 @@ How [ARCHITECTURE.md](../ARCHITECTURE.md) was made. Two designers each wrote a f
 
 After the spec was updated with the person's answers to the first architecture's questions, a fresh agent updated ARCHITECTURE.md to match. Its note is `update-1-note.md`.
 
-These files are history only. ARCHITECTURE.md is the architecture. In the first version, the only edits made to the settler's text were renumbering the core-piece sections under section 3 and making the example sample count a placeholder. The update was committed as written.
+These files are history only. ARCHITECTURE.md is the architecture. In the first version, the only edits made to the settler's text were renumbering the core-piece sections under section 3 and making the example sample count a placeholder. The update was committed as written. A later hand edit folded in the person's answers to that update's four questions (clock, container runtimes, ignored files, unscanned bodies) and removed the emptied Questions for the user section.

@@ -31,7 +31,7 @@ What makes it different: Palantir's Ontology Snapshots and AIP Evolve do this fo
 - Capture routes are the person's choice, and there are many: the harness's own thread transcripts or session logs read after the fact, with no proxy in the path; the CLI proxy; the MCP proxy; model-API recording; and more. Whatever a chosen route didn't capture, an agent in the setup step fills in, and each filled-in answer is tagged with its fidelity (derived or synthesized).
 - Capture recipes aim to cover any login mode of any harness, including Ozi, pi and fx.
 - By default one launch of a harness is one run. A long-lived server harness marks where each task starts and ends, using its session or thread id or a marker call.
-- The harness's working directory is captured at the start of a run.
+- The harness's working directory is captured at the start of a run. Files git ignores are listed by default, not copied. Copying them is an opt-in, set per capture or per moment.
 - Running read-only tools at capture time, over the objects the agent saw, is opt-in per connector.
 - Model-API recording keeps exactly what the model saw from every tool, including tools nobody proxied.
 - The MCP proxy is an ordinary MCP proxy on the wire. Official, community and self-built servers all work the same way, over local (stdio) and remote (Streamable HTTP) transports. A person points their harness at the proxy and leaves their server unchanged. The negotiated MCP protocol version is recorded, since servers differ by revision.
@@ -73,7 +73,7 @@ The most faithful setup runs the real MCP server and redirects only the API unde
 
 A virtual clock makes "now" match the captured moment, both for the harness and for the connector fakes.
 
-Replays run in containers only, with no hypervisor. The clock is faked inside the container.
+Replays run in containers only, and Phoenix starts no hypervisor of its own. Container runtimes that run their own Linux VM, such as Docker Desktop and Podman on macOS, are fine. The clock is faked inside the container. A harness whose clock can't be faked, such as a statically linked binary, a Go program or Codex's default Linux build, still replays, on the real clock, and its fidelity grade is unchanged.
 
 ### Fidelity
 - Every connector falls into a fidelity tier: **stateful** (a fake holds the full state and handles new calls), **recorded** (only calls seen in the original run are answered), **synthesized** (a model invents the answer, tagged as such), or **blocked** (can't be replayed).
@@ -149,7 +149,7 @@ The specs for the plugin interface, the manifest and the trace format come early
 - **No capture only at the MCP wire.** CLI and API tools would get past it.
 - **No dependency on Ozi.** Ozi is only one of the harnesses Phoenix is checked against.
 - **No holding up the live agent to protect the record.** There is no flush-before-write capture mode; a failed or lagging recorder leaves a marked gap instead.
-- **No hypervisor.** Replays run in containers only.
+- **No hypervisor of Phoenix's own.** Replays run in containers only.
 - **No reading corrections from a harness's own approve or reject prompts, for now.** Corrections come from Phoenix's CLI; reading them from the harness is later.
 
 ## 9. Open questions
