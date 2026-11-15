@@ -193,6 +193,9 @@ importers:
       '@phoenix/wire':
         specifier: workspace:*
         version: link:../wire
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
 
   packages/approvals:
     dependencies:
