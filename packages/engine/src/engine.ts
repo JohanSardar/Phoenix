@@ -5,7 +5,7 @@ import { PassThrough, type Duplex } from "node:stream";
 import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
 import type { MomentManifest, PluginDescriptor, TraceEvent } from "@phoenix/formats";
 import {
-  answerCall, buildIndex, checkModelRequest, comparePrefixRequest, httpHost, httpShape, matchFrozen, mcpShape, replayCtx, sameReply, selectModelRequest, toCall,
+  answerCall, buildIndex, checkModelRequest, comparePrefixRequest, httpHost, httpShape, matchFrozen, mcpShape, modelInferencePath, replayCtx, sameReply, selectModelRequest, toCall,
   Emulators, type EmulatorConfig, type Answer, type Call, type ConnectorPolicy, type Divergence, type Exchange, type ModelDialectName, type SimulatorOptions, type StartPoint, type WireMessage,
 } from "@phoenix/answer";
 import type { CaptureMetadata } from "@phoenix/store";
@@ -245,12 +245,12 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
     };
   };
 
-  const serveHttp = async (out: Outbox, stream: string, connector: string, raw: WireMessage, answer: { provenance: Answer["provenance"]; resolver: string; note?: string }) => {
+  const serveHttp = async (out: Outbox, stream: string, connector: string, raw: WireMessage, answer: { provenance: Answer["provenance"]; resolver: string; note?: string }, op: string) => {
     const wire = raw.contentEncoding ? encodeBody(raw.body, raw.contentEncoding) : raw.body;
     const head = { ...raw.head!, headers: raw.head!.headers.map((value, i) => i % 2 === 1 && raw.head!.headers[i - 1]!.toLowerCase() === "content-length" ? String(wire.length) : value) };
     await trace.append(stream, { kind: "meta", surface: "http", connector, head });
     await trace.append(stream, {
-      kind: "result", surface: "http", connector, body: raw.body, provenance: answer.provenance, resolver: answer.resolver, contentType: header(head.headers, "content-type") ?? "",
+      kind: "result", surface: "http", connector, op, body: raw.body, provenance: answer.provenance, resolver: answer.resolver, contentType: header(head.headers, "content-type") ?? "",
       contentEncoding: raw.contentEncoding ? "identity" : header(head.headers, "content-encoding") ?? "identity", ...(raw.contentEncoding ? { decodedFrom: raw.contentEncoding } : {}),
     });
     out.push(HTTP_STREAM.responseHead, encodeHttpHead(head), true);
@@ -269,7 +269,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
         ctx.served.add(exchange.id);
         accepted({ raw: exchange.response, provenance: exchange.provenance, resolver: "frozen-prefix", exchange });
         compared.edits.forEach(field => edits.add(field));
-        await serveHttp(out, stream, model!.connector, exchange.response, { provenance: exchange.provenance, resolver: "frozen-prefix" });
+        await serveHttp(out, stream, model!.connector, exchange.response, { provenance: exchange.provenance, resolver: "frozen-prefix" }, `${request.method} ${modelInferencePath(model!.dialect, path)}`);
         await goLiveIfDone();
         return;
       }
@@ -310,7 +310,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       pairs.push(name, name.toLowerCase() === "date" ? clock.now().toUTCString() : response.headers[i + 1]!);
     }
     const head = { status: response.status, statusMessage: response.statusMessage, headers: pairs };
-    await serveHttp(out, stream, model!.connector, { body: response.body, head }, { provenance: "real", resolver: "model-route" });
+    await serveHttp(out, stream, model!.connector, { body: response.body, head }, { provenance: "real", resolver: "model-route" }, `${request.method} ${modelInferencePath(model!.dialect, path)}`);
   };
 
   const httpLink = (connector: string, meta: { request: { method: string; url: string; headers: string[]; httpVersion: string } }): Link => {
@@ -320,7 +320,8 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
     const handle = async (body: Uint8Array): Promise<void> => {
       const request = meta.request;
       await trace.append(stream, { kind: "meta", surface: "http", connector, head: { ...request } });
-      await trace.append(stream, { kind: "call", surface: "http", connector, op: `${request.method} ${new URL(request.url, "http://x").pathname}`, body, contentType: header(request.headers, "content-type") ?? "", contentEncoding: header(request.headers, "content-encoding") ?? "identity" });
+      const path = new URL(request.url, "http://x").pathname;
+      await trace.append(stream, { kind: "call", surface: "http", connector, op: `${request.method} ${connector === model?.connector ? modelInferencePath(model.dialect, path) : path}`, body, contentType: header(request.headers, "content-type") ?? "", contentEncoding: header(request.headers, "content-encoding") ?? "identity" });
       if (stop) return;
       if (!connector) return diverge({ trigger: "unmapped-connection", detail: `no connector is bound to host ${httpHost(request)}` });
       if (connector === model?.connector) return modelExchange(out, stream, request, body);
@@ -328,7 +329,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       const call = toCall({ surface: "http", connector, op: shape.op, args: shape.args, raw: { body, head: request } }, policy(connector));
       const answer = await respond(call);
       if (!answer) return;
-      await serveHttp(out, stream, connector, answer.raw, answer);
+      await serveHttp(out, stream, connector, answer.raw, answer, call.op);
       await goLiveIfDone();
     };
     return {

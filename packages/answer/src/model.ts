@@ -5,6 +5,16 @@ import type { Divergence } from "./divergence.ts";
 export type PrefixComparison = { ok: true; edits: string[] } | { ok: false; field: string; why: string };
 
 export const isModelDialect = (value: string): value is ModelDialectName => Object.hasOwn(modelDialects, value);
+export function resolveModelDialect(value: string): ModelDialectName | undefined {
+  const unqualified = value.slice(value.indexOf("-") + 1);
+  return isModelDialect(value) ? value : isModelDialect(unqualified) ? unqualified : undefined;
+}
+
+export function modelInferencePath(dialect: ModelDialectName, path: string): string {
+  if (modelDialects[dialect].isInference("POST", path)) return path;
+  const operation = modelDialects[dialect].inferenceOperations.find(op => modelDialects[dialect].isInference("POST", op.path.match(/^\/v[^/]+/)?.[0] + path));
+  return operation ? operation.path.match(/^\/v[^/]+/)![0] + path : path;
+}
 
 export function selectModelRequest(dialect: ModelDialectName, path: string, body: Uint8Array, selection: { id: string; parameters?: Readonly<Record<string, unknown>> }): { path: string; body: Uint8Array } {
   const decoded = decodeJson(body);
@@ -76,7 +86,7 @@ export function comparePrefixRequest(dialectName: ModelDialectName, recorded: Ui
 
 export function checkModelRequest(dialectName: ModelDialectName, method: string, path: string, body: Uint8Array): Divergence | undefined {
   const dialect = modelDialects[dialectName];
-  if (!dialect.isInference(method, path)) return { trigger: "not-inference", detail: `${method} ${path} is not an inference operation of the ${dialectName} dialect` };
+  if (!dialect.isInference(method, modelInferencePath(dialectName, path))) return { trigger: "not-inference", detail: `${method} ${path} is not an inference operation of the ${dialectName} dialect` };
   const decoded = decodeJson(body);
   const request = object(decoded.ok ? decoded.value : undefined);
   const external = dialect.externalAccess(request);

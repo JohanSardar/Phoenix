@@ -356,10 +356,11 @@ export async function materialize(options: MaterializeOptions): Promise<Material
         if (command.includes("/")) throw new Error(`CLI binding must be a command name: ${command}`);
         if (Object.hasOwn(cli, command)) throw new Error(`Two connectors bind the same CLI command: ${command}`);
         const invocation = cliInvocation(bundle, evidence, connector);
+        for (const [key, value] of Object.entries(invocation.env)) if (key !== "PATH" && key !== contract.endpoints.model.env && env[key] === undefined) env[key] = value;
         const host = hostFor("cli", connector);
         if (routes.cli[host]) throw new Error(`Duplicate CLI relay host: ${host}`);
         routes.cli[host] = connector;
-        cli[command] = { host, argv0: invocation.argv[0], cwd: originalCwd ?? invocation.cwd, env: invocation.env, modelEnv: contract.endpoints.model.env, path: replayPath };
+        cli[command] = { host, argv0: invocation.argv[0], cwd: /^(.*\/runtime\/capture-[^/]+\/cwd)(?:\/|$)/.exec(invocation.cwd)?.[1] ?? originalCwd ?? invocation.cwd, env: invocation.env, modelEnv: contract.endpoints.model.env, path: replayPath };
       } else {
         for (const event of evidence) {
           if (event.kind !== "meta" || !event.body) continue;
