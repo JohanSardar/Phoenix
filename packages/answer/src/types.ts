@@ -1,4 +1,4 @@
-import type { MomentManifest, TraceEvent } from "@phoenix/formats";
+import type { MomentManifest, PluginDescriptor, TraceEvent } from "@phoenix/formats";
 import type { HttpRequest, HttpResponse, Surface, WriteHistories } from "@phoenix/wire";
 import type { Emulators } from "./emulators.ts";
 import type { SimulatorOptions } from "./simulator.ts";
@@ -6,7 +6,10 @@ import type { SimulatorOptions } from "./simulator.ts";
 export type Provenance = NonNullable<TraceEvent["provenance"]>;
 export type ConnectorEntry = NonNullable<MomentManifest["connectors"]>[string];
 export type ResolverName = NonNullable<ConnectorEntry["skip_resolvers"]>[number];
-export interface ConnectorPolicy extends Partial<ConnectorEntry> { volatile?: readonly string[] }
+export interface ConnectorPolicy extends Partial<ConnectorEntry> {
+  volatile?: readonly string[];
+  entity_map?: PluginDescriptor["entity_map"];
+}
 
 export interface WireMessage {
   body: Uint8Array;
@@ -63,6 +66,7 @@ export type Miss = { miss: true; why: string };
 
 export interface ExchangeIndex {
   exchanges: readonly Exchange[];
+  prefetch: readonly Exchange[];
   frozen: readonly Exchange[];
   continuation: readonly Exchange[];
   notifications: ReadonlyMap<string, ReadonlySet<string>>;
@@ -82,4 +86,5 @@ export interface ReplayCtx {
 export interface Resolver {
   name: ResolverName;
   resolve(call: Call, ctx: ReplayCtx): Promise<Answer | Miss>;
+  observe?(call: Call, answer: Answer, ctx: ReplayCtx): void;
 }
