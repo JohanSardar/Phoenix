@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createServer as createSecureServer, type ServerOptions as TlsOptions } from "node:https";
+import type { TLSSocket } from "node:tls";
 import { HTTP_STREAM, decodeHttpHead, encodeJson, decodeJson, type HttpRequest } from "@phoenix/wire";
 import { frame, writeBytes, type Backend } from "./ports.ts";
 
@@ -11,10 +12,11 @@ export interface GatewayOptions {
   tls?: TlsOptions;
 }
 
-export function httpHandler(options: GatewayOptions): (request: IncomingMessage, response: ServerResponse) => void {
+export function httpHandler(options: GatewayOptions, authority?: string): (request: IncomingMessage, response: ServerResponse) => void {
   return (request, response) => {
     void (async () => {
-      const head: HttpRequest = { method: request.method!, url: request.url!, headers: request.rawHeaders, httpVersion: request.httpVersion };
+      const socket = request.socket as TLSSocket;
+      const head: HttpRequest = { method: request.method!, url: request.url!, headers: request.rawHeaders, httpVersion: request.httpVersion, scheme: socket.encrypted ? "https" : "http", ...(authority ? { authority } : {}) };
       const route = options.route(head, options.mode ?? "reverse");
       const link = options.backend.open({ surface: route.surface, connector: route.connector, meta: { transport: "http", mode: options.mode ?? "reverse", request: head, details: route.meta } });
       const abort = (): void => { if (!response.writableFinished) link.abort("HTTP client disconnected"); };
@@ -67,17 +69,18 @@ export function httpGatewayTap(options: GatewayOptions): Server {
   server.on("checkContinue", handler);
   server.on("checkExpectation", handler);
   if (options.mode === "forward" && options.tls) {
-    const secure = createSecureServer(options.tls, handler);
-    secure.on("checkContinue", handler);
-    secure.on("checkExpectation", handler);
-    server.on("connect", (_request, socket, head) => {
+    server.on("connect", (request, socket, head) => {
+      const tunnelHandler = httpHandler(options, request.url);
+      const secure = createSecureServer(options.tls!, tunnelHandler);
+      secure.on("checkContinue", tunnelHandler);
+      secure.on("checkExpectation", tunnelHandler);
+      secure.on("tlsClientError", (_error, socket) => socket.destroy());
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n", () => {
         if (head.length) socket.unshift(head);
         secure.emit("connection", socket);
       });
       socket.on("error", () => socket.destroy());
     });
-    secure.on("tlsClientError", (_error, socket) => socket.destroy());
   }
   return server;
 }

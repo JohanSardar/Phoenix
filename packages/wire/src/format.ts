@@ -21,9 +21,9 @@ export function inferFormat(samples: readonly unknown[]): InferredSchema {
   return variants.length === 1 ? variants[0]! : { anyOf: variants.sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b))) };
 }
 
-export function inferToolFormat(responses: readonly unknown[], outputSchema?: object): { schema: InferredSchema; disagreements: { sample: number; errors: string[] }[] } {
+export function inferToolFormat(responses: readonly unknown[], outputSchema?: object | boolean): { schema: InferredSchema; disagreements: { sample: number; errors: string[] }[] } {
   const schema = inferFormat(responses);
-  if (!outputSchema) return { schema, disagreements: [] };
+  if (outputSchema === undefined) return { schema, disagreements: [] };
   const validate = new Ajv2020({ strict: false, allErrors: true, validateFormats: false }).compile(outputSchema);
   return { schema, disagreements: responses.flatMap((response, sample) => validate(response) ? [] : [{ sample, errors: (validate.errors ?? []).map(e => `${e.instancePath || "/"} ${e.message}`) }]) };
 }
