@@ -9,5 +9,8 @@ How [ARCHITECTURE.md](../ARCHITECTURE.md) was made. Two designers each wrote a f
 | `round-N-design-a.md`, `round-N-design-b.md` | Each side's revised design after round N |
 | `round-N-disagreements-a.md`, `round-N-disagreements-b.md` | The points each side still disagreed on after round N |
 | `settler-note.md` | How the settler decided each disagreement |
+| `update-1-note.md` | How a later update folded the spec's answers to the first architecture's questions into ARCHITECTURE.md |
 
-These files are history only. ARCHITECTURE.md is the architecture. The only edits made to the settler's text were renumbering the core-piece sections under section 3 and making the example sample count a placeholder.
+After the spec was updated with the person's answers to the first architecture's questions, a fresh agent updated ARCHITECTURE.md to match. Its note is `update-1-note.md`.
+
+These files are history only. ARCHITECTURE.md is the architecture. In the first version, the only edits made to the settler's text were renumbering the core-piece sections under section 3 and making the example sample count a placeholder. The update was committed as written.
