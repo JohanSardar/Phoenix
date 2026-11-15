@@ -9,7 +9,6 @@
   "dependencies": {
     "@phoenix/formats": "workspace:*",
     "ajv": "^8.20.0",
-    "eventsource-parser": "^4.1.3",
-    "json-canonicalize": "^3.0.1"
+    "eventsource-parser": "^4.1.3"
   }
 }
