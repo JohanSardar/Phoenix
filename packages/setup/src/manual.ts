@@ -31,6 +31,7 @@ function withIgnoredChoice(snapshot: WorkdirSnapshot, include: boolean): Workdir
   if (include) return snapshot;
   return {
     ...snapshot,
+    ignored_copied: false,
     entries: snapshot.entries.map((entry) => {
       if (entry.state !== "ignored-copied") return entry;
       if (entry.size === undefined || entry.mtime === undefined) throw new Error(`Ignored file has no size or mtime to list: ${entry.path}`);
