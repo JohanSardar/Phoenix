@@ -137,7 +137,7 @@ for (const unit of units) {
       const before = text.slice(0, offset).split("\n");
       return [before.length, before.at(-1)!.length + 1] as const;
     };
-    const { module, errors: parseErrors } = parseSync(file, text);
+    const { module, program, errors: parseErrors } = parseSync(file, text);
     if (parseErrors.length) errors.push(`${relative(root, file)}: could not parse: ${parseErrors[0]!.message}`);
     const requests = [
       ...module.staticImports.map((i) => i.moduleRequest),
@@ -150,6 +150,25 @@ for (const unit of units) {
       if (literal) checkSpecifier(file, line, col, unit, literal[2]!, declared);
       else report(`${relative(root, file)}:${line}:${col}`, "static-import-paths", "dynamic import with a computed path");
     }
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (typeof node !== "object" || node === null) return;
+      const n = node as { type?: string; start: number; callee?: { type: string; name?: string }; arguments?: { type: string; value?: unknown }[]; value?: unknown };
+      if (n.type === "CallExpression" && n.callee?.type === "Identifier" && n.callee.name === "require") {
+        const arg = n.arguments?.[0];
+        const [line, col] = pos(n.start);
+        if (arg?.type === "Literal" && typeof arg.value === "string") checkSpecifier(file, line, col, unit, arg.value, declared);
+        else report(`${relative(root, file)}:${line}:${col}`, "static-import-paths", "require with a computed path");
+        return;
+      }
+      const literal = n.type === "Literal" ? n.value : n.type === "TemplateElement" ? (n.value as { cooked?: string } | undefined)?.cooked : undefined;
+      if (unit.kind === "package" && typeof literal === "string") {
+        const vendor = VENDOR_NAMES.find((v) => literal.toLowerCase().includes(v));
+        if (vendor) report(`${relative(root, file)}:${pos(n.start).join(":")}`, "no-vendor-names-in-packages", `${unit.name} names "${vendor}" in code`);
+      }
+      for (const [k, v] of Object.entries(n)) if (k !== "type" && k !== "source") walk(v);
+    };
+    walk(program);
   }
 }
 
