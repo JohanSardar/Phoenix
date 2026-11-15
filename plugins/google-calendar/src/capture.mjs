@@ -2,28 +2,23 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 
-type Call = { op: string; args: Record<string, unknown> };
-type Event = {
-  stream: string; seq: number; kind: string; surface?: string; connector?: string; partial?: boolean;
-  body?: { inline?: string; blob?: string; content_encoding?: string };
-};
 const descriptor = JSON.parse(await readFile(new URL("../phoenix-plugin.json", import.meta.url), "utf8"));
-let calls: Call[] = [];
+let calls = [];
 let initialized = false;
 
-async function plan(segments: string[]): Promise<Call[]> {
-  const events: { event: Event; segment: string }[] = [];
+async function plan(segments) {
+  const events = [];
   for (const segment of segments) {
     for (const line of (await readFile(segment, "utf8")).split("\n").filter(Boolean)) {
-      const event: Event = JSON.parse(line);
+      const event = JSON.parse(line);
       if (event.connector === descriptor.connector && event.surface === "mcp" && !event.partial && ["call", "result"].includes(event.kind)) events.push({ event, segment });
     }
   }
   events.sort((a, b) => a.event.stream.localeCompare(b.event.stream) || a.event.seq - b.event.seq);
-  const pending = new Map<string, Call>();
-  const reads = new Map<string, Call>();
-  const add = (call: Call) => reads.set(JSON.stringify(call), call);
-  const get = (id: unknown) => { if (typeof id === "string" && id) add({ op: "tools/call:get_event", args: { id } }); };
+  const pending = new Map();
+  const reads = new Map();
+  const add = call => reads.set(JSON.stringify(call), call);
+  const get = id => { if (typeof id === "string" && id) add({ op: "tools/call:get_event", args: { id } }); };
   for (const { event, segment } of events) {
     if (!event.body || event.body.content_encoding) continue;
     let body = event.body.inline;
@@ -64,7 +59,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   try {
     request = JSON.parse(line);
     if (request?.phoenix_plugin !== 1 || !Number.isInteger(request.id) || !request.params || typeof request.params !== "object") throw new Error("Invalid plugin request");
-    let value: unknown;
+    let value;
     if (request.method === "initialize") {
       const segments = request.params.segments ?? [];
       if (!Array.isArray(segments) || !segments.every(s => typeof s === "string")) throw new Error("segments must be file paths");

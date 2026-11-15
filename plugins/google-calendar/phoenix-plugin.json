@@ -16,5 +16,5 @@
       "kind": "update", "entity": "event", "id_path": "/id", "items_path": ""
     }
   },
-  "capture": { "command": ["node", "src/capture.ts"], "protocol": "stdio" }
+  "capture": { "command": ["node", "src/capture.mjs"], "protocol": "stdio" }
 }
