@@ -73,7 +73,7 @@ export async function startPlugin(plugin: InstalledPlugin, mode: "capture" | "se
     exited = new Promise((resolve) => { child.once("error", resolve); child.once("close", resolve); });
     stop = async () => { child.kill("SIGTERM"); const timer = setTimeout(() => child.kill("SIGKILL"), 1000); await exited; clearTimeout(timer); };
   }
-  const pending = new Map<number, { resolve: (reply: PluginReply) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+  const pending = new Map<number, { resolve: (reply: PluginReply) => void; reject: (error: Error) => void; timer: NodeJS.Timeout; abort?: (error: Error) => void }>();
   let failure: Error | undefined;
   let id = 0;
   let readyResolve!: (url: URL) => void;
@@ -82,7 +82,7 @@ export async function startPlugin(plugin: InstalledPlugin, mode: "capture" | "se
   const fail = (error: Error) => {
     failure ??= error;
     readyReject?.(error);
-    for (const item of pending.values()) { clearTimeout(item.timer); item.reject(error); }
+    for (const item of pending.values()) { clearTimeout(item.timer); item.reject(error); item.abort?.(error); }
     pending.clear();
   };
   if (channel) void (async () => {
@@ -133,8 +133,9 @@ export async function startPlugin(plugin: InstalledPlugin, mode: "capture" | "se
             let body = "";
             res.setEncoding("utf8");
             res.on("data", (chunk) => { body += chunk; });
-            res.on("error", (error) => { clearTimeout(timer); reject(error); });
+            res.on("error", (error) => { pending.delete(message.id); clearTimeout(timer); reject(error); });
             res.on("end", () => {
+              pending.delete(message.id);
               clearTimeout(timer);
               try {
                 if (res.statusCode !== 200) throw new PluginProcessError(`Plugin HTTP status ${res.statusCode}`);
@@ -145,7 +146,8 @@ export async function startPlugin(plugin: InstalledPlugin, mode: "capture" | "se
             });
           });
           timer = setTimeout(() => req.destroy(new PluginProcessError("Plugin request timed out")), timeoutMs);
-          req.on("error", (error) => { clearTimeout(timer); reject(error); });
+          pending.set(message.id, { resolve, reject, timer, abort: (error) => { req.destroy(error); } });
+          req.on("error", (error) => { pending.delete(message.id); clearTimeout(timer); reject(error); });
           req.end(JSON.stringify(message));
         });
       }

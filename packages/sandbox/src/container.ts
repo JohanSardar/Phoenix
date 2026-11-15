@@ -84,7 +84,7 @@ export class ContainerSandbox implements Sandbox {
       bridge.once("error", (error) => channel!.close(error));
       bridge.stderr.resume();
       await channel.ready;
-      const env = { ...spec.env, ...clockEnvironment(spec.faketimeLibrary, spec.dontFakeMonotonic) };
+      const env = { ...spec.env, ...clockEnvironment(spec.faketimeLibrary, spec.dontFakeMonotonic), TZ: spec.env.TZ ?? "UTC" };
       const envArgs = Object.entries(env).flatMap(([key, value]) => ["--env", `${key}=${value}`]);
       await this.require(["run", "-d", "--name", workload, "--network", `container:${relay}`, ...isolation, ...mountArgs,
         "--mount", `type=bind,src=${clockFile},dst=/phoenix-clock,readonly`, ...envArgs,
