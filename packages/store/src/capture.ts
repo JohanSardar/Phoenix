@@ -55,9 +55,18 @@ export function createTraceWriter(root: string, options: {
   let active: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closing = false;
-  let lost: { from: number; to: number; bytes: number } | undefined;
-  const countRange = (range: NonNullable<typeof lost>) => {
-    lost = lost ? { from: Math.min(lost.from, range.from), to: Math.max(lost.to, range.to), bytes: lost.bytes + range.bytes } : range;
+  const lost: NonNullable<TraceEvent["dropped"]>[] = [];
+  const countRange = (range: NonNullable<TraceEvent["dropped"]>) => {
+    lost.push(range);
+    lost.sort((a, b) => a.from - b.from);
+    for (let i = 1; i < lost.length;) {
+      const previous = lost[i - 1]!, next = lost[i]!;
+      if (next.from <= previous.to + 1) {
+        previous.to = Math.max(previous.to, next.to);
+        previous.bytes += next.bytes;
+        lost.splice(i, 1);
+      } else i++;
+    }
   };
   const count = (event: TraceEvent, bytes: number) => {
     countRange({ from: event.seq, to: event.seq, bytes });
@@ -79,10 +88,9 @@ export function createTraceWriter(root: string, options: {
   const pump = async () => {
     try {
       if (!file) await connect();
-      while (lost || queue.length) {
-        if (lost && (!queue[0] || lost.from < queue[0].event.seq)) {
-          const range = lost;
-          lost = undefined;
+      while (lost.length || queue.length) {
+        if (lost[0] && (!queue[0] || lost[0].from < queue[0].event.seq)) {
+          const range = lost.shift()!;
           try {
             const gap = { ...stamp("gap", gapSequence++), stream: `${options.stream}.recovery.${generation - 1}`, dropped: range, body: { inline: JSON.stringify({ stream: options.stream }) } };
             await writeAll(file!, Buffer.from(JSON.stringify(gap) + "\n"));

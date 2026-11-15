@@ -49,7 +49,7 @@ async function scanSecrets(text: string, policy: SecretPolicy): Promise<{ text: 
   const spans: Span[] = [];
   for (const match of text.matchAll(/\b[a-z][a-z0-9+.-]*:\/\/([^\s/@]+)@/gi)) {
     const start = match.index + match[0].indexOf(match[1]!);
-    spans.push({ start, end: start + match[1]!.length, replacement: placeholder(match[1]!, "secret", policy.hmacKey), rule: "url-credentials" });
+    spans.push({ start, end: start + match[1]!.length, replacement: encodeURIComponent(placeholder(match[1]!, "secret", policy.hmacKey)), rule: "url-credentials" });
   }
   for (const match of text.matchAll(/[?&]([^=&\s#]+)=([^&#\s]*)/g)) {
     let name: string, original: string;
@@ -69,6 +69,7 @@ async function scanSecrets(text: string, policy: SecretPolicy): Promise<{ text: 
   });
   for (const match of result.messages) {
     const [start, end] = match.range;
+    if (spans.some((s) => s.rule === "url-credentials" && start <= s.start && end >= s.end)) continue;
     spans.push({ start, end, replacement: placeholder(text.slice(start, end), "secret", policy.hmacKey), rule: match.ruleId });
   }
   for (const rule of policy.patterns ?? []) {
@@ -95,12 +96,15 @@ async function transformJson(text: string, scan: (value: string, at: string) => 
     space();
     const start = offset;
     if (text[offset] === "{") {
-      offset++; space();
+      offset++; space(); let keyIndex = 0;
       while (text[offset] !== "}") {
         const keyStart = offset; stringEnd();
         const key = JSON.parse(text.slice(keyStart, offset)) as string;
+        const keyEnd = offset;
+        const nextKey = secret ? key : await scan(key, `body${at}/$key:${keyIndex++}`);
+        if (nextKey !== key) spans.push({ start: keyStart, end: keyEnd, replacement: JSON.stringify(nextKey), rule: at });
         space(); offset++;
-        await value(`${at}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`, !hide && !!secret && secretName(key));
+        await value(`${at}/${nextKey.replace(/~/g, "~0").replace(/\//g, "~1")}`, !hide && !!secret && secretName(key));
         space(); if (text[offset] !== ",") break; offset++; space();
       }
       offset++;
@@ -127,6 +131,68 @@ async function transformJson(text: string, scan: (value: string, at: string) => 
     }
   };
   await value("");
+  return applySpans(text, spans).text;
+}
+
+async function transformText(text: string, scan: (value: string, at: string) => Promise<string>, secret?: SecretPolicy, changes?: Change[]): Promise<string> {
+  try { JSON.parse(text); return await transformJson(text, scan, secret, changes); } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+  let result = "", plainStart = 0;
+  for (let start = 0; start < text.length; start++) {
+    if (text[start] !== "{" && text[start] !== "[") continue;
+    let depth = 0, quoted = false, escaped = false, end = start;
+    for (; end < text.length; end++) {
+      const ch = text[end];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') quoted = false;
+      } else if (ch === '"') quoted = true;
+      else if (ch === "{" || ch === "[") depth++;
+      else if ((ch === "}" || ch === "]") && --depth === 0) { end++; break; }
+    }
+    if (depth || quoted) continue;
+    const fragment = text.slice(start, end);
+    try { JSON.parse(fragment); } catch { continue; }
+    result += await scan(text.slice(plainStart, start), `body:${plainStart}`);
+    result += await transformJson(fragment, scan, secret, changes);
+    plainStart = end; start = end - 1;
+  }
+  return result + await scan(text.slice(plainStart), `body:${plainStart}`);
+}
+
+async function transformForm(text: string, scan: (value: string, at: string) => Promise<string>, secret?: SecretPolicy, changes?: Change[]): Promise<string> {
+  const spans: Span[] = [];
+  for (const match of text.matchAll(/(^|&)([^=&]+)=([^&]*)/g)) {
+    let key: string, value: string;
+    try { key = decodeURIComponent(match[2]!.replace(/\+/g, " ")); value = decodeURIComponent(match[3]!.replace(/\+/g, " ")); }
+    catch { throw new Error("Unreadable form encoding"); }
+    const next = secret && secretName(key) ? placeholder(value, "secret", secret.hmacKey) : await scan(value, "body/form-value");
+    if (next !== value) {
+      const start = match.index + match[0].length - match[3]!.length;
+      spans.push({ start, end: start + match[3]!.length, replacement: encodeURIComponent(next), rule: "secret-key" });
+      if (secret && secretName(key)) changes?.push({ at: `body/${key}`, rule: "secret-key" });
+    }
+    if (!secret) {
+      const nextKey = await scan(key, "body/form-key");
+      if (nextKey !== key) {
+        const start = match.index + match[1]!.length;
+        spans.push({ start, end: start + match[2]!.length, replacement: encodeURIComponent(nextKey), rule: "personal-key" });
+      }
+    }
+  }
+  return applySpans(text, spans).text;
+}
+
+async function transformUrl(text: string, scan: (value: string, at: string) => Promise<string>): Promise<string> {
+  const spans: Span[] = [];
+  for (const match of text.matchAll(/[^/?#&=]+/g)) {
+    const inQuery = text.lastIndexOf("?", match.index) > text.lastIndexOf("#", match.index);
+    let original: string;
+    try { original = decodeURIComponent(inQuery ? match[0].replace(/\+/g, " ") : match[0]); }
+    catch { throw new Error("Unreadable URL encoding"); }
+    const next = await scan(original, `url:${match.index}`);
+    if (next !== original) spans.push({ start: match.index, end: match.index + match[0].length, replacement: encodeURIComponent(next), rule: "personal-url" });
+  }
   return applySpans(text, spans).text;
 }
 
@@ -181,14 +247,8 @@ export async function stripSecrets(msg: WireMessage, policy: SecretPolicy): Prom
     let text: string;
     try { text = bodyText(msg); }
     catch { unscanned.push("body"); next.secrets = "unscanned"; return { msg: next, changes, unscanned }; }
-    const before = changes.length;
-    let result: string;
-    let json = false;
-    try { JSON.parse(text); json = true; } catch {}
-    if (json) {
-      result = await transformJson(text, scan, policy, changes);
-      if (result !== text && changes.length === before) changes.push({ at: "body", rule: "secret-key" });
-    } else result = await scan(text, "body");
+    const result = /^application\/x-www-form-urlencoded\b/i.test(msg.contentType ?? "")
+      ? await transformForm(text, scan, policy, changes) : await transformText(text, scan, policy, changes);
     if (result !== text) {
       next.body = Buffer.from(result);
       if (msg.contentEncoding && msg.contentEncoding !== "identity") {
@@ -219,7 +279,7 @@ export async function scrubPersonalData(msg: WireMessage, policy: PackPolicy): P
     changes.push(...result.used.map((s) => ({ at: `${at}:${s.start}`, rule: s.rule })));
     return result.text;
   };
-  if (msg.url !== undefined) next.url = await scan(msg.url, "url");
+  if (msg.url !== undefined) next.url = await transformUrl(msg.url, scan);
   if (msg.headers) {
     const headers: Record<string, string | readonly string[]> = {};
     for (const [name, value] of Object.entries(msg.headers)) headers[name] = typeof value === "string" ? await scan(value, `headers/${name}`) : await Promise.all(value.map((v) => scan(v, `headers/${name}`)));
@@ -237,9 +297,8 @@ export async function scrubPersonalData(msg: WireMessage, policy: PackPolicy): P
       delete next.body;
       return { msg: next, changes, unscanned: ["body"], withheld: { size: msg.body.length, reason: "Unreadable media or body" } };
     }
-    let json = false;
-    try { JSON.parse(text); json = true; } catch {}
-    const result = json ? await transformJson(text, scan) : await scan(text, "body");
+    const result = /^application\/x-www-form-urlencoded\b/i.test(msg.contentType ?? "")
+      ? await transformForm(text, scan) : await transformText(text, scan);
     if (result !== text) {
       next.body = Buffer.from(result);
       if (msg.contentEncoding && msg.contentEncoding !== "identity") { originalEncoding = msg.contentEncoding; delete next.contentEncoding; }
