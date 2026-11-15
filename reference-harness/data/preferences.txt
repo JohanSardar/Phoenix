@@ -1,0 +1,1 @@
+Use America/Chicago time for this calendar. Preserve each event's duration when moving it. Move only the event the person named; leave all other events alone.

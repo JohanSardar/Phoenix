@@ -1,0 +1,7 @@
+{
+  "baseUrlEnv": "MODEL_BASE_URL",
+  "apiKeyEnv": "MODEL_API_KEY",
+  "modelEnv": "MODEL_ID",
+  "headersEnv": "MODEL_HEADERS",
+  "maxTurns": 12
+}

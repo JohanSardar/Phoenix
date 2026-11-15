@@ -1,0 +1,39 @@
+[
+  {
+    "name": "list_events",
+    "description": "List local demo calendar events starting on a date. Times include a UTC offset.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "date": { "type": "string", "description": "YYYY-MM-DD" } },
+      "required": ["date"],
+      "additionalProperties": false
+    },
+    "annotations": { "readOnlyHint": true }
+  },
+  {
+    "name": "get_event",
+    "description": "Read one local demo event by its exact id.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "id": { "type": "string" } },
+      "required": ["id"],
+      "additionalProperties": false
+    },
+    "annotations": { "readOnlyHint": true }
+  },
+  {
+    "name": "move_event",
+    "description": "Move only the event with this exact id. Supply its new start and end, including UTC offsets. Other events are unchanged.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "start": { "type": "string", "format": "date-time" },
+        "end": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "start", "end"],
+      "additionalProperties": false
+    },
+    "annotations": { "readOnlyHint": false, "destructiveHint": true }
+  }
+]

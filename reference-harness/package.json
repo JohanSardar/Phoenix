@@ -3,7 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "start": "node src/index.ts"
+  },
   "exports": {
     ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "^2.4.0"
   }
 }
