@@ -109,7 +109,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
   const interrupt = (error: unknown) => halt({ kind: "interrupted", why: error instanceof Error ? error.message : String(error) });
 
   const goLiveIfDone = async (): Promise<void> => {
-    if (live || !index.frozen.every(e => ctx.served.has(e.id))) return;
+    if (live || options.start === "echo" || !index.frozen.every(e => ctx.served.has(e.id))) return;
     live = true;
     clock.anchor(index.cutTime);
     await trace.append("engine", { kind: "meta", op: "start-point", body: Buffer.from(JSON.stringify({ prefix_edits: [...edits].sort().map(field => ({ field })) })) });
@@ -149,7 +149,11 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       const shape = mcpShape(bytes);
       await trace.append(stream, { kind: "call", surface: "mcp", connector, op: shape?.op ?? "", body: bytes });
       if (!shape) return diverge({ trigger: "lifecycle", detail: `a message on ${connector} is not JSON-RPC` });
-      if (!shape.message.method || !("id" in shape.message)) return;
+      if (!shape.message.method) return;
+      if (!("id" in shape.message)) {
+        if (index.notifications.get(connector)?.has(shape.message.method)) return;
+        return diverge({ trigger: "lifecycle", detail: `the recording of ${connector} never has the harness send ${shape.message.method}` });
+      }
       const call = toCall({ surface: "mcp", connector, op: shape.op!, args: shape.args, raw: { body: bytes } }, policy(connector));
       const answer = await respond(call);
       if (!answer) return;
@@ -187,14 +191,15 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
   };
 
   const serveHttp = async (out: Outbox, stream: string, connector: string, raw: WireMessage, answer: { provenance: Answer["provenance"]; resolver: string; note?: string }) => {
-    const head = raw.head!;
-    await trace.append(stream, { kind: "meta", surface: "http", connector, head: { ...head } });
+    const wire = raw.contentEncoding ? encodeBody(raw.body, raw.contentEncoding) : raw.body;
+    const head = { ...raw.head!, headers: raw.head!.headers.map((value, i) => i % 2 === 1 && raw.head!.headers[i - 1]!.toLowerCase() === "content-length" ? String(wire.length) : value) };
+    await trace.append(stream, { kind: "meta", surface: "http", connector, head });
     await trace.append(stream, {
       kind: "result", surface: "http", connector, body: raw.body, provenance: answer.provenance, resolver: answer.resolver, contentType: header(head.headers, "content-type") ?? "",
       contentEncoding: raw.contentEncoding ? "identity" : header(head.headers, "content-encoding") ?? "identity", ...(raw.contentEncoding ? { decodedFrom: raw.contentEncoding } : {}),
     });
     out.push(HTTP_STREAM.responseHead, encodeHttpHead(head), true);
-    out.push(HTTP_STREAM.responseBody, raw.contentEncoding ? encodeBody(raw.body, raw.contentEncoding) : raw.body, true);
+    out.push(HTTP_STREAM.responseBody, wire, true);
   };
 
   const model = options.model;

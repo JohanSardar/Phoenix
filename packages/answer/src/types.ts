@@ -61,6 +61,7 @@ export interface ExchangeIndex {
   exchanges: readonly Exchange[];
   frozen: readonly Exchange[];
   continuation: readonly Exchange[];
+  notifications: ReadonlyMap<string, ReadonlySet<string>>;
   startTime: string;
   cutTime: string;
 }
