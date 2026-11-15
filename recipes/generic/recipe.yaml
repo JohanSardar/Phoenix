@@ -1,0 +1,15 @@
+phoenix_recipe: 1
+name: generic
+harness_versions: ["*"]
+login_modes: [config]
+routes:
+  - versions: "*"
+    login_mode: config
+    surfaces:
+      mcp: [mcp-proxy]
+      cli: [cli-proxy]
+      http: [gateway]
+shim: [date, cat]
+clock:
+  probe: [node, -e, "console.log(new Date().toISOString())"]
+copy_ignored: false

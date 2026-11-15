@@ -11,6 +11,7 @@
     "@phoenix/store": "workspace:*",
     "@phoenix/redact": "workspace:*",
     "@phoenix/plugin-host": "workspace:*",
-    "@phoenix/formats": "workspace:*"
+    "@phoenix/formats": "workspace:*",
+    "yaml": "^2.9.1"
   }
 }
