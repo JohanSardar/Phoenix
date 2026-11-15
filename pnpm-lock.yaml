@@ -202,6 +202,9 @@ importers:
       '@phoenix/store':
         specifier: workspace:*
         version: link:../store
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   packages/capture:
     dependencies:
@@ -298,6 +301,9 @@ importers:
       '@phoenix/workbench':
         specifier: workspace:*
         version: link:../workbench
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   packages/engine:
     dependencies:
@@ -443,6 +449,9 @@ importers:
       '@phoenix/wire':
         specifier: workspace:*
         version: link:../wire
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   packages/store:
     dependencies:

@@ -13,6 +13,7 @@
     "@phoenix/plugin-host": "workspace:*",
     "@phoenix/model": "workspace:*",
     "@phoenix/approvals": "workspace:*",
-    "@phoenix/formats": "workspace:*"
+    "@phoenix/formats": "workspace:*",
+    "yaml": "^2.9.1"
   }
 }
