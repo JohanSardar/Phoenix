@@ -37,19 +37,21 @@ export function readerCoverage(value: unknown): value is ReaderCoverage {
     && (v.harness_versions as string[]).length > 0;
 }
 
-async function* traceLines(input: Readable): AsyncIterable<string> {
+async function* traceLines(input: Readable): AsyncIterable<string | undefined> {
   const decoder = new TextDecoder("utf-8", { fatal: true });
-  let pending = "";
+  const decode = (bytes: Uint8Array) => {
+    try { return decoder.decode(bytes); } catch { return undefined; }
+  };
+  let pending: Buffer = Buffer.alloc(0);
   for await (const chunk of input) {
-    pending += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+    pending = Buffer.concat([pending, Buffer.from(chunk)]);
     let end: number;
-    while ((end = pending.indexOf("\n")) !== -1) {
-      yield pending.slice(0, end);
-      pending = pending.slice(end + 1);
+    while ((end = pending.indexOf(10)) !== -1) {
+      yield decode(pending.subarray(0, end));
+      pending = pending.subarray(end + 1);
     }
   }
-  pending += decoder.decode();
-  if (pending) yield pending;
+  if (pending.length) yield decode(pending);
 }
 
 async function cleanEvent(event: TraceEvent, policy: SecretPolicy): Promise<TraceEvent> {
@@ -83,6 +85,7 @@ export async function importEvents(options: ImportOptions): Promise<ImportResult
   try {
     for await (const text of traceLines(input)) {
       line++;
+      if (text === undefined) { issues.push({ line, reason: "invalid-utf8" }); continue; }
       let raw: unknown;
       try { raw = JSON.parse(text); }
       catch { issues.push({ line, reason: "invalid-json" }); continue; }
