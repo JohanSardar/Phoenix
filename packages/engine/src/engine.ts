@@ -6,7 +6,7 @@ import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "nod
 import type { MomentManifest, TraceEvent } from "@phoenix/formats";
 import {
   answerCall, buildIndex, checkModelRequest, comparePrefixRequest, httpHost, httpShape, matchFrozen, mcpShape, replayCtx, sameReply, toCall,
-  type Answer, type Call, type ConnectorPolicy, type Divergence, type ModelDialectName, type StartPoint, type WireMessage,
+  Emulators, type EmulatorConfig, type Answer, type Call, type ConnectorPolicy, type Divergence, type ModelDialectName, type StartPoint, type WireMessage,
 } from "@phoenix/answer";
 import type { CaptureMetadata } from "@phoenix/store";
 import { HTTP_STREAM, encodeHttpHead, httpGatewayTap, mcpStdioTap, type Backend, type Frame, type Link } from "@phoenix/taps";
@@ -14,6 +14,7 @@ import { VirtualClock } from "./clock.ts";
 import { SampleTrace, streamName } from "./trace.ts";
 
 export interface EngineOptions {
+  emulators?: readonly EmulatorConfig[];
   evidence: { events: readonly TraceEvent[]; body(event: TraceEvent): Promise<Uint8Array> };
   connectors?: MomentManifest["connectors"];
   volatile?: Readonly<Record<string, readonly string[]>>;
@@ -28,6 +29,7 @@ export interface EngineOptions {
 export type EngineStop = { kind: "diverged"; divergence: Divergence } | { kind: "interrupted"; why: string };
 
 export interface Engine {
+  state(connector: string): Promise<unknown>;
   backend: Backend;
   gateway: Server;
   clock: VirtualClock;
@@ -87,9 +89,15 @@ function withId(bytes: Uint8Array, id: unknown): Uint8Array {
 export async function startEngine(options: EngineOptions): Promise<Engine> {
   const policy = (connector: string): ConnectorPolicy => ({ ...options.connectors?.[connector], ...(options.volatile?.[connector] ? { volatile: options.volatile[connector] } : {}) });
   const index = await buildIndex(options.evidence.events, { body: options.evidence.body, policy, start: options.start, ...(options.clock?.start ? { startTime: options.clock.start } : {}) });
-  const ctx = replayCtx(index, policy);
   const clock = new VirtualClock(index.startTime);
   const trace = await SampleTrace.create(options.sample.root, options.sample.metadata, clock, options.hmacKey);
+  let emulators: Emulators;
+  try {
+    emulators = await Emulators.start((options.emulators ?? []).filter(c => !policy(c.plugin.descriptor.connector).skip_resolvers?.includes("emulator")), () => clock.now(), async difference => {
+      await trace.append("engine", { kind: "meta", connector: difference.connector, op: "fidelity.emulator_differences", body: Buffer.from(JSON.stringify(difference)) });
+    });
+  } catch (error) { await trace.close(); throw error; }
+  const ctx = replayCtx(index, policy, emulators);
   const edits = new Set<string>();
   const links = new Set<Outbox>();
   let live = false, linkCount = 0;
@@ -120,7 +128,9 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
     if (!live) {
       const frozen = matchFrozen(call, ctx);
       if ("trigger" in frozen) { await diverge(frozen); return undefined; }
-      return { raw: frozen.response, provenance: frozen.provenance, resolver: "frozen-prefix", exchange: frozen };
+      const answer = { raw: frozen.response, provenance: frozen.provenance, resolver: "frozen-prefix", exchange: frozen };
+      await emulators.observe(call, answer, frozen.observedAt);
+      return answer;
     }
     const result = await answerCall(call, ctx);
     if ("divergence" in result) { await diverge(result.divergence); return undefined; }
@@ -299,6 +309,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
   if (!index.frozen.length) await goLiveIfDone();
 
   return {
+    state: connector => emulators.state(connector),
     backend, gateway, clock, stopped,
     accept({ destination, stream }) {
       const connector = options.routes.mcp?.[destination.host];
@@ -307,6 +318,6 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
     },
     phase: () => live ? "live" : "prefix",
     prefixEdits: () => [...edits].sort().map(field => ({ field })),
-    async close() { await trace.close(); },
+    async close() { try { await emulators.close(); } finally { await trace.close(); } },
   };
 }

@@ -2,9 +2,10 @@ import { completeCall, sameWriteHistory, type WriteHistories } from "@phoenix/wi
 import type { Divergence } from "./divergence.ts";
 import { resolvers } from "./resolvers/index.ts";
 import type { Answer, Call, ConnectorPolicy, Exchange, ExchangeIndex, ReplayCtx } from "./types.ts";
+import type { Emulators } from "./emulators.ts";
 
-export function replayCtx(index: ExchangeIndex, policy: (connector: string) => ConnectorPolicy): ReplayCtx {
-  return { index, histories: {}, served: new Set(), policy };
+export function replayCtx(index: ExchangeIndex, policy: (connector: string) => ConnectorPolicy, emulators?: Emulators): ReplayCtx {
+  return { index, histories: {}, served: new Set(), policy, emulators };
 }
 
 const served = (call: Call, ctx: ReplayCtx): void => { ctx.histories = completeCall(ctx.histories, call) as WriteHistories; };
@@ -25,6 +26,7 @@ export async function answerCall(call: Call, ctx: ReplayCtx): Promise<{ answer: 
     if (skip.has(resolver.name)) { misses.push({ resolver: resolver.name, why: "removed for this connector by the manifest" }); continue; }
     const result = await resolver.resolve(call, ctx);
     if ("miss" in result) { misses.push({ resolver: resolver.name, why: result.why }); continue; }
+    if (!skip.has("emulator")) await ctx.emulators?.observe(call, result);
     served(call, ctx);
     return { answer: result };
   }
