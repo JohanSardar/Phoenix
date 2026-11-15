@@ -94,6 +94,9 @@ function externalAccess(request: Record<string, unknown>): string[] {
   };
   visit(request, "");
   if (Array.isArray(request.mcp_servers) && request.mcp_servers.length) paths.push("/mcp_servers");
+  const providerTools = ["googleSearch", "googleSearchRetrieval", "enterpriseWebSearch", "urlContext", "codeExecution", "computerUse", "googleMaps"];
+  const names = new Set(providerTools.flatMap(name => [name, name.replace(/[A-Z]/g, c => "_" + c.toLowerCase())]));
+  if (Array.isArray(request.tools)) request.tools.forEach((tool, i) => { for (const key of Object.keys(object(tool))) if (names.has(key)) paths.push(`/tools/${i}/${key}`); });
   return [...new Set(paths)];
 }
 

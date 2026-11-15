@@ -11,6 +11,7 @@
     "@phoenix/store": "workspace:*",
     "@phoenix/plugin-host": "workspace:*",
     "@phoenix/model": "workspace:*",
-    "@phoenix/formats": "workspace:*"
+    "@phoenix/formats": "workspace:*",
+    "ajv": "^8.20.0"
   }
 }

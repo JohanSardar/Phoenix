@@ -41,6 +41,7 @@ const fileKey = (key: string) => {
 
 export interface TraceWriter {
   append(event: TraceEvent): "queued" | "dropped";
+  drain(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -54,7 +55,7 @@ export function createTraceWriter(root: string, options: {
   let file: FileHandle | undefined;
   let active: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let closing = false;
+  let closing = false, failures = 0;
   const lost: NonNullable<TraceEvent["dropped"]>[] = [];
   const countRange = (range: NonNullable<TraceEvent["dropped"]>) => {
     lost.push(range);
@@ -110,6 +111,7 @@ export function createTraceWriter(root: string, options: {
       file = undefined;
       for (const item of queue.splice(0)) count(item.event, item.bytes.length);
       queuedBytes = 0;
+      failures++;
       try { options.onError?.((error as NodeJS.ErrnoException).code ?? "WRITE_FAILED"); } catch {}
       if (closing) throw new Error("Trace write failed while closing");
       timer = setTimeout(start, options.retryMs ?? 1000);
@@ -137,6 +139,11 @@ export function createTraceWriter(root: string, options: {
       queuedBytes += bytes.length;
       if (!active && !timer) start();
       return "queued";
+    },
+    async drain() {
+      const before = failures;
+      while (active) await active;
+      if (failures !== before || timer) throw new Error("Trace write failed; queued events were dropped");
     },
     async close() {
       if (closing) throw new Error("Trace writer is already closed");
