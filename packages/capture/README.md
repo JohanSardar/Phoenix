@@ -1,0 +1,25 @@
+# Live capture
+
+`@phoenix/capture` owns live upstreams and recording. It imports neither the replay engine nor its answer chain. The CLI entry is `packages/cli/src/capture.ts`; its exported `main(argv)` can be registered by the command index without importing a recipe into core code.
+
+```sh
+node packages/cli/src/capture.ts capture \
+  --recipe recipes/generic/recipe.yaml --cwd reference-harness \
+  --routes mcp-proxy,cli-proxy,gateway -- node src/index.ts --task-file task.example.txt
+```
+
+Set the harness's normal model environment variables first. Credentials stay in the inherited process environment, not the recipe. `--output` selects a new capture directory; otherwise captures live under `$PHOENIX_HOME/captures` (`~/.phoenix` by default). The directory is printed to stderr. Existing capture directories are never overwritten. `--copy-ignored` opts into copying ignored files. Omit `--routes` for the three routes above; an empty list applies no in-path routes. Transcript import and plugin capture are separate units.
+
+The launcher starts separate collector and gateway children, restarts either after a crash, and starts the harness before its low-priority snapshot child. MCP proxies and CLI shims are separate processes too. On macOS snapshots run under `taskpolicy -b`; all snapshots lower CPU priority. The launcher forwards termination signals and returns the harness's status. A launcher's death does not kill its children or an agent connection. A proxy's own death can break that connection; no in-path relay can promise otherwise.
+
+The tee calls the real backend first. Outbound frames are offered only after the upstream write completes; inbound frames only after the tap consumes the yielded frame. Its copy path is guarded, bounded to 1 MiB per link, and never awaits a socket, worker, scanner or disk. The unreferenced reconnect timer runs off the relay path. Frames have tap-assigned sequences; dropped ranges and byte counts ride the next accepted copy. Collector restarts also produce an explicit reconnect gap, including the uncertain tail. A crashed tap's disconnect is a gap, not an invented successful exchange. Shims don't drain recording before returning the binary's status.
+
+Each collector connection has its own worker and segment writer. Non-final frame sequence positions are represented by `meta` fragment events; a final `call`/`result` carries the assembled, secret-stripped body and arrival offsets. HTTP request metadata and response heads retain raw header-pair order, with auth values stripped. Encoded bodies use the redactor's decoding policy. Binary or unreadable bodies are private blobs marked unscanned. Streamed/large bodies are written through the store's synced timed spool after whole-message scanning, so unstripped payloads never reach a temporary file. Assembly is bounded to 32 MiB per worker; a larger message is a marked gap, never an apparently complete body. This deliberately favors safe secret stripping over incrementally writing unscanned bytes. A worker failure disconnects only recording. Store write failures recover on new segment generations.
+
+The process backend preserves argv, pipes, separate stderr, EOF and status/signals. If any descriptor is a terminal, the included Python 3 helper allocates independent PTYs only for terminal descriptors and forwards resize and signal controls. Python is not needed for pipe-only commands. The HTTP upstream uses Node's byte streams, preserves compressed response bytes, forwards cancellation and never retries live requests. `httpBackend` can also be wired to a caller-authorized forward/remote route; the generic recipe does not invent authorization or a trusted CA.
+
+The snapshot reads committed blobs from git's immutable object store, overlays changed and untracked files, and lists ignored files by path, size and mtime unless copying was requested. Symlinks are stored as links, never followed. Changes after the start or during reading are uncertain. Failed paths remain in `unread` and mark the snapshot incomplete. Copied contents use the same secret policy; `secrets` is retained as a manifest-entry extension for changed or unreadable files.
+
+`phoenix flag <reason>` and `phoenix task start|end <key> [--cwd <dir>]` never fail the harness. They hand notes to the collector, falling back to direct append if it is unavailable. Task start schedules a separate snapshot, named by the SHA-256 of the task key. Recipe task-key rules read headers, `_meta` fields or simple dotted JSON paths, without changing forwarded traffic. The store's merged reader owns task attribution and optional model/tool-use pairing.
+
+`phoenix correct <capture-directory> --at <event-id> <text> [--one-off]` works during or after a run. Corrections have `kind: correction`, an explicit `id`, the person's stripped text directly in `body.inline`, the target in the top-level `at` extension, and `op: one-off` only when requested. No other command creates a Correction. `phoenix flag-server` is an opt-in one-tool stdio MCP server; capture never adds it to a harness's tool list.

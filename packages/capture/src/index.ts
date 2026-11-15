@@ -1,1 +1,8 @@
-export {};
+export { launch } from "./launcher.ts";
+export type { CaptureOptions } from "./launcher.ts";
+export { captureRuntime } from "./runtime.ts";
+export { note } from "./notes.ts";
+export { tee } from "./tee.ts";
+export { processBackend, httpBackend } from "./upstream.ts";
+export { snapshot } from "./snapshot.ts";
+export { readDescriptor, applyRecipe } from "./recipe.ts";
