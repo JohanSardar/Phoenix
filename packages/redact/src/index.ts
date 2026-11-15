@@ -45,6 +45,16 @@ function applySpans(text: string, spans: Span[]): { text: string; used: Span[] }
   return { text: result + text.slice(offset), used };
 }
 
+function secretAssignments(text: string, policy: SecretPolicy): Span[] {
+  const spans: Span[] = [];
+  for (const match of text.matchAll(/(?:^|\n)[ \t]*(?:export[ \t]+)?([\w.-]+)[ \t]*[:=][ \t]*([^\r\n]+)/g)) {
+    if (!secretName(match[1]!)) continue;
+    const value = match[2]!, start = match.index + match[0].lastIndexOf(value);
+    spans.push({ start, end: start + value.length, replacement: placeholder(value, "secret", policy.hmacKey), rule: "secret-field" });
+  }
+  return spans;
+}
+
 async function scanSecrets(text: string, policy: SecretPolicy): Promise<{ text: string; used: Span[] }> {
   const spans: Span[] = [];
   for (const match of text.matchAll(/\b[a-z][a-z0-9+.-]*:\/\/([^\s/@]+)@/gi)) {
@@ -58,11 +68,7 @@ async function scanSecrets(text: string, policy: SecretPolicy): Promise<{ text: 
     const start = match.index + match[0].length - match[2]!.length;
     spans.push({ start, end: start + match[2]!.length, replacement: encodeURIComponent(placeholder(original, "secret", policy.hmacKey)), rule: "secret-query" });
   }
-  for (const match of text.matchAll(/(?:^|\n)[ \t]*(?:export[ \t]+)?([\w.-]+)[ \t]*[:=][ \t]*([^\r\n]+)/g)) {
-    if (!secretName(match[1]!)) continue;
-    const value = match[2]!, start = match.index + match[0].lastIndexOf(value);
-    spans.push({ start, end: start + value.length, replacement: placeholder(value, "secret", policy.hmacKey), rule: "secret-field" });
-  }
+  spans.push(...secretAssignments(text, policy));
   const result = await lintSource({
     source: { content: text, contentType: "text", filePath: "message.txt" },
     options: { noPhysicFilePath: true, maskSecrets: true, config: { rules: [{ id: "recommended", rule: creator }] } },
@@ -136,9 +142,12 @@ async function transformJson(text: string, scan: (value: string, at: string) => 
 
 async function transformText(text: string, scan: (value: string, at: string) => Promise<string>, secret?: SecretPolicy, changes?: Change[]): Promise<string> {
   try { JSON.parse(text); return await transformJson(text, scan, secret, changes); } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
-  let result = "", plainStart = 0;
+  const segments = secret ? secretAssignments(text, secret) : [];
+  for (const span of segments) changes?.push({ at: `body:${span.start}`, rule: span.rule });
   for (let start = 0; start < text.length; start++) {
     if (text[start] !== "{" && text[start] !== "[") continue;
+    const enclosing = segments.find((s) => s.start <= start && start < s.end);
+    if (enclosing) { start = enclosing.end - 1; continue; }
     let depth = 0, quoted = false, escaped = false, end = start;
     for (; end < text.length; end++) {
       const ch = text[end];
@@ -153,9 +162,13 @@ async function transformText(text: string, scan: (value: string, at: string) => 
     if (depth || quoted) continue;
     const fragment = text.slice(start, end);
     try { JSON.parse(fragment); } catch { continue; }
-    result += await scan(text.slice(plainStart, start), `body:${plainStart}`);
-    result += await transformJson(fragment, scan, secret, changes);
-    plainStart = end; start = end - 1;
+    segments.push({ start, end, replacement: await transformJson(fragment, scan, secret, changes), rule: "json-fragment" });
+    start = end - 1;
+  }
+  let result = "", plainStart = 0;
+  for (const segment of segments.sort((a, b) => a.start - b.start)) {
+    result += await scan(text.slice(plainStart, segment.start), `body:${plainStart}`) + segment.replacement;
+    plainStart = segment.end;
   }
   return result + await scan(text.slice(plainStart), `body:${plainStart}`);
 }
@@ -244,17 +257,22 @@ export async function stripSecrets(msg: WireMessage, policy: SecretPolicy): Prom
   }
   let originalEncoding: string | undefined;
   if (msg.body !== undefined) {
-    let text: string;
-    try { text = bodyText(msg); }
-    catch { unscanned.push("body"); next.secrets = "unscanned"; return { msg: next, changes, unscanned }; }
-    const result = /^application\/x-www-form-urlencoded\b/i.test(msg.contentType ?? "")
-      ? await transformForm(text, scan, policy, changes) : await transformText(text, scan, policy, changes);
-    if (result !== text) {
-      next.body = Buffer.from(result);
-      if (msg.contentEncoding && msg.contentEncoding !== "identity") {
-        originalEncoding = msg.contentEncoding;
-        delete next.contentEncoding;
+    const bodyChanges = changes.length;
+    try {
+      const text = bodyText(msg);
+      const result = /^application\/x-www-form-urlencoded\b/i.test(msg.contentType ?? "")
+        ? await transformForm(text, scan, policy, changes) : await transformText(text, scan, policy, changes);
+      if (result !== text) {
+        next.body = Buffer.from(result);
+        if (msg.contentEncoding && msg.contentEncoding !== "identity") {
+          originalEncoding = msg.contentEncoding;
+          delete next.contentEncoding;
+        }
       }
+    } catch {
+      changes.length = bodyChanges;
+      unscanned.push("body"); next.secrets = "unscanned";
+      return { msg: next, changes, unscanned };
     }
   }
   next.secrets = unscanned.length ? "unscanned" : changes;
@@ -287,21 +305,23 @@ export async function scrubPersonalData(msg: WireMessage, policy: PackPolicy): P
   }
   let originalEncoding: string | undefined;
   if (msg.body !== undefined) {
-    let text: string;
     if (msg.secrets === "unscanned") {
       delete next.body;
       return { msg: next, changes, unscanned: ["body"], withheld: { size: msg.body.length, reason: "secrets: unscanned" } };
     }
-    try { text = bodyText(msg); }
-    catch {
+    const bodyChanges = changes.length;
+    try {
+      const text = bodyText(msg);
+      const result = /^application\/x-www-form-urlencoded\b/i.test(msg.contentType ?? "")
+        ? await transformForm(text, scan) : await transformText(text, scan);
+      if (result !== text) {
+        next.body = Buffer.from(result);
+        if (msg.contentEncoding && msg.contentEncoding !== "identity") { originalEncoding = msg.contentEncoding; delete next.contentEncoding; }
+      }
+    } catch {
+      changes.length = bodyChanges;
       delete next.body;
       return { msg: next, changes, unscanned: ["body"], withheld: { size: msg.body.length, reason: "Unreadable media or body" } };
-    }
-    const result = /^application\/x-www-form-urlencoded\b/i.test(msg.contentType ?? "")
-      ? await transformForm(text, scan) : await transformText(text, scan);
-    if (result !== text) {
-      next.body = Buffer.from(result);
-      if (msg.contentEncoding && msg.contentEncoding !== "identity") { originalEncoding = msg.contentEncoding; delete next.contentEncoding; }
     }
   }
   return { msg: next, changes, unscanned: [], ...(originalEncoding ? { originalEncoding } : {}) };
