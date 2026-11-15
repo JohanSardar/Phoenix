@@ -6,3 +6,5 @@ Only the manual parts of setup live here so far. Connector discovery, gap fillin
 - `createScenarioMoment` publishes an authored Scenario directory (`moment.yaml` with `source: scenario` and seeded connectors, `check.draft.yaml`, `data/`, `checks/`) as a bundle and locks it through `approvals.autoLock` when the manifest sets `lock: auto`.
 
 Neither writes `check.yaml`, the lock or the ledger; `phoenix check approve` does that through `approvals`.
+
+Snapshot bundles share every referenced event-body and included working-directory blob with the capture through hard links at `data/blobs/<hex>`. Repeated hashes share one file; excluded ignored files add no blob. Missing or corrupt blobs prevent bundle creation. The bundle remains usable after the source capture is removed, and packing copies these blobs into the shared revision rather than referring back to a private capture.
