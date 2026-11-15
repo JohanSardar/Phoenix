@@ -1,4 +1,5 @@
-import { decodeJson, encodeJson, object } from "./json.ts";
+import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
+import { decodeJson, encodeJson, object, type Decode } from "./json.ts";
 
 export type Headers = readonly string[];
 export interface HttpRequest {
@@ -6,6 +7,8 @@ export interface HttpRequest {
   url: string;
   headers: Headers;
   httpVersion: string;
+  scheme?: "http" | "https";
+  authority?: string;
 }
 export interface HttpResponse {
   status: number;
@@ -31,4 +34,19 @@ export function decodeHttpHead(bytes: Uint8Array): HttpResponse {
 export function header(headers: Headers, name: string): string | undefined {
   for (let i = 0; i < headers.length; i += 2) if (headers[i]!.toLowerCase() === name.toLowerCase()) return headers[i + 1];
   return undefined;
+}
+
+export function decodeHttpBody(bytes: Uint8Array, headers: Headers): Decode<Uint8Array> {
+  try {
+    let decoded = bytes;
+    const encodings = (header(headers, "content-encoding") ?? "identity").split(",").map(e => e.trim().toLowerCase()).reverse();
+    for (const encoding of encodings) {
+      if (encoding === "gzip") decoded = gunzipSync(decoded);
+      else if (encoding === "deflate") decoded = inflateSync(decoded);
+      else if (encoding === "br") decoded = brotliDecompressSync(decoded);
+      else if (encoding === "zstd") decoded = zstdDecompressSync(decoded);
+      else if (encoding !== "identity") return { ok: false, why: "Unknown HTTP content encoding", bytes };
+    }
+    return { ok: true, value: decoded };
+  } catch { return { ok: false, why: "Invalid encoded HTTP body", bytes }; }
 }
