@@ -110,15 +110,6 @@ export function collectEvidence(input: EvidenceInput, scope: "run" | "continuati
       evidence.notes.push(`Ambiguous model/tap pairing for ${action.tool} at ${action.event}; using tap observation order`);
     } else evidence.actions.push(action);
   }
-  for (const at of modelTurns) {
-    const nextTurn = modelTurns.find(next => next > at) ?? Infinity;
-    const unpairedModel = evidence.actions.filter(action => action.at === at);
-    const unpairedTaps = taps.filter(tap => !consumed.has(tap) && tap.at > at && tap.at < nextTurn);
-    if (!unpairedModel.length || unpairedModel.length !== unpairedTaps.length) continue;
-    evidence.actions = evidence.actions.filter(action => action.at !== at);
-    unpairedTaps.forEach(tap => consumed.add(tap));
-    evidence.notes.push(`Ambiguous model/tap names at model turn ${at}; using tap observation order`);
-  }
   evidence.actions.push(...taps);
   evidence.actions.sort((a, b) => a.order - b.order || a.at - b.at);
   return evidence;

@@ -22,6 +22,7 @@ export async function submitTask(channel: EngineChannel, run: Extract<HarnessCon
   const submit = run.submit.http;
   const url = new URL(submit.path, ready.origin);
   if (url.origin !== ready.origin) throw new Error("Server submit must use the ready endpoint's origin");
-  const code = await call(url, submit.method, submit.body?.replaceAll("{task}", prompt));
+  const body = submit.body === undefined ? undefined : JSON.stringify(JSON.parse(submit.body, (_key, value: unknown) => typeof value === "string" ? value.replaceAll("{task}", prompt) : value));
+  const code = await call(url, submit.method, body);
   return { kind: "finished", code: code < 400 ? 0 : 1 };
 }

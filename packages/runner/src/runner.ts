@@ -217,8 +217,9 @@ export class Runner {
       }
       await persist();
     }
-    const recovery = previous?.status === "interrupted" ? await sampleTrace(join(directory, "samples", String(sample.sample), String(previous.attempt), "trace")) : undefined;
-    const attempt: Attempt = { attempt: sample.attempts.length, status: "running", ...(recovery?.events.length ? { recovered: true } : {}) };
+    const recovery = previous?.status === "interrupted" ? await Promise.all(sample.attempts.slice(sample.attempts.findLastIndex(attempt => attempt.fresh_after_drift) + 1).map(attempt => sampleTrace(join(directory, "samples", String(sample.sample), String(attempt.attempt), "trace")))) : [];
+    const recovering = recovery.some(trace => trace.events.length);
+    const attempt: Attempt = { attempt: sample.attempts.length, status: "running", ...(recovering ? { recovered: true } : {}) };
     sample.attempts.push(attempt);
     const root = join(directory, "samples", String(sample.sample), String(attempt.attempt));
     await mkdir(root, { recursive: true, mode: 0o700 });
@@ -246,7 +247,7 @@ export class Runner {
         await writeClockFile(join(pluginRoot, "clock"), bundle.manifest.clock?.time ?? evidence[0]?.ts.wall ?? new Date(0));
         emulators.push({ plugin: { directory: join(directory, "inputs/plugins", String(index)), descriptor: plugin.descriptor }, options: { context: { ...(plugin.snapshot ? { snapshot: "/inputs/snapshot" } : {}), seed: "/inputs/seed" }, env: plugin.env, replay: { sandbox, spec: { image: plugin.image, mounts: [{ source: join(directory, "inputs/plugins", String(index)), target: "/plugin", readOnly: true }, { source: join(pluginRoot, "inputs"), target: "/inputs", readOnly: true }], workdir: "/plugin", clockFile: join(pluginRoot, "clock"), dontFakeMonotonic: true } } } });
       }
-      engine = await startEngine({ evidence: { events: evidence, body: event => bundleBody(bundle, event) }, ...(recovery?.events.length ? { resume: { events: recovery.events, body: recovery.body } } : {}), emulators, simulator, connectors: bundle.manifest.connectors, start,
+      engine = await startEngine({ evidence: { events: evidence, body: event => bundleBody(bundle, event) }, ...(recovering ? { resume: recovery } : {}), emulators, simulator, connectors: bundle.manifest.connectors, start,
         entityMaps: Object.fromEntries(plan.runner.plugins.map(plugin => [plugin.descriptor.connector, plugin.descriptor.entity_map])), volatile: Object.fromEntries(plan.runner.plugins.map(plugin => [plugin.descriptor.connector, plugin.descriptor.volatile ?? []])),
         clock: { start: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall }, routes: { ...tree.routes, http: { ...Object.fromEntries(plan.runner.plugins.flatMap(plugin => (plugin.descriptor.recognize.hosts ?? []).map(host => [host, plugin.descriptor.connector]))), ...tree.routes.http, "phoenix-model": plan.runner.model.connector, "phoenix-model:8080": plan.runner.model.connector } },
         model: { connector: plan.runner.model.connector, dialect, selection: plan.model, provider: { url: plan.runner.model.url, headers } },
@@ -307,9 +308,10 @@ export class Runner {
     await save(join(root, "outcome.json"), outcome);
     if (outcome.kind === "interrupted") {
       attempt.status = "interrupted"; attempt.cause = outcome.why;
-    } else if (recovery?.events.length && outcome.kind === "diverged" && outcome.trigger === "prefix-drift" && verdict.status !== "fail") {
-      const prior = await optional<Awaited<ReturnType<typeof evaluateCheck>>>(join(directory, "samples", String(sample.sample), String(previous!.attempt), "assessment.json"));
-      if (prior?.expectations.some(e => e.outcome === "fail" && e.irreversible && !e.tainted)) {
+    } else if (recovering && outcome.kind === "diverged" && outcome.trigger === "prefix-drift" && verdict.status !== "fail") {
+      const priors = await Promise.all(sample.attempts.slice(sample.attempts.findLastIndex(attempt => attempt.fresh_after_drift) + 1, -1).map(attempt => optional<Awaited<ReturnType<typeof evaluateCheck>>>(join(directory, "samples", String(sample.sample), String(attempt.attempt), "assessment.json"))));
+      const prior = priors.find(prior => prior?.expectations.some(e => e.outcome === "fail" && e.irreversible && !e.tainted));
+      if (prior) {
         attempt.status = "finished";
         sample.status = "fail"; sample.discounted = false; sample.complete = true; sample.expectations = prior.expectations;
         await persist();

@@ -20,7 +20,7 @@ export interface EngineOptions {
   emulators?: readonly EmulatorConfig[];
   simulator?: Omit<SimulatorOptions, "clock">;
   evidence: { events: readonly TraceEvent[]; body(event: TraceEvent): Promise<Uint8Array> };
-  resume?: EngineOptions["evidence"];
+  resume?: EngineOptions["evidence"] | readonly EngineOptions["evidence"][];
   connectors?: MomentManifest["connectors"];
   volatile?: Readonly<Record<string, readonly string[]>>;
   entityMaps?: Readonly<Record<string, PluginDescriptor["entity_map"]>>;
@@ -73,7 +73,9 @@ function withId(bytes: Uint8Array, id: unknown): Uint8Array {
 export async function startEngine(options: EngineOptions): Promise<Engine> {
   const policy = (connector: string): ConnectorPolicy => ({ ...options.connectors?.[connector], entity_map: options.entityMaps?.[connector], ...(options.volatile?.[connector] ? { volatile: options.volatile[connector] } : {}) });
   const original = await buildIndex(options.evidence.events, { body: options.evidence.body, policy, start: options.start, ...(options.clock?.start ? { startTime: options.clock.start } : {}) });
-  const recovery = options.resume && await buildIndex(options.resume.events, { body: options.resume.body, policy, start: "echo", startTime: original.startTime });
+  const resumes = options.resume ? "events" in options.resume ? [options.resume] : options.resume : [];
+  const recoveryIndexes = await Promise.all(resumes.map(resume => buildIndex(resume.events, { body: resume.body, policy, start: "echo", startTime: original.startTime })));
+  const recovery = recoveryIndexes.reduce<typeof recoveryIndexes[number] | undefined>((longest, next) => !longest || next.frozen.length > longest.frozen.length ? next : longest, undefined);
   const recovered = new Map<string, Exchange>();
   const covered = new Set<string>();
   let recoveryPrefix = "resume:";
@@ -104,8 +106,8 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
   } catch (error) { await trace.close(); throw error; }
   const ctx = replayCtx(index, policy, emulators, options.simulator ? { ...options.simulator, clock: () => index.cutTime } : undefined);
   const edits = new Set<string>();
-  for (const event of options.resume?.events ?? []) if (event.op === "start-point" && event.kind === "meta") {
-    const previous = JSON.parse(Buffer.from(await options.resume!.body(event)).toString()) as { prefix_edits?: { field: string }[] };
+  for (const resume of resumes) for (const event of resume.events) if (event.op === "start-point" && event.kind === "meta") {
+    const previous = JSON.parse(Buffer.from(await resume.body(event)).toString()) as { prefix_edits?: { field: string }[] };
     previous.prefix_edits?.forEach(edit => edits.add(edit.field));
   }
   const links = new Set<Outbox>();
