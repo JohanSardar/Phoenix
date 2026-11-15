@@ -1,0 +1,18 @@
+{
+  "name": "@phoenix/setup",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@phoenix/store": "workspace:*",
+    "@phoenix/wire": "workspace:*",
+    "@phoenix/redact": "workspace:*",
+    "@phoenix/plugin-host": "workspace:*",
+    "@phoenix/model": "workspace:*",
+    "@phoenix/approvals": "workspace:*",
+    "@phoenix/formats": "workspace:*"
+  }
+}

@@ -1,0 +1,39 @@
+phoenix_moment: 1
+id: moved-wrong-event
+source: snapshot
+run: { capture: cap_01, task: "" }
+mark: "notes:0"
+start: mark
+clock: { time: "2026-11-12T15:02:00Z", timezone: America/Chicago }
+prompt: Move my 3pm to 4pm and tell the attendees.
+workdir: data/workdir/run.json
+model: { id: claude-sonnet-4-6, alias: false, parameters: { max_tokens: 4096 } }
+harness: { name: my-harness, tree: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", commit: 4be3c1f9a0d2e7b6c5a4f3e2d1c0b9a8f7e6d5c4 }
+recipe_version: "1.0.0"
+connectors:
+  calendar:
+    surface: mcp
+    routes: [mcp-proxy, transcript]
+    tier: recorded
+    origin: captured
+    coverage: { complete: [] }
+    read_only:
+      - { op: "tools/call:list_events", source: annotation }
+    plugin: { name: phoenix-plugin-calendar, version: "^1.0.0" }
+    tools:
+      - { name: list_events, inputSchema: { type: object } }
+      - { name: move_event, inputSchema: { type: object } }
+    mcp: { protocol_version: "2025-11-25", era: "2025-11-25" }
+    data:
+      - { path: data/calendar/exchanges.jsonl, kind: run-evidence }
+      - { path: data/calendar/prefetch.jsonl, kind: capture-time }
+    allow_synthesized: false
+    repeat_reads: true
+    skip_resolvers: [simulator]
+fills:
+  - path: data/fills/move-event-envelope.json
+    tag: derived
+    basis: { rule: transcript-result-envelope, evidence: ["import.reader.0:3"] }
+    producer: wire
+executable: [checks/only-3pm.ts]
+include_ignored: false

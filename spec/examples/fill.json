@@ -1,0 +1,23 @@
+{
+  "phoenix_fill": 1,
+  "item": "MCP result envelope",
+  "connector": "calendar",
+  "at": "import.reader.0:3",
+  "tag": "derived",
+  "basis": {
+    "rule": "transcript-result-envelope",
+    "evidence": [
+      "import.reader.0:3"
+    ]
+  },
+  "producer": "wire",
+  "value": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Moved event evt_3pm to 16:00."
+      }
+    ],
+    "isError": false
+  }
+}

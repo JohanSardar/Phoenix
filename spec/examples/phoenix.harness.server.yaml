@@ -1,0 +1,8 @@
+phoenix_harness: 1
+name: my-server-harness
+run:    { serve: [node, dist/server.js], ready: { http: "GET /health" },
+          submit: { http: { method: POST, path: /tasks, body: "{task_json}" } },
+          build: [npm, run, build], image: { dockerfile: Dockerfile } }
+endpoints:
+  model:  { env: OPENAI_BASE_URL, dialect: openai-responses }
+editable: ["prompts/**"]

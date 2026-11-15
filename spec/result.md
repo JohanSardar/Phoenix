@@ -1,0 +1,3 @@
+# Replay result
+
+A Replay's result file (ARCHITECTURE.md sections 3.12 and 6) holds the plan hash, the check hash and its ledger entry, the start point and `prefix_edits`, and one entry per sample: whether it was a tiebreak sample, its status (`pass`, `fail` or `unassessed`), whether its pass is discounted, its attempts with their status, the result and taint of each expectation, and the intent judgment with its reason. It also says whether tiebreak samples ran, the baseline counts, whether the moment meets the check and whether it improved, the verdict (`fails`, `meets-check` or `incomplete`), the discount and how it was confirmed, and the fidelity grade.

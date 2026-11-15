@@ -1,0 +1,6 @@
+packages:
+  - spec
+  - packages/*
+  - reference-harness
+  - plugins/*
+  - recipes/*

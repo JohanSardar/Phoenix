@@ -1,0 +1,3 @@
+# Plugin descriptor
+
+`phoenix-plugin.json` describes a separately installed connector plugin (ARCHITECTURE.md section 3.15). `phoenix_plugin` is the plugin-interface major version it implements. It declares the connector name, how to recognize the connector (MCP server names, hosts, CLI commands), its declared tier (a ceiling, never proof) and the operations it covers, its read-only and volatile operations, versioned key rules that remove argument paths from call keys, an optional entity map per tool (kind, entity type, id and item paths, how a list shows it is complete, and equality or range filters), and up to two commands: `capture` (the sidecar) and `serve` (an emulator at `http` or `tool` level). Both speak newline-delimited JSON on stdio or plain HTTP.

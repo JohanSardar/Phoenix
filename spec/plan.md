@@ -1,0 +1,3 @@
+# Replay plan
+
+`plan.json` is the resolved plan the runner writes before a Replay (ARCHITECTURE.md section 3.11). Everything after it is a function of the plan, and its hash is the Replay's identity and the baseline cache key. It holds the bundle digest and check hash, the base and candidate tree digests and the harness image digest, the model and parameters (an alias marked as one), the start point (`beginning`, `mark`, `echo` or `{ at: <event id> }`) and the sample rule, the resolved plugin versions, the simulator model and configuration when one is used, the container runtime and clock probe command, and the version of the engine's matching rules.

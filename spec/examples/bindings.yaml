@@ -1,0 +1,4 @@
+phoenix_bindings: 1
+connectors:
+  calendar: { mcp_server: google-calendar, serve: recorded }
+  github:   { command: gh, serve: real }

@@ -1,0 +1,3 @@
+# Working-directory snapshot
+
+`workdir/<run>.json` records the harness's working directory at the start of a run (ARCHITECTURE.md section 3.2). It holds the directory's path, the HEAD commit when it is a git repository, and one entry per file. Each entry has a path and a state: `committed` (from HEAD's tree), `copied` (differs from HEAD or is untracked), `uncertain` (changed after the run started or while being read), `ignored` (listed with size and modification time only, no content) or `ignored-copied`. Every state except `ignored` carries a mode and a blob digest. `ignored_copied` says whether ignored files were copied, `unread` lists the paths not read, and `incomplete` marks a snapshot that couldn't finish.

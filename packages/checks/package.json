@@ -1,0 +1,15 @@
+{
+  "name": "@phoenix/checks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@phoenix/store": "workspace:*",
+    "@phoenix/wire": "workspace:*",
+    "@phoenix/sandbox": "workspace:*",
+    "@phoenix/formats": "workspace:*"
+  }
+}

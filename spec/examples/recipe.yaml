@@ -1,0 +1,22 @@
+phoenix_recipe: 1
+name: generic
+harness_versions: ["*"]
+login_modes: [api-key]
+routes:
+  - versions: "*"
+    login_mode: api-key
+    surfaces:
+      mcp: [mcp-proxy]
+      cli: [cli-proxy]
+      http: [gateway, forward-proxy]
+model: { setting: OPENAI_BASE_URL, dialect: openai-chat }
+mcp: { file: .mcp.json, format: mcpServers }
+shim: [git, gh]
+transcript_reader: { command: [node, reader.js], harness_versions: [">=1.0.0"] }
+task_keys:
+  - { header: x-session-id }
+  - { meta: sessionId }
+  - { json_path: "$.metadata.thread_id" }
+image: node:24-bookworm
+clock: { probe: [node, -e, "console.log(new Date().toISOString())"], dont_fake_monotonic: false }
+copy_ignored: false

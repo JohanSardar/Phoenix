@@ -1,0 +1,41 @@
+{
+  "phoenix_plan": 1,
+  "bundle": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "check": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "base_tree": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "candidate_tree": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "harness_image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "model": {
+    "id": "claude-sonnet-4-6",
+    "alias": false,
+    "parameters": {
+      "max_tokens": 4096
+    }
+  },
+  "start": {
+    "at": "model.0:1"
+  },
+  "samples": {
+    "base": 2,
+    "tiebreak": 1
+  },
+  "plugins": {
+    "phoenix-plugin-calendar": "1.2.0"
+  },
+  "simulator": {
+    "model": {
+      "id": "small-model",
+      "alias": true
+    },
+    "config": {
+      "temperature": 0
+    }
+  },
+  "container_runtime": "docker 28.1.1",
+  "clock_probe": [
+    "node",
+    "-e",
+    "console.log(Date.now())"
+  ],
+  "matching_rules": "1"
+}

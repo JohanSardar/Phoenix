@@ -1,0 +1,13 @@
+{
+  "name": "@phoenix/plugin-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@phoenix/sandbox": "workspace:*",
+    "@phoenix/formats": "workspace:*"
+  }
+}

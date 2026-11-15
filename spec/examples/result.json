@@ -1,0 +1,109 @@
+{
+  "phoenix_result": 1,
+  "plan": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "check": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "ledger_entry": {
+    "phoenix_ledger": 1,
+    "moment": "moved-wrong-event",
+    "revision": "1",
+    "lock_hash": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+    "how": "approved",
+    "who": "sam@example.com",
+    "at": "2026-11-12T16:10:00Z"
+  },
+  "start": "mark",
+  "prefix_edits": [
+    {
+      "field": "system"
+    }
+  ],
+  "samples": [
+    {
+      "sample": 0,
+      "tiebreak": false,
+      "status": "pass",
+      "discounted": false,
+      "attempts": [
+        {
+          "attempt": 0,
+          "status": "finished"
+        }
+      ],
+      "expectations": [
+        {
+          "expectation": 0,
+          "outcome": "pass",
+          "tainted": false
+        },
+        {
+          "expectation": 6,
+          "outcome": "pass",
+          "tainted": false
+        }
+      ],
+      "intent": {
+        "met": true,
+        "reason": "Only the 3pm moved and attendees were told."
+      }
+    },
+    {
+      "sample": 1,
+      "tiebreak": false,
+      "status": "fail",
+      "attempts": [
+        {
+          "attempt": 0,
+          "status": "interrupted",
+          "cause": "emulator exited"
+        },
+        {
+          "attempt": 1,
+          "status": "finished"
+        }
+      ],
+      "expectations": [
+        {
+          "expectation": 1,
+          "outcome": "fail",
+          "tainted": false
+        }
+      ]
+    },
+    {
+      "sample": 2,
+      "tiebreak": true,
+      "status": "pass",
+      "attempts": [
+        {
+          "attempt": 0,
+          "status": "finished"
+        }
+      ],
+      "expectations": [
+        {
+          "expectation": 0,
+          "outcome": "pass",
+          "tainted": true
+        }
+      ],
+      "intent": {
+        "met": true,
+        "reason": "Moved the 3pm."
+      }
+    }
+  ],
+  "tiebreak_ran": true,
+  "baseline": {
+    "pass": 0,
+    "fail": 2,
+    "unassessed": 0
+  },
+  "meets_check": true,
+  "improved": true,
+  "verdict": "meets-check",
+  "discount": {
+    "discounted": true,
+    "confirmed": "stateful-fake"
+  },
+  "fidelity_grade": "recorded"
+}

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:bindings:v1",
+  "title": "Bindings",
+  "description": "Bindings (bindings.yaml beside a moment set).",
+  "type": "object",
+  "required": [
+    "phoenix_bindings",
+    "connectors"
+  ],
+  "properties": {
+    "phoenix_bindings": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "connectors": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "serve"
+        ],
+        "properties": {
+          "mcp_server": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "serve": {
+            "enum": [
+              "recorded",
+              "real"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
