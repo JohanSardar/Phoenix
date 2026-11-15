@@ -1,19 +1,10 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { ModelOutputError } from "@phoenix/model";
-import { canonicalJson, decodeJson, decodeMcp, encodeMcp, header, inferFormat, object } from "@phoenix/wire";
+import { canonicalJson, decodeJson, decodeMcp, encodeMcp, header, inferFormat, mcpInfo, object } from "@phoenix/wire";
 import type { Resolver } from "../types.ts";
+import mcp2025 from "../schemas/mcp-result-2025.json" with { type: "json" };
+import mcp2026 from "../schemas/mcp-result-2026.json" with { type: "json" };
 
-const mcpResult = {
-  type: "object", required: ["content"], properties: {
-    content: { type: "array", items: { anyOf: [
-      { type: "object", required: ["type", "text"], properties: { type: { const: "text" }, text: { type: "string" } } },
-      { type: "object", required: ["type", "data", "mimeType"], properties: { type: { enum: ["image", "audio"] }, data: { type: "string" }, mimeType: { type: "string" } } },
-      { type: "object", required: ["type", "resource"], properties: { type: { const: "resource" }, resource: { type: "object", required: ["uri"], properties: { uri: { type: "string" } }, anyOf: [{ required: ["text"], properties: { text: { type: "string" } } }, { required: ["blob"], properties: { blob: { type: "string" } } }] } } },
-      { type: "object", required: ["type", "uri", "name"], properties: { type: { const: "resource_link" }, uri: { type: "string" }, name: { type: "string" } } },
-    ] } },
-    structuredContent: { type: "object" }, isError: { type: "boolean" }, _meta: { type: "object" },
-  },
-};
 const httpResult = { type: "object", required: ["status", "body"], additionalProperties: false, properties: { status: { type: "integer", minimum: 200, maximum: 599 }, body: {}, statusMessage: { type: "string" } } };
 
 export const simulator: Resolver = {
@@ -46,16 +37,23 @@ export const simulator: Resolver = {
     }
     if (!samples.length && declared === undefined) return { miss: true, why: "no declared or observed response format" };
     const inferred = inferFormat(samples);
-    const protocol = call.surface === "mcp" ? mcpResult : httpResult;
+    const request = call.surface === "mcp" ? decodeMcp(call.raw.body) : undefined;
+    const era = request?.ok ? mcpInfo(request.value).era : undefined;
+    const recordedEra = ctx.index.exchanges.filter(e => e.connector === call.connector && e.surface === "mcp").flatMap(e => [e.request.body, e.response.body]).flatMap(bytes => {
+      const decoded = decodeMcp(bytes);
+      const era = decoded.ok ? mcpInfo(decoded.value).era : undefined;
+      return era ? [era] : [];
+    }).at(-1);
+    const protocol = call.surface === "mcp" ? (era ?? recordedEra) === "per-request" ? mcp2026 : mcp2025 : httpResult;
     const ajv = new Ajv2020({ strict: false, allErrors: true, validateFormats: false });
     let valid: ReturnType<Ajv2020["compile"]>, output: ReturnType<Ajv2020["compile"]> | undefined;
     try {
-      valid = ajv.compile({ allOf: [protocol, inferred] });
+      valid = ajv.compile({ ...protocol, allOf: [inferred] });
       if (declared !== undefined) output = ajv.compile(declared);
     } catch { return { miss: true, why: "response schema cannot be validated locally" }; }
-    const key = canonicalJson({ v: 1, moment: config.moment, connector: call.connector, call: call.key,
+    const key = canonicalJson({ v: 2, moment: config.moment, connector: call.connector, call: call.key,
       history: call.history ?? ctx.histories[call.connector] ?? [], clock: config.clock(),
-      simulator: config.provider.configuration, inferred, declared: declared ?? null,
+      simulator: config.provider.configuration, protocol, inferred, declared: declared ?? null,
     });
     const check = (value: unknown): boolean => valid(value) && (!output || !!output(call.surface === "mcp" ? object(value).structuredContent : object(value).body));
     let value = await config.store.get(key);
