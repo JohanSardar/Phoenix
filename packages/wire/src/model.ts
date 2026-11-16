@@ -102,12 +102,19 @@ function externalAccess(request: Record<string, unknown>): string[] {
   return [...new Set(paths)];
 }
 
-function withoutCacheControl(value: unknown, path: string, found: { at: string; cache_control: unknown }[]): unknown {
-  if (Array.isArray(value)) return value.map((item, i) => withoutCacheControl(item, `${path}/${i}`, found));
-  if (!value || typeof value !== "object") return value;
-  const { cache_control: cacheControl, ...rest } = object(value);
-  if (cacheControl !== undefined) found.push({ at: path, cache_control: cacheControl });
-  return Object.fromEntries(Object.entries(rest).map(([key, item]) => [key, withoutCacheControl(item, `${path}/${key}`, found)]));
+function withoutCacheControl(history: unknown, found: { at: string; cache_control: unknown }[]): unknown {
+  if (!Array.isArray(history)) return history;
+  return history.map((turn, i) => {
+    const content = object(turn).content;
+    if (!Array.isArray(content)) return turn;
+    return { ...object(turn), content: content.map((block, j) => {
+      if (!block || typeof block !== "object" || Array.isArray(block)) return block;
+      const { cache_control: cacheControl, ...rest } = object(block);
+      if (cacheControl === undefined) return block;
+      found.push({ at: `history/${i}/content/${j}`, cache_control: cacheControl });
+      return rest;
+    }) };
+  });
 }
 
 function dialect(name: ModelDialectName, inferenceOperations: InferenceOperation[], historyKey: string, systemKey?: string, cacheControl = false): ModelDialect {
@@ -123,7 +130,7 @@ function dialect(name: ModelDialectName, inferenceOperations: InferenceOperation
       }
       if (!cacheControl) return { history, configuration };
       const found: { at: string; cache_control: unknown }[] = [];
-      history = withoutCacheControl(history, "history", found);
+      history = withoutCacheControl(history, found);
       return { history, configuration: found.length ? { ...configuration, history_cache_control: found } : configuration };
     },
     toolUses,
