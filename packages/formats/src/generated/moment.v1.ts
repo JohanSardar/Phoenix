@@ -198,9 +198,9 @@ export type MomentManifest = {
        */
       root: string;
       /**
-       * git: the folder's files as committed at the moment's time. today: the folder's files as they were when the moment was made.
+       * git: the folder's files as committed at the moment's time. today: the folder's files as they were when the moment was made. mark: the folder's files as saved at the mark.
        */
-      source: "git" | "today";
+      source: "git" | "today" | "mark";
       /**
        * The commit the copy came from, when source is git.
        */
