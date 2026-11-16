@@ -1,0 +1,39 @@
+diff --git a/src/core/tooling/tool_dispatch.zig b/src/core/tooling/tool_dispatch.zig
+index 268ac86..e12f0de 100644
+--- a/src/core/tooling/tool_dispatch.zig
++++ b/src/core/tooling/tool_dispatch.zig
+@@ -905,12 +905,34 @@ pub fn dispatchToolCall(ctx: DispatchContext, registry: Registry, call: message.
+     }
+ }
+ 
++var phoenix_call_counter = std.atomic.Value(u64).init(0);
++
++/// Phoenix replay: hands one tool call to the stand-in helper and returns its answer instead of running the tool.
++fn phoenixStandIn(alloc: Allocator, dir: []const u8, call: message.ToolCall) DispatchError!AuthorizedDispatchResult {
++    const helper = io_mod.getenv("PHOENIX_FX_TOOL_HELPER") orelse return phoenixStop(alloc);
++    const path = try alloc.print("{s}/call-{d}.json", .{ dir, phoenix_call_counter.fetchAdd(1, .seq_cst) });
++    defer alloc.free(path);
++    const request = try std.json.Stringify.valueAlloc(alloc, .{ .id = call.id, .name = call.name, .arguments_json = call.arguments_json }, .{});
++    defer alloc.free(request);
++    io_mod.writeFileAtomic(alloc, path, request) catch return phoenixStop(alloc);
++    const result = std.process.run(alloc, io_mod.getIo(), .{ .argv = &.{ "node", helper, path } }) catch return phoenixStop(alloc);
++    defer alloc.free(result.stdout);
++    defer alloc.free(result.stderr);
++    if (result.term != .exited or result.term.exited != 0 or result.stdout.len == 0) return phoenixStop(alloc);
++    return .{ .status = if (result.stdout[0] == '0') .success else .failure, .body = try alloc.dupe(u8, result.stdout[1..]) };
++}
++
++fn phoenixStop(alloc: Allocator) DispatchError!AuthorizedDispatchResult {
++    return .{ .status = .failure, .body = try alloc.dupe(u8, "Phoenix stopped this replay: the tool call could not be answered") };
++}
++
+ /// Runs one already-authorized registered tool call through lookup, validation, and call.
+ pub fn dispatchAuthorizedToolCall(
+     ctx: DispatchContext,
+     registry: Registry,
+     call: message.ToolCall,
+ ) DispatchError!AuthorizedDispatchResult {
++    if (io_mod.getenv("PHOENIX_FX_TOOL_DIR")) |dir| return phoenixStandIn(ctx.allocator, dir, call);
+     const validated = try decodeAndValidateRegisteredToolCall(ctx, registry, call);
+     switch (validated) {
+         .not_registered => return .{ .status = .failure, .body = try ctx.allocator.print("unknown tool: {s}", .{call.name}) },
