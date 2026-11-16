@@ -19,7 +19,7 @@ interface SessionMoment {
   model: { provider: string; id: string; thinking?: string };
   loadout: unknown;
   box?: unknown;
-  answers: { id: string; connector: string; op: string; args: unknown; result: unknown; observed_at: string; before_cut: boolean }[];
+  answers: { id: string; connector: string; op: string; args: unknown; result: unknown; observed_at: string; before_cut: boolean; world?: "exact" | "any-args" }[];
 }
 
 export type Outcome = { kind: "finished"; code: number | null } | { kind: "interrupted"; why: string } | { kind: "diverged"; trigger: string; detail: string };
@@ -44,7 +44,7 @@ export async function resumeAttempt(input: {
   const plugins = new Map(plan.runner.plugins.map(plugin => [plugin.descriptor.connector, plugin.descriptor]));
   const standIn: ToolStandIn = await startToolStandIn({
     host: TOOLS_HOST,
-    answers: moment.answers.map(a => ({ id: a.id, connector: a.connector, op: a.op, args: a.args, result: a.result, observedAt: a.observed_at, beforeCut: a.before_cut })),
+    answers: moment.answers.map(a => ({ id: a.id, connector: a.connector, op: a.op, args: a.args, result: a.result, observedAt: a.observed_at, beforeCut: a.before_cut, ...(a.world ? { world: a.world } : {}) })),
     policy: connector => {
       const plugin = plugins.get(connector);
       return { ...bundle.manifest.connectors?.[connector], ...(plugin ? { entity_map: plugin.entity_map, read_only: (plugin.read_only ?? []).map(op => ({ op, source: "plugin" as const })), volatile: plugin.volatile ?? [] } : {}) };

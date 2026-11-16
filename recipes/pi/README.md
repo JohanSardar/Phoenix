@@ -120,6 +120,29 @@ it did. CLI output does not recreate file writes.
 - pi reaches its LLM directly, with nothing from Phoenix in between. The box may reach only the addresses of the hosts in `resume.llm_hosts`, on port 443, looked up once before pi starts. DNS and every other address are shut.
 - Known limit, by Johan's decision on 2026-11-16: another site that shares the LLM provider's addresses can be reached on port 443. Closing it would need a gate in the LLM's path, which Johan ruled out as too complicated. Don't add one.
 
+## Mark, from the beginning, made up
+
+Four more ways into a moment, besides `--at <line>`:
+
+- **Mark.** While pi runs, run `phoenix mark --cwd <project> --note "<why>"` from
+  any terminal, or let the agent run it through its own shell. Nothing is
+  attached to pi. The mark saves the newest session for that folder and its
+  line, a copy of the project's files, and what each service's read-only tools
+  answer right then (with `--mcp-config` and `--plugin`). `phoenix mark
+  --session <file> --at <line>` marks a past moment; then nothing is saved but
+  the session. Make the moment with `phoenix moment create --mark <mark-dir>`.
+  The answers saved at the mark win over the session's own for the same call.
+  Not yet: a replay does not serve the saved copy of the project's files. A
+  mark saves the copy, and T11 (JOH-55) makes the replay use it.
+- **From the beginning.** `--from-beginning` starts at the session's first
+  message, with its original prompt.
+- **A changed answer.** `--change-answer <line>=<file>` replaces the tool answer
+  on that line of the session with the file's text before the replay.
+- **Made up.** `phoenix moment create --made-up <folder>` reads
+  `<folder>/moment.yaml` (format `made-up`: time, LLM, tools, earlier messages,
+  prompt, and the world's answers) and `<folder>/check.yaml`. compose.mjs writes
+  the pi session, and Phoenix answers the made-up tools from the world.
+
 ## Login coverage
 
 | Pi credential source or login | Model route |

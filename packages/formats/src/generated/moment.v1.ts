@@ -117,7 +117,7 @@ export type MomentManifest = {
       /**
        * Answer-chain steps removed for this connector.
        */
-      skip_resolvers?: ("recorded" | "overlay" | "emulator" | "prefetch" | "simulator")[];
+      skip_resolvers?: ("recorded" | "overlay" | "emulator" | "prefetch" | "simulator" | "world")[];
     };
   };
   fills?: {
@@ -181,5 +181,42 @@ export type MomentManifest = {
      * Bundle path of the recipe's reading of the session at the moment: the cut, the prompt, the LLM, the tool loadout and the recorded tool answers.
      */
     moment: string;
+    /**
+     * The replay starts at the session's first message, with its original prompt.
+     */
+    from_beginning?: boolean;
+    /**
+     * Session lines of recorded tool answers that a person changed before the replay.
+     */
+    changed_answers?: number[];
+    /**
+     * The moment never happened live. A person wrote its messages and its world.
+     */
+    made_up?: boolean;
+    /**
+     * Set when the moment came from phoenix mark.
+     */
+    marked?: {
+      /**
+       * When the mark was made.
+       */
+      at: string;
+      note?: string;
+      /**
+       * What the mark saved of the world at that time.
+       */
+      world: {
+        /**
+         * saved: a copy of the project's files as they were at the mark.
+         */
+        files: "saved" | "not saved";
+        /**
+         * Per service with a working copy, saved or why not.
+         */
+        services: {
+          [k: string]: string;
+        };
+      };
+    };
   };
 };

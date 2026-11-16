@@ -6,6 +6,7 @@ const USAGE = `Usage: phoenix <command> [options]
 Commands:
   capture    Run a harness while recording it (--recipe <file> -- <command ...>)
   flag       Mark a moment in the current run
+  mark       Mark this moment of a live harness, with nothing attached to it
   task       Start or end a task in a long-lived harness
   correct    Add a Correction to a capture
   record     Write trace events from stdin
@@ -23,6 +24,7 @@ const commands: Record<string, [run: () => Promise<(args: string[]) => Promise<n
   record: [async () => (await import("./record.ts")).runRecordCommand, () => "Transcript recording failed; no payloads logged"],
   import: [async () => (await import("./import.ts")).runImportCommand, () => "Transcript import failed; no payloads logged"],
   moment: [async () => (await import("./moment.ts")).runMomentCommand, message],
+  mark: [async () => (await import("./mark.ts")).runMarkCommand, message],
   check: [async () => (await import("./check.ts")).runCheckCommand, message],
   replay: [async () => (await import("./replay.ts")).runReplayCommand, error => `Replay refused: ${error instanceof Error ? error.message : "unknown error"}`],
   pass: [async () => (await import("./pass.ts")).runPassCommand, message],

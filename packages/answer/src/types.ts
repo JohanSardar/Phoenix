@@ -47,6 +47,7 @@ export interface Exchange {
   readOnly: boolean;
   history: readonly string[];
   frozen: boolean;
+  anyArgs?: boolean;
   position: number;
   completed: number;
   observedAt: string;

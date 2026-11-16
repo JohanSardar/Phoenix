@@ -41,11 +41,14 @@ clock:
 copy_ignored: false
 resume:
   moment: [node, moment.mjs]
+  locate: [node, locate.mjs]
+  compose: [node, compose.mjs]
   login: [node, login.mjs]
   image: resume.Dockerfile
   command: [node, /phoenix/recipe/resume.mjs]
   llm_hosts:
     openai-codex: [chatgpt.com]
+    opencode-go: [opencode.ai]
 limitations:
   - "Gateway is opt-in for one explicit provider/model and an unchanged upstream; no provider or billing-route substitution."
   - "Codex OAuth honors baseUrl; gateway capture selects Pi's supported SSE transport, not WebSocket."

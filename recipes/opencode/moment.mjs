@@ -3,10 +3,13 @@ import { parseArgs } from "node:util";
 
 const STANDS_IN = ["bash", "read", "glob", "grep", "edit", "write", "apply_patch", "webfetch", "websearch", "skill", "task", "question"];
 const NATIVE = ["todowrite", "invalid"];
-const { values } = parseArgs({ options: { at: { type: "string" } } });
-const at = Number(values.at);
+const { values } = parseArgs({ options: { at: { type: "string" }, "from-beginning": { type: "boolean" } } });
+const fromBeginning = !!values["from-beginning"];
 const lines = (await text(process.stdin)).split("\n");
 if (lines.at(-1) === "") lines.pop();
+const firstUser = lines.findIndex((line, index) => index > 0 && JSON.parse(line).info.role === "user") + 1;
+const at = fromBeginning ? firstUser : Number(values.at);
+if (fromBeginning && at < 2) throw new Error("The session has no user message");
 if (!Number.isInteger(at) || at < 2 || at > lines.length) throw new Error("--at must be a message line of the session (2-" + lines.length + ")");
 const header = JSON.parse(lines[0]);
 if (header.opencode_session !== 1) throw new Error("Make the session file with recipes/opencode/export.mjs");
@@ -39,7 +42,7 @@ if (unknown.length) throw new Error("The session used tools OpenCode does not bu
 
 process.stdout.write(JSON.stringify({
   phoenix_session_moment: 1,
-  at, turn: turn.line, cut_lines: at_message.line - 1, prompt, time: new Date(at_message.info.time.created).toISOString(), cwd: header.info.directory,
+  at, turn: turn.line, from_beginning: fromBeginning, cut_lines: at_message.line - 1, prompt, time: new Date(at_message.info.time.created).toISOString(), cwd: header.info.directory,
   model: { provider: model.provider, id: model.id },
   box: { session: header.info.id, directory: header.info.directory, cut_time: at_message.info.time.created, agent: turn.info.agent ?? "build", ...(variant ? { variant } : {}), continue: midTurn },
   loadout: { tools: STANDS_IN },
