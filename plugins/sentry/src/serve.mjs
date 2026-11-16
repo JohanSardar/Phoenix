@@ -14,7 +14,6 @@ import { startSentryServer } from "./server.mjs";
 let copy;
 let server;
 let api;
-const printed = new Map();
 
 function results(text) {
   try {
@@ -28,29 +27,9 @@ function results(text) {
   return text.split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(event => event.kind === "result" && event.surface !== "cli" && typeof event.body?.inline === "string").map(event => JSON.parse(event.body.inline).result);
 }
 
-// What the session's own sentry calls printed, from the snapshot's command-line events: argv, stdout and exit code.
-function commandRuns(text) {
-  const runs = new Map(), done = [];
-  for (const line of text.split("\n").filter(Boolean)) {
-    let event;
-    try { event = JSON.parse(line); } catch { return []; }
-    if (event.surface !== "cli" || event.body?.inline === undefined) continue;
-    if (event.kind === "call" && !/^(frame|fragment):/.test(event.op ?? "")) {
-      const argv = JSON.parse(event.body.inline).argv;
-      if (Array.isArray(argv)) { const run = { argv, stdout: "", code: undefined }; runs.set(event.stream, run); done.push(run); }
-    } else if (event.kind === "result" && runs.has(event.stream)) {
-      if (event.op === "frame:back:3") runs.get(event.stream).code = JSON.parse(event.body.inline).code;
-      else if (/^(frame|fragment):back:1$/.test(event.op ?? "")) runs.get(event.stream).stdout += event.body.inline;
-    }
-  }
-  return done.filter(run => run.code !== undefined);
-}
-
-
 async function initialize(params) {
   const saved = typeof params.snapshot === "string" ? readFileSync(params.snapshot, "utf8") : "";
   copy = createCopy(results(saved).flatMap(result => result?._meta?.["phoenix/sentry-api"] ?? []));
-  for (const { argv, stdout, code } of commandRuns(saved)) printed.set(JSON.stringify(argv.slice(1)), { stdout, code });
   api = createServer(async (request, response) => {
     const body = await text(request);
     const answer = copy.handle(request.method, request.url, body || undefined);
@@ -86,8 +65,6 @@ async function command(params) {
   const frame = (stream, bytes) => ({ dir: "back", stream, bytes: Buffer.from(bytes).toString("base64"), last: true });
   const answer = (stdout, stderr, code) => ({ status: "answer", value: { body: Buffer.from(JSON.stringify([frame(1, stdout), frame(2, stderr), frame(3, JSON.stringify({ type: "exit", code, signal: null }))])).toString("base64") } });
   const argv = (params.args?.argv ?? []).slice(1);
-  const seen = printed.get(JSON.stringify(argv));
-  if (seen && !copy.state().writes.length) return answer(seen.stdout, "", seen.code);
   copy.begin(params.now);
   let ran, misses;
   try { ran = await runCli(argv, Buffer.from(params.raw?.stdin ?? "", "base64")); }

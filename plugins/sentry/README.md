@@ -41,4 +41,4 @@ Side by side with mcp.sentry.dev, the copy's answers differ in these ways. mcp.s
 - `update_issue`: the real answer also reports the issue's priority.
 - Notes and activity entries made in a replay have new ids and the replay's times.
 
-The copy covers Sentry's MCP server only. A `sentry` or `sentry-cli` command run in a shell is not served by it.
+A `sentry` command run in a shell is answered by the real `sentry` CLI (0.44.1, a dependency of this plugin), with its Sentry API calls sent to the copy. The copy learns nothing from the session's earlier `sentry` lines, so only commands that need no Sentry data, such as `--help` and `--version`, get an answer. Any other command comes back unsupported, and the reason names the API calls the copy could not answer. `sentry-cli` is not served.
