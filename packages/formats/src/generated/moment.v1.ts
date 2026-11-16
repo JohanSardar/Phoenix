@@ -218,5 +218,9 @@ export type MomentManifest = {
         };
       };
     };
+    /**
+     * Bundle folder holding the copied files beside the session that the cut needs.
+     */
+    files?: string;
   };
 };

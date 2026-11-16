@@ -2,6 +2,42 @@
 
 This recipe covers the native `vercel-labs/fx` ACP agent, not the JSON viewer of the same name. Check `fx --version` and `fx status --json` first. It never installs fx, logs in, changes the selected provider, or edits the original settings/MCP files. Later fx versions need a separate compatibility check.
 
+## Put fx back in a moment
+
+This works on any saved fx session, with nothing from Phoenix attached when it was recorded. Phoenix copies the session, cuts it just before a user turn, and resumes fx from the cut inside the sealed box. fx talks straight to its own LLM. Phoenix answers every tool call, from the session's own tool results first, and stops the replay on a call it can't answer.
+
+Build the box image once and put its id in the Workbench settings as `image`, with this recipe as `recipe`:
+
+```sh
+docker build -f recipes/fx/resume.Dockerfile -t phoenix-fx-resume:0.0.16 recipes/fx
+docker image inspect phoenix-fx-resume:0.0.16 --format '{{.Id}}'
+```
+
+The image builds fx 0.0.16 from its own source, with `stand-in.patch`. That patch sends every tool call, fx's own tools (file edits included) and MCP tools alike, to `tool.mjs`, which asks Phoenix for the answer. Nothing else in fx changes.
+
+Make the moment from the session's `log.jsonl`. `--at` is a line in the log, and the moment starts at the turn that holds it:
+
+```sh
+phoenix moment create --session ~/.fx/sessions/v2/SESSION_ID/log.jsonl \
+  --recipe recipes/fx/recipe.yaml --at LINE --id ID --check check.yaml OUT
+```
+
+Phoenix also copies the session's `blobs/` folder, which holds the full tool outputs, with secrets stripped. Blobs it can't scan, such as fx's binary command replays, are left out. A tool call whose full output was left out gets no answer, so a replay that makes that call again stops there. The original session is never changed.
+
+The harness is a folder with `run: { resume: {} }` in its `phoenix.harness.yaml`. Three files in it change how fx acts:
+
+- `AGENTS.md` becomes the project's `AGENTS.md` in the session's workspace. fx reads it before each turn.
+- `fx.json` can name another LLM, for example `{"model": "gpt-6-luna"}`.
+- `fx.patch` is a patch to fx's own source. When it is not empty, the box builds fx again with it, which takes a few minutes. Each build needs about 4 GB of memory, so start the Workbench with `--concurrency 1` when Docker has 8 GB or less. The box prints the patch's hash in `harness.stderr` once the build is done.
+
+Limits:
+
+- Only sessions on a Codex subscription resume. The box gets a copy of fx's Codex login for the run, with a refresh token that can't be used. The login must last 15 more minutes; run fx once to refresh it.
+- The box can reach only `chatgpt.com` on port 443. Other calls fx makes, such as its update check, are refused.
+- fx doesn't save its system prompt in the session. The resumed turn gets fx's own prompt and the harness's `AGENTS.md`.
+- MCP servers aren't started in the box, so the resumed fx doesn't see MCP tools.
+- fx runs on the real clock, even when the moment has its own time. fx checks the LLM host's TLS certificate against its clock, and an old time can fail that check.
+
 ## After the fact: no live proxy
 
 Import a closed native session log directly:
