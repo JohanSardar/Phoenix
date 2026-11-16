@@ -269,6 +269,15 @@
             },
             "minItems": 1
           }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*\\.\\.)[^*]*(/\\*)?$"
+          },
+          "minItems": 1,
+          "description": "Files beside the session file that the session needs, relative to its folder; a trailing * matches every file in that folder. Phoenix copies them with secrets stripped, leaves out any it can't scan, and passes their folder to the moment command as --files <dir>. The moment command names the ones the cut needs in its files list."
         }
       }
     }
