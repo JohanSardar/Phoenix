@@ -64,12 +64,15 @@ async function store(copy: Copy, kind: TraceEvent["kind"], bytes: Buffer, extra:
     await spool.release();
   } else { e.body = { inline: clean.toString(), ...encoding }; writer.append(e); }
 }
-async function flush(copy: Copy, partial: boolean) {
+async function flush(copy: Copy) {
   for (const [key, msg] of messages) {
     if (!msg.size) continue;
     const [dir, channel] = key.split(":");
-    const result = await sanitizeMessage({ body: Buffer.concat(msg.parts) }, policy);
-    gaps.append(Object.assign({ ...event(copy, dir === "out" ? "call" : "result"), stream: gapStream, seq: gapSeq++, partial, op: `frame:${dir}:${channel}`, body: { blob: await blobs.put(result.msg.body ?? new Uint8Array()) }, chunks: msg.chunks, secrets: result.unscanned.length ? "unscanned" as const : result.changes }, copy.aborted ? { aborted: true } : {}));
+    gaps.append({ ...event(copy, "gap"), stream: gapStream, seq: gapSeq++, partial: true, ...(msg.omitted ? { dropped: { from: msg.first.seq, to: copy.seq, bytes: msg.size } } : {}), body: { inline: `transport closed before frame:${key} completed` } });
+    if (msg.omitted) continue;
+    const http = (connection.meta as { transport?: string }).transport === "http";
+    await store({ ...copy, seq: ++seq }, http && channel !== "0" && channel !== "2" ? "meta" : dir === "out" ? "call" : "result", Buffer.concat(msg.parts),
+      { op: `frame:${key}`, chunks: msg.chunks, partial: true, transport_partial: copy.aborted === true && !msg.partial && !copy.dropped }, http ? dir === "out" ? requestHeaders : responseHeaders : []);
   }
   messages.clear();
   buffered = 0;
@@ -78,10 +81,10 @@ async function accept(copy: Copy | { type: "disconnect" }) {
   if (closed) return;
   if (copy.type === "disconnect") {
     closed = true;
-    const stamp: Copy = { type: "close", stream, seq: ++seq, wall: new Date().toISOString(), mono: process.hrtime.bigint().toString() };
+    const stamp: Copy = { type: "close", stream, seq, wall: new Date().toISOString(), mono: process.hrtime.bigint().toString() };
     gaps.append({ ...event(stamp, "gap"), stream: gapStream, seq: gapSeq++, body: { inline: "tap-disconnected-without-close" } });
-    await flush(stamp, true);
-    await gaps.close(); parentPort!.close(); return;
+    await flush(stamp);
+    await writer.close(); await gaps.close(); parentPort!.close(); return;
   }
   if (copy.type === "open") {
     connection = copy.connection!;
@@ -103,7 +106,7 @@ async function accept(copy: Copy | { type: "disconnect" }) {
     gaps.append({ ...event(copy, "gap"), stream: gapStream, seq: gapSeq++, dropped: copy.dropped });
   }
   if (copy.type === "close") {
-    await flush(copy, true); closed = true; await writer.close(); await gaps.close(); parentPort!.close(); return;
+    await flush(copy); closed = true; await writer.close(); await gaps.close(); parentPort!.close(); return;
   }
   const f = copy.frame!, bytes = Buffer.from(f.bytes, "base64"), key = `${f.dir}:${f.stream}`;
   const http = (connection.meta as { transport?: string }).transport === "http";

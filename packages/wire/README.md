@@ -17,6 +17,12 @@ failure with the original bytes; a relay must never depend on successful decodin
   and streamed arguments, and identifies provider state or external access for
   the engine's safety policy. `decodeModelBody` reads JSON or assembled SSE while
   leaving every provider's format intact. Recipes choose the API shape.
+  `completeModelStream` recognizes dispatched terminal SSE events for messages,
+  chat-completions and responses. Generate-content has no stream-wide terminal
+  marker, so it still needs transport EOF. It returns the decoded stream so a
+  cancelled compressed response can be re-encoded with a complete footer during
+  replay. A terminal never repairs lost frames; HTTP decoding stays strict by
+  default and permits unfinished encoding only for this terminal check.
 - `canonicalJson` rejects non-JSON and invalid Unicode values and implements
   RFC 8785. `callKey` hashes exactly `{surface, connector, op, args}` with SHA-256;
   it never removes argument paths or changes array order or null/absent values.

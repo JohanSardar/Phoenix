@@ -9,7 +9,7 @@ import {
   Emulators, type EmulatorConfig, type Answer, type Call, type ConnectorPolicy, type Divergence, type Exchange, type ModelDialectName, type SimulatorOptions, type StartPoint, type WireMessage,
 } from "@phoenix/answer";
 import type { CaptureMetadata } from "@phoenix/store";
-import { HTTP_STREAM, decodeCliInvocation, encodeHttpHead, httpGatewayTap, mcpStdioTap, type Backend, type Link } from "@phoenix/taps";
+import { HTTP_STREAM, decodeCliInvocation, encodeHttpHead, httpGatewayTap, mcpStdioTap, type Backend, type HttpRequest, type Link } from "@phoenix/taps";
 import { VirtualClock } from "./clock.ts";
 import { SampleTrace, streamName } from "./trace.ts";
 import { cliRelay, cliResponder } from "./cli.ts";
@@ -72,9 +72,9 @@ function withId(bytes: Uint8Array, id: unknown): Uint8Array {
 
 export async function startEngine(options: EngineOptions): Promise<Engine> {
   const policy = (connector: string): ConnectorPolicy => ({ ...options.connectors?.[connector], entity_map: options.entityMaps?.[connector], ...(options.volatile?.[connector] ? { volatile: options.volatile[connector] } : {}) });
-  const original = await buildIndex(options.evidence.events, { body: options.evidence.body, policy, start: options.start, ...(options.clock?.start ? { startTime: options.clock.start } : {}) });
+  const original = await buildIndex(options.evidence.events, { body: options.evidence.body, policy, start: options.start, model: options.model, ...(options.clock?.start ? { startTime: options.clock.start } : {}) });
   const resumes = options.resume ? "events" in options.resume ? [options.resume] : options.resume : [];
-  const recoveryIndexes = await Promise.all(resumes.map(resume => buildIndex(resume.events, { body: resume.body, policy, start: "echo", startTime: original.startTime })));
+  const recoveryIndexes = await Promise.all(resumes.map(resume => buildIndex(resume.events, { body: resume.body, policy, start: "echo", startTime: original.startTime, model: options.model })));
   const recovery = recoveryIndexes.reduce<typeof recoveryIndexes[number] | undefined>((longest, next) => !longest || next.frozen.length > longest.frozen.length ? next : longest, undefined);
   const recovered = new Map<string, Exchange>();
   const covered = new Set<string>();
@@ -87,7 +87,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       if (!options.model || e.connector !== options.model.connector || exchange.connector !== e.connector || !e.request.head || !exchange.request.head) return false;
       return e.request.head.method === exchange.request.head.method
         && new URL(e.request.head.url, "http://x").pathname === new URL(exchange.request.head.url, "http://x").pathname
-        && comparePrefixRequest(options.model.dialect, e.request.body, exchange.request.body).ok;
+        && comparePrefixRequest(options.model.dialect, e.request, exchange.request).ok;
     });
     const id = `${recoveryPrefix}${exchange.id}`;
     if (matched) { recovered.set(id, matched); covered.add(matched.id); }
@@ -270,13 +270,13 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
   };
 
   const model = options.model;
-  const modelExchange = async (out: Outbox, stream: string, request: { method: string; url: string; headers: readonly string[] }, body: Uint8Array): Promise<void> => {
+  const modelExchange = async (out: Outbox, stream: string, request: HttpRequest, body: Uint8Array): Promise<void> => {
     const path = new URL(request.url, "http://x").pathname;
     if (!live) {
       const candidates = index.frozen.filter(e => e.connector === model!.connector && !ctx.served.has(e.id) && e.request.head && e.request.head.method === request.method && new URL(e.request.head.url, "http://x").pathname === path);
       let first: { field: string; why: string } | undefined;
       for (const exchange of candidates) {
-        const compared = comparePrefixRequest(model!.dialect, exchange.request.body, body);
+        const compared = comparePrefixRequest(model!.dialect, exchange.request, { head: request, body });
         if (!compared.ok) { first ??= compared; continue; }
         ctx.served.add(exchange.id);
         const answer = accepted({ raw: exchange.response, provenance: exchange.provenance, resolver: "frozen-prefix", exchange });
