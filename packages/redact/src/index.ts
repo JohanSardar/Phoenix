@@ -114,7 +114,7 @@ async function transformJson(text: string, scan: (value: string, at: string) => 
         if (nextKey !== key) spans.push({ start: keyStart, end: keyEnd, replacement: JSON.stringify(nextKey), rule: at });
         space(); offset++; space();
         const schemaProperty = propertyNames && text[offset] === "{";
-        await value(`${at}/${nextKey.replace(/~/g, "~0").replace(/\//g, "~1")}`, !hide && !!secret && secretName(key) && !schemaProperty, key === "properties");
+        await value(`${at}/${nextKey.replace(/~/g, "~0").replace(/\//g, "~1")}`, !hide && !!secret && secretName(key) && !schemaProperty, key === "properties" && /\/(input_?schema|parameters|schema)(\/|$)/i.test(at));
         space(); if (text[offset] !== ",") break; offset++; space();
       }
       offset++;
