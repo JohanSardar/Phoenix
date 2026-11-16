@@ -445,9 +445,23 @@
             "left_out": {
               "type": "array",
               "items": { "type": "string" },
-              "description": "Files Phoenix could not read when it made the copy. They are missing inside the box."
+              "description": "Files left out of the copy: files Phoenix could not read, and, in a folder outside git, dot-files, dot-folders such as .ssh, and node_modules. They are missing inside the box."
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Size of the copy's tar files in the bundle, in bytes."
+            },
+            "files": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of files in the copy."
             }
           }
+        },
+        "files_not_copied": {
+          "type": "string",
+          "description": "Why the project's files were not copied, such as a session that ran in the home folder or a folder over the size cap. New file calls then get the next answer instead."
         },
         "from_beginning": {
           "type": "boolean",
