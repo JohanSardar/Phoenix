@@ -15,8 +15,27 @@ const valueOf = result => {
   try { return text === undefined ? undefined : JSON.parse(text); } catch { return undefined; }
 };
 
+// A snapshot is either the plugin's own JSON or capture events (one JSON object per line) that
+// pair each recorded tools/call with its result.
+function readSnapshot(text) {
+  try {
+    const value = JSON.parse(text);
+    if (value && typeof value === "object" && !Array.isArray(value) && value.kind === undefined) return value;
+  } catch { /* capture events */ }
+  const calls = new Map(), answers = [];
+  for (const line of text.split("\n").filter(Boolean)) {
+    const event = JSON.parse(line);
+    const body = event.body?.inline === undefined ? undefined : JSON.parse(event.body.inline);
+    if (!body) continue;
+    const key = JSON.stringify([event.stream, body.id]);
+    if (event.kind === "call" && body.method === "tools/call") calls.set(key, body.params);
+    if (event.kind === "result" && calls.has(key) && body.result) answers.push({ op: `tools/call:${calls.get(key).name}`, args: calls.get(key).arguments ?? {}, result: body.result, observed_at: event.ts?.wall });
+  }
+  return { answers };
+}
+
 async function initialize(params) {
-  const snapshot = params.snapshot ? JSON.parse(await readFile(params.snapshot, "utf8")) : {};
+  const snapshot = params.snapshot ? readSnapshot(await readFile(params.snapshot, "utf8")) : {};
   const seed = params.seed ? await readFile(params.seed, "utf8").catch(() => params.seed) : "";
   box = new Mailbox(seed);
   box.timezone = snapshot.timezone ?? process.env.TZ ?? "UTC";

@@ -19,7 +19,7 @@ const message = {
 async function serve(t, snapshot = {}) {
   const root = await mkdtemp(join(here, ".review-"));
   const path = join(root, "snapshot.json");
-  await writeFile(path, JSON.stringify({ account: { email: "test@example.com" }, ...snapshot }));
+  await writeFile(path, typeof snapshot === "string" ? snapshot : JSON.stringify({ account: { email: "test@example.com" }, ...snapshot }));
   const child = spawn(process.execPath, [join(here, "../src/serve.mjs")], {
     env: { PATH: process.env.PATH, HOME: root, TMPDIR: root, PHOENIX_HIMALAYA: process.env.PHOENIX_HIMALAYA ?? "himalaya" },
     stdio: ["pipe", "pipe", "pipe"],
@@ -145,4 +145,15 @@ test("S8: himalaya folder creation falls through when the label list is unknown"
     ? JSON.parse(Buffer.from(reply.value.body, "base64").toString()).map(f => Buffer.from(f.bytes, "base64").toString())
     : reply;
   assert.equal(reply.status, "unsupported", JSON.stringify(detail));
+});
+
+test("S9: a snapshot of capture events answers its recorded tool calls", async t => {
+  const args = { messageId: message.id, messageFormat: "FULL_CONTENT" };
+  const event = (seq, kind, body) => ({ v: 1, capture: "mark", stream: "mark", seq, ts: { wall: now }, kind, surface: "mcp", op: "tools/call:get_message", body: { inline: JSON.stringify(body) } });
+  const events = [
+    event(2, "call", { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "get_message", arguments: args } }),
+    event(3, "result", { jsonrpc: "2.0", id: 1, result: { structuredContent: message } }),
+  ];
+  const call = await serve(t, events.map(e => JSON.stringify(e)).join("\n") + "\n");
+  assert.equal(payload(await call("get_message", args)).subject, message.subject);
 });
