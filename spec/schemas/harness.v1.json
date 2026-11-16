@@ -8,7 +8,6 @@
     "phoenix_harness",
     "name",
     "run",
-    "endpoints",
     "editable"
   ],
   "properties": {
@@ -134,6 +133,18 @@
               }
             }
           }
+        },
+        {
+          "type": "object",
+          "required": [
+            "resume"
+          ],
+          "properties": {
+            "resume": {
+              "type": "object",
+              "description": "The harness is put back in a moment by resuming the moment's own session file with its recipe. It needs no endpoints."
+            }
+          }
         }
       ]
     },
@@ -183,5 +194,20 @@
       "minItems": 1,
       "description": "Globs of editable paths."
     }
+  },
+  "if": {
+    "properties": {
+      "run": {
+        "type": "object",
+        "required": [
+          "resume"
+        ]
+      }
+    }
+  },
+  "else": {
+    "required": [
+      "endpoints"
+    ]
   }
 }

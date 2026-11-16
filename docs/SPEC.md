@@ -166,3 +166,13 @@ The specs for the plugin interface, the manifest and the trace format come early
 - **Risks.** Overfitting to one moment, which is why moment sets matter. Simulator answers being cleaner than real APIs. Emulator coverage. Privacy of traces. Vendor-hosted MCP servers being stuck at recorded fidelity.
 - **Prior art in Johan's own work.** Ozi's `evals/mcp-tool-use` already does a small version of this: it captures a real harness turn at the model API, builds a fake world with mocked tool results, has a cheap model play the shell, runs real tool handlers over scripted state, and grades samples against a baseline. Its rules carry over in spirit: name each case's source, add the case before the fix, include control cases, and keep user data out of fixtures.
 - **Johan's original build order.** 1) Recording proxy and trace format. 2) Replay proxy that fails loudly on a miss. 3) Manifest and harness contract. 4) Improver loop on one real moment, with a success check and the environment set up by hand. 5) Fidelity check: replay an original run, diff every response against the recording, and explain each difference before trusting any improvement. 6) Overlay and derived answers for connectors like calendar. 7) Emulators, simulator, virtual clock and setup agent, once real misses show which ones are worth building. 8) Connector plugin interface and test kit.
+
+## 11. Acceptance
+
+Proposed, waiting for Johan's yes.
+
+1. I use Ozi, which runs pi, live, with nothing from Phoenix attached. I pick a moment where I want it to act differently. It can be a mistake, or just something I want to change. From pi's own session file, Phoenix puts pi back in that moment. An outside agent changes the harness and re-runs until it acts the way I want.
+2. The same works on a real saved session from pi, fx, OpenCode, Codex and Claude Code: from the beginning with the original prompt, and from a moment in the middle with a changed harness and the same context.
+3. A made-up moment that never happened live runs the same loop.
+4. A harness someone built for themselves replays from the beginning, even when it has no resume command. This is tested on real public harnesses, built for different purposes by proven people with credibility.
+5. For a service that has a working copy (calendar first), a replay never touches the real service, and the copy answers the way the real one does.

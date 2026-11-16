@@ -57,8 +57,14 @@ export interface HarnessContract {
         image?: {
           dockerfile: string;
         };
+      }
+    | {
+        /**
+         * The harness is put back in a moment by resuming the moment's own session file with its recipe. It needs no endpoints.
+         */
+        resume: {};
       };
-  endpoints: {
+  endpoints?: {
     model: {
       env: string;
       dialect: string;

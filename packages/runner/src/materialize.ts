@@ -231,6 +231,8 @@ socket.on("connect", () => {
 
 export async function materialize(options: MaterializeOptions): Promise<MaterializedTree> {
   const { bundle, contract, bindings } = options;
+  const { endpoints, run } = contract;
+  if (!endpoints || "resume" in run) throw new Error("This harness resumes its own session; it has no endpoints to materialize");
   const [base, candidate] = await Promise.all([readTree(options.base.directory), readTree(options.candidate.directory)]);
   if (hashTree(base) !== options.base.digest) throw new Error("Base tree digest mismatch");
   if (hashTree(candidate) !== options.candidate.digest) throw new Error("Candidate tree digest mismatch");
@@ -308,16 +310,16 @@ export async function materialize(options: MaterializeOptions): Promise<Material
   const routes: MaterializedTree["routes"] = { mcp: Object.create(null), mcpHttp: Object.create(null), http: Object.create(null), cli: Object.create(null) };
   routes.http["phoenix-model"] = "model";
   routes.http["phoenix-model:8080"] = "model";
-  const env: Record<string, string> = { ...options.env, [contract.endpoints.model.env]: "http://phoenix-model:8080" };
+  const env: Record<string, string> = { ...options.env, [endpoints.model.env]: "http://phoenix-model:8080" };
   const replayPath = `/phoenix/bin:${env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}`;
   const hostFor = (surface: string, connector: string) => `${surface}-${/^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$/.test(connector) ? connector : digest(connector).slice(7, 47)}`;
   const mcp: Record<string, unknown> = Object.create(null);
   let config: Record<string, unknown> | undefined;
   let mcpPath: string | undefined;
-  if (contract.endpoints.mcp) {
-    if (contract.endpoints.mcp.format !== "mcpServers") throw new Error(`Unsupported MCP config format: ${contract.endpoints.mcp.format}`);
-    mcpPath = pathInside(directory, contract.endpoints.mcp.file);
-    const entry = tree.get(contract.endpoints.mcp.file);
+  if (endpoints.mcp) {
+    if (endpoints.mcp.format !== "mcpServers") throw new Error(`Unsupported MCP config format: ${endpoints.mcp.format}`);
+    mcpPath = pathInside(directory, endpoints.mcp.file);
+    const entry = tree.get(endpoints.mcp.file);
     if (entry?.bytes) config = JSON.parse(entry.bytes.toString("utf8")) as Record<string, unknown>;
     else config = {};
     if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("MCP config is not an object");
@@ -356,11 +358,11 @@ export async function materialize(options: MaterializeOptions): Promise<Material
         if (command.includes("/")) throw new Error(`CLI binding must be a command name: ${command}`);
         if (Object.hasOwn(cli, command)) throw new Error(`Two connectors bind the same CLI command: ${command}`);
         const invocation = cliInvocation(bundle, evidence, connector);
-        for (const [key, value] of Object.entries(invocation.env)) if (key !== "PATH" && key !== contract.endpoints.model.env && env[key] === undefined) env[key] = value;
+        for (const [key, value] of Object.entries(invocation.env)) if (key !== "PATH" && key !== endpoints.model.env && env[key] === undefined) env[key] = value;
         const host = hostFor("cli", connector);
         if (routes.cli[host]) throw new Error(`Duplicate CLI relay host: ${host}`);
         routes.cli[host] = connector;
-        cli[command] = { host, argv0: invocation.argv[0], cwd: /^(.*\/runtime\/capture-[^/]+\/cwd)(?:\/|$)/.exec(invocation.cwd)?.[1] ?? originalCwd ?? invocation.cwd, env: invocation.env, modelEnv: contract.endpoints.model.env, path: replayPath };
+        cli[command] = { host, argv0: invocation.argv[0], cwd: /^(.*\/runtime\/capture-[^/]+\/cwd)(?:\/|$)/.exec(invocation.cwd)?.[1] ?? originalCwd ?? invocation.cwd, env: invocation.env, modelEnv: endpoints.model.env, path: replayPath };
       } else {
         for (const event of evidence) {
           if (event.kind !== "meta" || !event.body) continue;
@@ -394,8 +396,8 @@ export async function materialize(options: MaterializeOptions): Promise<Material
     env.PATH = replayPath;
   }
   for (const [path, entry] of [...tree].sort(([a], [b]) => b.length - a.length)) await chmod(pathInside(directory, path), entry.mode);
-  let argv = ("command" in contract.run ? contract.run.command : contract.run.serve).map(arg => arg.replaceAll("{task_file}", "/phoenix/task.txt"));
-  if (contract.run.build) {
+  let argv = ("command" in run ? run.command : run.serve).map(arg => arg.replaceAll("{task_file}", "/phoenix/task.txt"));
+  if (run.build) {
     const launcher = `import { spawn } from "node:child_process";
 let child;
 const listeners = new Map();
@@ -411,7 +413,7 @@ const run = argv => new Promise((resolve, reject) => {
 });
 let result;
 try {
-  result = await run(${JSON.stringify(contract.run.build.map(arg => arg.replaceAll("{task_file}", "/phoenix/task.txt")))});
+  result = await run(${JSON.stringify(run.build.map(arg => arg.replaceAll("{task_file}", "/phoenix/task.txt")))});
   if (result.code === 0 && !result.signal) result = await run(${JSON.stringify(argv)});
 } catch (error) {
   process.stderr.write(error.message + "\\n");

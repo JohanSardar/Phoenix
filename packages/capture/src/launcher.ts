@@ -70,8 +70,10 @@ export async function launch(options: CaptureOptions) {
     await ready(superviseCollector()).catch(async () => { await appendCoverage(root, { gap: "collector-unavailable-at-launch" }); });
     let modelUrl: string | undefined;
     if (routes.includes("gateway")) {
-      const base = env[contract.endpoints.model.env];
-      if (!base) throw new Error(`Set ${contract.endpoints.model.env} to the upstream model base URL`);
+      const model = contract.endpoints?.model;
+      if (!model) throw new Error("The gateway route needs the harness contract's model endpoint");
+      const base = env[model.env];
+      if (!base) throw new Error(`Set ${model.env} to the upstream model base URL`);
       let port = "0";
       const gatewayEnv = { ...env, PHOENIX_UPSTREAM: base };
       const startGateway = () => {

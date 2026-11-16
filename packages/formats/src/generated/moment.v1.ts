@@ -165,4 +165,21 @@ export type MomentManifest = {
       reason: string;
     }[];
   };
+  /**
+   * Set when the moment resumes the harness's own session file. The recipe cuts the session and resumes it in the box.
+   */
+  resume?: {
+    /**
+     * Name of the recipe that resumes this session.
+     */
+    recipe: string;
+    /**
+     * Bundle path of the copied session file.
+     */
+    session: string;
+    /**
+     * Bundle path of the recipe's reading of the session at the moment: the cut, the prompt, the LLM, the tool loadout and the recorded tool answers.
+     */
+    moment: string;
+  };
 };
