@@ -184,5 +184,28 @@
     "Absolute commands, shell builtins, native filesystem tools, direct APIs and provider-native tools bypass PATH shims",
     "Session exports are semantic evidence, not model request/response wire recordings; missing evidence is never invented",
     "No fx binary is bundled; use an independently prepared, digest-pinned Linux image for container Replay"
-  ]
+  ],
+  "resume": {
+    "moment": [
+      "node",
+      "moment.mjs"
+    ],
+    "login": [
+      "node",
+      "login.mjs"
+    ],
+    "image": "resume.Dockerfile",
+    "command": [
+      "node",
+      "/phoenix/recipe/resume.mjs"
+    ],
+    "llm_hosts": {
+      "codex": [
+        "chatgpt.com"
+      ]
+    },
+    "files": [
+      "blobs/*"
+    ]
+  }
 }
