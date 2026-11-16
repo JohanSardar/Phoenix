@@ -96,7 +96,7 @@ export class Copy {
   }
   masterLink(master, cal) {
     if (!master.recurrence) return this.link(master.id, cal);
-    try { const first = this.expand(master, cal, Infinity)[0]; return this.link(first ? first.id : master.id, cal); } catch { return this.link(master.id, cal); }
+    try { const first = this.expand(master, cal, this.startMs(master, cal) + 5 * 366 * 86400000)[0]; return this.link(first ? first.id : master.id, cal); } catch { return this.link(master.id, cal); }
   }
 
   // Every event of a calendar (recurring series expanded) that overlaps [a, b).
@@ -115,10 +115,12 @@ export class Copy {
     }
     for (const ev of cal.events.values()) {
       if (ev.recurrence || out.has(ev.id)) continue;
-      if (ev.recurringEventId && cal.events.get(ev.recurringEventId)?.recurrence) continue;
       if (ev.status === "cancelled" && !showDeleted) continue;
       const s = this.startMs(ev, cal), e = this.endMs(ev, cal);
-      if (e > a && s < b) out.set(ev.id, ev);
+      if (!(e > a && s < b)) continue;
+      const master = ev.recurringEventId && cal.events.get(ev.recurringEventId);
+      if (master?.recurrence && (master.status === "cancelled" || !this.expand(master, cal, this.untilFor(ev.id)).some(o => o.id === ev.id))) continue;
+      out.set(ev.id, ev);
     }
     return [...out.values()];
   }
@@ -357,6 +359,7 @@ export class Copy {
       iCalUID: `${id}@google.com`, sequence: 0, reminders, eventType: body.eventType ?? "default",
     });
     ev.htmlLink = this.masterLink(ev, cal);
+    this.forgetBusy(cal, ev);
     cal.events.set(id, ordered(ev));
     return { status: 200, body: this.render(ev, zone), etag };
   }
@@ -383,13 +386,17 @@ export class Copy {
       } else next[key] = value;
     }
     if (next.start && next.end && this.endMs(next, cal) < this.startMs(next, cal)) return apiError(400, "timeRangeEmpty", "The specified time range is empty.");
+    const instances = [...cal.events.values()].filter(other => other.recurringEventId === id);
+    if (next.recurrence && timeChanged && instances.some(other => cal.overridden.get(other.id)?.size || JSON.stringify(other.start) !== JSON.stringify(other.originalStartTime))) this.gap(`the copy does not know how moving series ${id} changes its changed occurrences`);
+    this.forgetBusy(cal, current, next);
     const { updated, etag } = this.stamp();
     next.updated = updated; next.etag = etag;
     if (timeChanged) next.sequence = (current.sequence ?? 0) + 1;
     if (next.recurrence || body.recurrence) next.htmlLink = this.masterLink(next, cal);
     cal.events.set(id, ordered(next));
     if (current.recurringEventId) cal.overridden.set(id, touched);
-    if (next.recurrence) {
+    if (next.recurrence && timeChanged) for (const other of instances) cal.events.delete(other.id);
+    else if (next.recurrence) {
       for (const [otherId, other] of cal.events) {
         if (other.recurringEventId !== id) continue;
         const own = cal.overridden.get(otherId) ?? new Set();
@@ -408,9 +415,19 @@ export class Copy {
     if (!current) this.gap(`the copy has not seen event ${id} in ${cal.id}`);
     if (current.status === "cancelled") return apiError(410, "deleted", "Resource has been deleted");
     const { updated, etag } = this.stamp();
+    this.forgetBusy(cal, current);
     const { extendedProperties: _x, ...kept } = current;
     cal.events.set(id, ordered({ ...kept, status: "cancelled", updated, etag, sequence: (current.sequence ?? 0) + 1 }));
     return { status: 204, raw: "", type: "text/html" };
+  }
+
+  // Free/busy seen before a write no longer holds where that write lands.
+  forgetBusy(cal, ...events) {
+    for (const ev of events) {
+      if (ev.recurrence || ev.recurringEventId) { cal.busy = []; return; }
+      const s = this.startMs(ev, cal), e = this.endMs(ev, cal);
+      cal.busy = cal.busy.filter(w => !(w.b > s && w.a < e));
+    }
   }
 
   freeBusy(body) {

@@ -1,5 +1,7 @@
 import { naiveToMs, parseInstant, validZone } from "./time.mjs";
 
+// cocal asks Google for one page of this size and drops nextPageToken, so a full page proves nothing about the rest.
+const COCAL_PAGE = 250;
 export const COCAL = new Set(["list-calendars", "list-events", "search-events", "get-event", "list-colors", "create-event", "create-events", "update-event", "delete-event", "get-freebusy", "get-current-time", "respond-to-event", "manage-accounts"]);
 export const GOOGLE_MCP = new Set(["list_calendars", "list_events", "get_event", "search_events", "suggest_time", "create_event", "update_event", "delete_event", "respond_to_event"]);
 
@@ -79,7 +81,7 @@ function learnCocal(copy, op, args, value) {
       if (!byCal.has(calId)) byCal.set(calId, []);
       byCal.get(calId).push(ev);
     }
-    for (const [calId, events] of byCal) learnList(copy, calId, events, bound(copy, args.timeMin, args.timeZone, calId), bound(copy, args.timeMax, args.timeZone, calId), whole);
+    for (const [calId, events] of byCal) learnList(copy, calId, args.fields ? [] : events, bound(copy, args.timeMin, args.timeZone, calId), bound(copy, args.timeMax, args.timeZone, calId), whole && events.length < COCAL_PAGE);
     return;
   }
   if (op === "get-event" || op === "create-event" || op === "update-event" || op === "respond-to-event") {
