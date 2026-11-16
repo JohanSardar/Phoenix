@@ -41,6 +41,8 @@ clock:
 copy_ignored: false
 resume:
   moment: [node, moment.mjs]
+  locate: [node, locate.mjs]
+  compose: [node, compose.mjs]
   login: [node, login.mjs]
   image: resume.Dockerfile
   command: [node, /phoenix/recipe/resume.mjs]

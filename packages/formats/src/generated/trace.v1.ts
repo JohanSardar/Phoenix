@@ -106,7 +106,7 @@ export interface TraceEvent {
    * For imported events: the fields that came from the log as written.
    */
   verbatim?: string[];
-  provenance?: "real" | "recorded" | "derived" | "synthesized";
+  provenance?: "real" | "recorded" | "derived" | "synthesized" | "seeded";
   /**
    * On replay results: the resolver that answered.
    */

@@ -86,7 +86,7 @@ export function fidelityReport(trace: readonly TraceEvent[], blobs: Readonly<Rec
       for (const [name, c] of Object.entries(context.connectors)) {
         const tier = weakestTier(c.plugin_tier ?? "recorded", c.coverage_tier);
         if (!["captured", "seeded"].includes(c.origin) || !Array.isArray(c.routes)) throw new Error(`Invalid connector context: ${name}`);
-        connectors.set(name, { connector: name, called: false, tier, origin: c.origin, routes: c.routes, responses: { real: 0, recorded: 0, derived: 0, synthesized: 0 } });
+        connectors.set(name, { connector: name, called: false, tier, origin: c.origin, routes: c.routes, responses: { real: 0, recorded: 0, derived: 0, synthesized: 0, seeded: 0 } });
         for (const rule of c.read_only ?? []) if (rule.source !== "plugin") report.unverified_read_only.push({ event: event.id ?? `${event.stream}:${event.seq}`, connector: name, detail: rule });
       }
       report.context = context;
@@ -109,7 +109,7 @@ export function fidelityReport(trace: readonly TraceEvent[], blobs: Readonly<Rec
     if (!["call", "result", "divergence"].includes(event.kind)) continue;
     let connector = connectors.get(event.connector);
     if (!connector) {
-      connector = { connector: event.connector, called: false, tier: "recorded", routes: [], responses: { real: 0, recorded: 0, derived: 0, synthesized: 0 } };
+      connector = { connector: event.connector, called: false, tier: "recorded", routes: [], responses: { real: 0, recorded: 0, derived: 0, synthesized: 0, seeded: 0 } };
       connectors.set(event.connector, connector);
     }
     connector.called = true;
@@ -131,7 +131,7 @@ export function fidelityReport(trace: readonly TraceEvent[], blobs: Readonly<Rec
       if (event.provenance) connector.responses[event.provenance]++;
       else report.notes.push(`Response ${id} has no provenance`);
       const call = event.surface === "mcp" ? rpcKey === undefined ? undefined : rpcCalls.get(rpcKey) : lastCall.get(key);
-      if (["derived", "synthesized"].includes(event.provenance ?? "") || /fill|repeat/.test(event.resolver ?? "")) report.answers.push({ ...item, call, detail: { provenance: event.provenance, resolver: event.resolver } });
+      if (["derived", "synthesized", "seeded"].includes(event.provenance ?? "") || /fill|repeat/.test(event.resolver ?? "")) report.answers.push({ ...item, call, detail: { provenance: event.provenance, resolver: event.resolver } });
       if (rpcKey !== undefined) rpcCalls.delete(rpcKey);
     }
     if (event.kind !== "call") connector.tier = weakestTier(connector.tier, responseTier(event));

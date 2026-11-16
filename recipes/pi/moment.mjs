@@ -1,17 +1,27 @@
+import { readFileSync } from "node:fs";
 import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
 import { ADAPTER, METADATA, adapterCall, isProxy } from "./adapter.mjs";
 
-const { values } = parseArgs({ options: { at: { type: "string" } } });
-const at = Number(values.at);
+const { values } = parseArgs({ options: { at: { type: "string" }, "from-beginning": { type: "boolean" }, change: { type: "string", multiple: true } } });
 const lines = (await text(process.stdin)).split("\n");
 if (lines.at(-1) === "") lines.pop();
-if (!Number.isInteger(at) || at < 1 || at > lines.length) throw new Error(`--at must be a line of the session (1-${lines.length})`);
+const fromBeginning = !!values["from-beginning"];
+const at = fromBeginning ? undefined : Number(values.at);
+if (!fromBeginning && (!Number.isInteger(at) || at < 1 || at > lines.length)) throw new Error(`--at must be a line of the session (1-${lines.length})`);
 const entries = lines.map((line, index) => ({ line: index + 1, entry: JSON.parse(line) }));
 if (entries[0]?.entry.type !== "session" || entries[0].entry.version !== 3) throw new Error("Only pi session format v3 is supported");
+const edits = [];
+for (const change of values.change ?? []) {
+  const [line, file] = [Number(change.slice(0, change.indexOf("="))), change.slice(change.indexOf("=") + 1)];
+  const found = entries[line - 1];
+  if (!found || found.entry.type !== "message" || found.entry.message.role !== "toolResult") throw new Error(`--change ${line}: that line is not a tool answer`);
+  found.entry.message = { ...found.entry.message, content: [{ type: "text", text: readFileSync(file, "utf8") }] };
+  edits.push({ line, text: JSON.stringify(found.entry) });
+}
 const isUser = ({ entry }) => entry.type === "message" && entry.message.role === "user";
-const turn = entries.slice(0, at).findLast(isUser);
-if (!turn) throw new Error(`No user message at or before line ${at}; a moment starts at the user turn that holds it`);
+const turn = fromBeginning ? entries.find(isUser) : entries.slice(0, at).findLast(isUser);
+if (!turn) throw new Error(fromBeginning ? "The session has no user message" : `No user message at or before line ${at}; a moment starts at the user turn that holds it`);
 const content = turn.entry.message.content;
 if (Array.isArray(content) && content.some(block => block.type !== "text")) throw new Error("The user turn holds images or files; only text turns can be resumed");
 const prompt = typeof content === "string" ? content : content.map(block => block.text).join("");
@@ -60,6 +70,8 @@ const proxies = new Set([...tools.values(), ...calls.values()].filter(isProxy).m
 for (const [id, details] of results) if (details.mode === "call" && calls.get(id)) proxies.add(calls.get(id).name);
 const route = name => {
   if (proxies.has(name)) return { connector: ADAPTER, op: name, adapter: { proxy: true } };
+  const own = tools.get(name)?.phoenix;
+  if (own?.connector && own.op) return { connector: own.connector, op: own.op };
   const named = /^mcp__(.+?)__(.+)$/.exec(name);
   return direct.get(name) ?? (named ? { connector: named[1], op: named[2] } : { connector: "pi", op: name });
 };
@@ -75,7 +87,7 @@ for (const { line, entry } of entries) {
 
 process.stdout.write(JSON.stringify({
   phoenix_session_moment: 1,
-  at, turn: turn.line, cut_lines: turn.line - 1, prompt, time: turn.entry.timestamp, cwd: entries[0].entry.cwd,
+  at: at ?? turn.line, turn: turn.line, from_beginning: fromBeginning, edits, cut_lines: turn.line - 1, prompt, time: turn.entry.timestamp, cwd: entries[0].entry.cwd,
   model: { provider, id: model, ...(thinking ? { thinking } : {}) },
   loadout: { sections, harness_sections: ["addendum"], tools: [...tools.values()].map(tool => ({ ...tool, ...route(tool.name) })), adapter },
   answers,
