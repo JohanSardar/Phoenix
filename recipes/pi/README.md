@@ -88,13 +88,21 @@ isolated run can select Pi's native implementation with
 not silently added by this recipe. Extension-registered tools have no universal
 file override and are covered by the transcript.
 
-Remote MCP URLs are left untouched, with a coverage limitation for each entry.
-Pi supports them, but the shipped Phoenix launcher exposes only stdio MCP
-proxying; its generic gateway is a model route, not an MCP HTTP route. In
-particular, rewriting an OAuth resource URL would break Pi's token binding.
-No local CA is installed, auth weakened, or unproved `HTTPS_PROXY` path enabled.
-Use transcript capture for these servers; an existing stdio remote bridge can
-be proxied as an ordinary stdio command without changing its authentication.
+Remote MCP URLs stay untouched by default, with a coverage limitation per
+entry. For a specific anonymous or fixed-header Streamable HTTP server whose
+resource URL you have authorized changing, set
+`PHOENIX_PI_MCP_REVERSE=server-name` (comma-separated for several). The wrapper
+starts a generic `phoenix gateway` per server using
+`PHOENIX_GATEWAY_SURFACE=mcp` and `PHOENIX_GATEWAY_CONNECTOR`, preserving its
+path, query, headers and bodies without discovery probes or added calls.
+
+Do not authorize reverse routing for resource-bound OAuth. Entries with
+`oauth` or provider `auth`, SSE transport, or command/environment-expanded URLs
+remain direct even if listed. Implicit OAuth servers also need transcript
+capture: changing their resource URL would break token binding. Session-selector
+project fallbacks above still apply. No local CA is installed, auth weakened,
+or unproved `HTTPS_PROXY` path enabled. An existing authenticated stdio remote
+bridge can be proxied as an ordinary command without changing its resource URL.
 
 The recipe shims external `ls`, `cat`, and `date`. Customize `shim` for commands
 the task actually uses. Pi's built-in file tools bypass PATH, as do shell

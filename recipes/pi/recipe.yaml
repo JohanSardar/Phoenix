@@ -45,7 +45,7 @@ limitations:
   - "The observed Codex SSE client cancels after response.completed; HTTP capture results remain partial and current runner echo blocks. Transcript import still works; never clear partial flags."
   - "Copilot OAuth replaces model URLs with token-bound endpoints: use transcript, not gateway."
   - "Radius catalog auth, ambient Bedrock/Vertex/federation, and arbitrary extension transports use transcript unless independently verified."
-  - "Only stdio MCP can use the shipped Phoenix launcher proxy. Remote MCP stays on its original URL and uses transcript; no OAuth resource or CA changes."
+  - "Stdio MCP is proxied. Anonymous/fixed-header Streamable HTTP needs explicit per-server PHOENIX_PI_MCP_REVERSE authorization; OAuth, SSE and expanded URLs stay unchanged and use transcript. No OAuth resource or CA changes."
   - "MCP tools registered by extensions outside the selected config are transcript-only."
   - "Session selection keeps Pi's original cwd; project MCP config then uses transcript rather than a cwd mirror. Do not switch sessions during a mirrored launch."
   - "Built-in read/edit/write/grep/find/ls and absolute paths bypass PATH; bash only captures external shimmed commands, not shell builtins."
