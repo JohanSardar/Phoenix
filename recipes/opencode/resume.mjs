@@ -59,5 +59,5 @@ if (exported.status === 0) {
   const last = data.messages.findLast(m => m.info.role === "assistant");
   final_text = (last?.parts ?? []).filter(p => p.type === "text" && !p.synthetic).map(p => p.text).join("");
 }
-writeFileSync("/phoenix/out/result.json", JSON.stringify({ session, final_text, code, opencode: opencode[0] === "bun" ? "source with opencode.patch" : "release 1.19.5" }) + "\n");
+writeFileSync("/phoenix/out/result.json", JSON.stringify({ session, final_text, code, llm: model, opencode: opencode[0] === "bun" ? "source with opencode.patch" : "release 1.19.5" }) + "\n");
 process.exitCode = code;
