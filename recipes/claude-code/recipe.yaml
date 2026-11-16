@@ -1,0 +1,57 @@
+phoenix_recipe: 1
+name: claude-code
+harness_versions: ["2.1.325"]
+login_modes: [api-key, console, subscription, oauth-token, auth-token, api-key-helper, profile-wif, bedrock, bedrock-bearer, aws, aws-bearer, vertex, foundry, claude-apps-gateway, managed]
+routes:
+  - versions: "2.1.325"
+    login_mode: api-key
+    surfaces: &standard
+      model: [gateway, transcript]
+      mcp: [mcp-proxy, transcript]
+      cli: [cli-proxy, transcript]
+  - {versions: "2.1.325", login_mode: console, surfaces: *standard}
+  - {versions: "2.1.325", login_mode: subscription, surfaces: *standard}
+  - {versions: "2.1.325", login_mode: oauth-token, surfaces: *standard}
+  - {versions: "2.1.325", login_mode: auth-token, surfaces: *standard}
+  - {versions: "2.1.325", login_mode: api-key-helper, surfaces: *standard}
+  - {versions: "2.1.325", login_mode: profile-wif, surfaces: *standard}
+  - versions: "2.1.325"
+    login_mode: bedrock
+    surfaces: &fallback
+      model: [transcript]
+      mcp: [mcp-proxy, transcript]
+      cli: [cli-proxy, transcript]
+    reason: AWS SigV4 signs the endpoint host; changing it invalidates the signature. No trusted forward-proxy launcher is shipped. Keep the provider and use transcripts.
+  - versions: "2.1.325"
+    login_mode: bedrock-bearer
+    surfaces: *standard
+    model_setting: ANTHROPIC_BEDROCK_BASE_URL
+  - {versions: "2.1.325", login_mode: aws, surfaces: *fallback, reason: "AWS SigV4 signs the endpoint host; preserve the provider and import transcripts"}
+  - versions: "2.1.325"
+    login_mode: aws-bearer
+    surfaces: *standard
+    model_setting: ANTHROPIC_AWS_BASE_URL
+  - versions: "2.1.325"
+    login_mode: vertex
+    surfaces: *standard
+    model_setting: ANTHROPIC_VERTEX_BASE_URL
+  - versions: "2.1.325"
+    login_mode: foundry
+    surfaces: *standard
+    model_setting: ANTHROPIC_FOUNDRY_BASE_URL
+  - {versions: "2.1.325", login_mode: claude-apps-gateway, surfaces: *fallback, reason: "The signed-in gateway selects its own endpoint; preserve its resource-bound login and use transcripts"}
+  - {versions: "2.1.325", login_mode: managed, surfaces: *fallback, reason: "Managed endpoint or provider policy cannot be overridden; use transcripts, never bypass policy"}
+model:
+  setting: ANTHROPIC_BASE_URL
+  dialect: messages
+mcp:
+  file: .mcp.json
+  format: mcpServers
+shim: [ls, cat]
+transcript_reader:
+  command: [node, read-transcript.mjs, v1]
+  harness_versions: ["2.1.325"]
+image: phoenix-claude-code:2.1.325
+clock:
+  probe: [node, -e, "console.log(Date.now())"]
+copy_ignored: false
