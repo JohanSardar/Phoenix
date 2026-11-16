@@ -440,7 +440,7 @@
             "left_out": {
               "type": "array",
               "items": { "type": "string" },
-              "description": "Files not in the copy: over 1 MB, or binary and over 64 KB. They are missing inside the box."
+              "description": "Files Phoenix could not read when it made the copy. They are missing inside the box."
             }
           }
         },

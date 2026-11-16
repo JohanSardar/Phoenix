@@ -282,7 +282,7 @@
         "source": { "enum": ["git", "today"], "description": "git: as committed at the moment's time. today: as the files were when the moment was made." },
         "commit": { "type": "string" },
         "taken_at": { "type": "string", "format": "date-time" },
-        "left_out": { "type": "integer", "minimum": 0, "description": "How many files were too big to copy, and are missing inside the box." }
+        "left_out": { "type": "integer", "minimum": 0, "description": "How many files Phoenix could not read when it made the copy. They are missing inside the box." }
       }
     },
     "baseline": {

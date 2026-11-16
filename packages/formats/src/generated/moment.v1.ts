@@ -210,7 +210,7 @@ export type MomentManifest = {
        */
       taken_at: string;
       /**
-       * Files not in the copy: over 1 MB, or binary and over 64 KB. They are missing inside the box.
+       * Files Phoenix could not read when it made the copy. They are missing inside the box.
        */
       left_out?: string[];
     };

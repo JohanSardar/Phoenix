@@ -121,7 +121,7 @@ export interface ReplayResult {
     commit?: string;
     taken_at: string;
     /**
-     * How many files were too big to copy, and are missing inside the box.
+     * How many files Phoenix could not read when it made the copy. They are missing inside the box.
      */
     left_out?: number;
   };
