@@ -52,6 +52,10 @@ _Avoid_: Fixture, mock world, test environment
 Phoenix's internal sandbox that the Improver drives to read a moment, edit the harness, replay, and check.
 _Avoid_: Sandbox app, studio
 
+**Login context**:
+Text a harness adds to the model-request history depending on how it is signed in, such as the account's email, which a capture recipe declares so that a replay without that login can still match the frozen prefix.
+_Avoid_: Account state, credentials
+
 **Correction**:
 A person's fix or rejection of what the agent did at a moment, which is the default starting point for its success check.
 _Avoid_: Feedback, label, annotation

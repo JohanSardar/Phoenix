@@ -6,7 +6,7 @@ import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "nod
 import type { MomentManifest, PluginDescriptor, TraceEvent } from "@phoenix/formats";
 import {
   answerCall, buildIndex, checkModelRequest, comparePrefixRequest, httpHost, httpShape, matchFrozen, mcpShape, modelInferencePath, replayCtx, sameReply, selectModelRequest, toCall,
-  Emulators, type EmulatorConfig, type Answer, type Call, type ConnectorPolicy, type Divergence, type Exchange, type ModelDialectName, type SimulatorOptions, type StartPoint, type WireMessage,
+  Emulators, type EmulatorConfig, type Answer, type Call, type ConnectorPolicy, type Divergence, type Exchange, type LoginContext, type ModelDialectName, type SimulatorOptions, type StartPoint, type WireMessage,
 } from "@phoenix/answer";
 import type { CaptureMetadata } from "@phoenix/store";
 import { HTTP_STREAM, decodeCliInvocation, encodeHttpHead, httpGatewayTap, mcpStdioTap, type Backend, type HttpRequest, type Link } from "@phoenix/taps";
@@ -27,7 +27,7 @@ export interface EngineOptions {
   start: StartPoint;
   clock?: { start?: string };
   routes: { mcp?: Readonly<Record<string, string>>; cli?: Readonly<Record<string, string>>; http?: Readonly<Record<string, string>>; mcpHttp?: Readonly<Record<string, string>> };
-  model?: { connector: string; dialect: ModelDialectName; provider: { url: string; headers: Readonly<Record<string, string>> }; selection?: { id: string; parameters?: Readonly<Record<string, unknown>> } };
+  model?: { connector: string; dialect: ModelDialectName; provider: { url: string; headers: Readonly<Record<string, string>> }; selection?: { id: string; parameters?: Readonly<Record<string, unknown>> }; loginContext?: readonly LoginContext[] };
   sample: { root: string; metadata: CaptureMetadata };
   hmacKey: Uint8Array;
 }
@@ -87,7 +87,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       if (!options.model || e.connector !== options.model.connector || exchange.connector !== e.connector || !e.request.head || !exchange.request.head) return false;
       return e.request.head.method === exchange.request.head.method
         && new URL(e.request.head.url, "http://x").pathname === new URL(exchange.request.head.url, "http://x").pathname
-        && comparePrefixRequest(options.model.dialect, e.request, exchange.request).ok;
+        && comparePrefixRequest(options.model.dialect, e.request, exchange.request, options.model.loginContext).ok;
     });
     const id = `${recoveryPrefix}${exchange.id}`;
     if (matched) { recovered.set(id, matched); covered.add(matched.id); }
@@ -276,9 +276,11 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       const candidates = index.frozen.filter(e => e.connector === model!.connector && !ctx.served.has(e.id) && e.request.head && e.request.head.method === request.method && new URL(e.request.head.url, "http://x").pathname === path);
       let first: { field: string; why: string } | undefined;
       for (const exchange of candidates) {
-        const compared = comparePrefixRequest(model!.dialect, exchange.request, { head: request, body });
+        const compared = comparePrefixRequest(model!.dialect, exchange.request, { head: request, body }, model!.loginContext);
         if (!compared.ok) { first ??= compared; continue; }
         ctx.served.add(exchange.id);
+        for (const difference of compared.uncompared)
+          await trace.append("engine", { kind: "meta", connector: model!.connector, op: "fidelity.prefix_uncompared", body: Buffer.from(JSON.stringify({ login_context: difference.name, recorded: difference.recorded, candidate: difference.candidate, exchange: exchange.id })) });
         const answer = accepted({ raw: exchange.response, provenance: exchange.provenance, resolver: "frozen-prefix", exchange });
         compared.edits.forEach(field => edits.add(field));
         await serveHttp(out, stream, model!.connector, exchange.response, { provenance: exchange.provenance, resolver: "frozen-prefix" }, `${request.method} ${modelInferencePath(model!.dialect, path)}`);

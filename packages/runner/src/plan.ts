@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Bindings, HarnessContract, PluginDescriptor, ReplayPlan } from "@phoenix/formats";
 import { createSimulator, resolveModelDialect, type SimulatorOptions } from "@phoenix/engine";
 import { bundleApproval, digest, readApprovalsLedger, readMomentBundle } from "@phoenix/store";
-import { bundleEvidence, canonical, checked, eventId, hydrate, optional, save } from "./files.ts";
+import { bundleEvidence, canonical, checked, echoDriftPath, eventId, hydrate, optional, save } from "./files.ts";
 import { treeDigest, type TreeInput } from "./materialize.ts";
 
 export interface ReplayRequest {
@@ -18,6 +18,7 @@ export interface ReplayRequest {
   samples?: ReplayPlan["samples"];
   runtime?: { cli: string[]; version: string };
   clockProbe?: string[];
+  loginContext?: NonNullable<ReplayPlan["login_context"]>;
   env?: Record<string, string>;
   plugins?: { name: string; version: string; directory: string; image: string; snapshot?: string; seed?: string; env?: Record<string, string> }[];
   simulator?: { model: Pick<ReplayPlan["model"], "id" | "alias">; config: Omit<SimulatorOptions["provider"]["configuration"], "model"> & { attempts?: number; outputSchemas?: SimulatorOptions["outputSchemas"] }; improverModel: string; headers?: Record<string, { env: string }> };
@@ -45,10 +46,13 @@ export async function resolvePlan(root: string, ledger: string, request: ReplayR
     const mark = events.findIndex(e => eventId(e) === bundle.manifest.mark);
     const at = request.start === "mark" ? mark : events.findIndex(e => eventId(e) === request.start.at);
     if (mark < 0 || at < 0 || at > mark) throw new Error("Start must be a cut between the beginning and the mark");
-    const echo = await optional<{ result: string }>(join(root, "echo-drift", request.base.digest.slice(7) + ".json"));
+    const echo = await optional<{ result: string }>(echoDriftPath(root, request.base.digest, request.loginContext));
     if (echo) throw new Error(`This base tree supports only beginning; echo drift: ${echo.result}`);
   }
   if (!events.length && request.start !== "beginning") throw new Error("A scenario with no staged run starts only at beginning");
+  for (const rule of request.loginContext ?? []) {
+    try { new RegExp(rule.pattern); } catch { throw new Error(`Login context pattern is not a regular expression: ${rule.name}`); }
+  }
   const modelUrl = new URL(request.model.url);
   if (modelUrl.username || modelUrl.password || modelUrl.search || modelUrl.hash || !["http:", "https:"].includes(modelUrl.protocol)) throw new Error("Model URL must not carry credentials or query parameters");
   for (const ref of [...Object.values(request.model.headers ?? {}), ...Object.values(request.simulator?.headers ?? {})]) if (!ref || Object.keys(ref).length !== 1 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ref.env)) throw new Error("Model credentials must be host environment references");
@@ -68,7 +72,7 @@ export async function resolvePlan(root: string, ledger: string, request: ReplayR
     phoenix_plan: 1, bundle: bundle.lockHash, check: bundle.lock.check, base_tree: request.base.digest, candidate_tree: request.candidate.digest,
     harness_image: request.image, model: { id: request.model.id, ...(request.model.alias !== undefined ? { alias: request.model.alias } : {}), ...(request.model.parameters ? { parameters: request.model.parameters } : {}) },
     start: request.start, samples: request.samples ?? bundle.check.samples ?? { base: 2, tiebreak: 1 }, plugins: Object.fromEntries(plugins.map(p => [p.name, p.version])),
-    container_runtime: request.runtime?.version ?? "docker", clock_probe: request.clockProbe ?? ["node", "-e", "console.log(Date.now())"], matching_rules: "1",
+    container_runtime: request.runtime?.version ?? "docker", clock_probe: request.clockProbe ?? ["node", "-e", "console.log(Date.now())"], ...(request.loginContext?.length ? { login_context: request.loginContext } : {}), matching_rules: "2",
     ...(request.simulator ? { simulator: { model: request.simulator.model, config: request.simulator.config } } : {}),
     runner: { harness: request.harness, ...(request.bindings ? { bindings: request.bindings } : {}), model: request.model, env: request.env ?? {}, cli: request.runtime?.cli ?? ["docker"], plugins, ...(request.simulator ? { simulator: request.simulator } : {}) },
   };

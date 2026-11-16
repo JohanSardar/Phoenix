@@ -16,6 +16,11 @@ export function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
+export function echoDriftPath(root: string, baseTree: string, loginContext: readonly { name: string; pattern: string }[] | undefined): string {
+  const key = loginContext?.length ? digest(canonical({ base_tree: baseTree, login_context: loginContext })) : baseTree;
+  return join(root, "echo-drift", key.slice(7) + ".json");
+}
+
 export async function save(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = join(dirname(path), `.${randomUUID()}.tmp`);

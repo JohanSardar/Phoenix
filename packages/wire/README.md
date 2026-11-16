@@ -13,7 +13,7 @@ failure with the original bytes; a relay must never depend on successful decodin
   gzip, deflate, br, and zstd. It never changes the stored exchange.
 - `modelDialects` uses API shapes (`messages`, `chat-completions`, `responses`,
   `generate-content`), not provider identities. Each entry lists method/path
-  inference operations, splits history from configuration, extracts tool-use IDs
+  inference operations, splits history from configuration (system-role turns and messages-dialect `cache_control` go to configuration), extracts tool-use IDs
   and streamed arguments, and identifies provider state or external access for
   the engine's safety policy. `decodeModelBody` reads JSON or assembled SSE while
   leaving every provider's format intact. Recipes choose the API shape.
