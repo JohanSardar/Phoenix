@@ -35,6 +35,7 @@ export class Hosted {
     this.copy = copy;
     this.order = undefined;
     this.searches = [];
+    this.suggested = [];
   }
 
   gap(why) { this.copy.gap(why); }
@@ -124,12 +125,13 @@ export class Hosted {
     known(args, ["query", "pageSize"]);
     const seen = this.searches.findLast(s => s.query === args.query);
     if (!seen) this.gap(`the copy has not seen the hosted server answer the search ${JSON.stringify(args.query)}`);
+    if (seen.ids.length >= seen.limit) this.gap(`the search ${JSON.stringify(args.query)} was seen with a full page, so the copy does not know the rest`);
     const cal = this.cal(undefined);
     const events = [];
     for (const event of cal.events.values()) {
-      const changed = Date.parse(event.updated) > seen.at;
-      if (seen.ids.includes(event.id)) { if (event.status !== "cancelled") events.push(event); }
-      else if (changed && event.status !== "cancelled") this.gap(`event ${event.id} changed after the search ${JSON.stringify(args.query)} was seen, and the copy cannot tell whether it matches now`);
+      if (event.status === "cancelled") continue;
+      if (Date.parse(event.updated) > seen.at) this.gap(`event ${event.id} changed after the search ${JSON.stringify(args.query)} was seen, and the copy cannot tell whether it matches now`);
+      if (seen.ids.includes(event.id)) events.push(event);
     }
     if (events.length !== seen.ids.filter(id => cal.events.get(id)?.status !== "cancelled").length) this.gap("the copy has lost an event of a search it saw");
     if (events.length > (args.pageSize ?? 100)) this.gap("the copy has not seen the hosted server page a search");
@@ -145,21 +147,42 @@ export class Hosted {
     if (!emails.length || emails.some(email => email !== this.me())) this.gap("the copy has only seen suggest_time for the user's own calendar");
     const cal = this.cal(undefined);
     const { a, b } = this.window(cal, { ...args, timeZone: args.timeZone });
-    const busy = [];
-    for (const e of this.between(cal, a, b)) {
-      if (!e.start?.dateTime) this.gap("the copy does not know whether an all-day event blocks time");
-      if (e.availability === "AVAILABILITY_FREE") continue;
-      busy.push([Math.max(a, parseInstant(e.start.dateTime)), Math.min(b, parseInstant(e.end.dateTime))]);
-    }
-    busy.sort((x, y) => x[0] - y[0]);
-    const minutes = args.durationMinutes ?? 30, slots = [];
-    let at = a;
-    for (const [s, e] of [...busy, [b, b]]) {
-      if (s - at >= minutes * 60000) slots.push([at, s]);
-      at = Math.max(at, e);
-    }
+    const events = this.between(cal, a, b);
+    if (events.some(e => !e.start?.dateTime)) this.gap("the copy does not know whether an all-day event blocks time");
+    const inferred = this.availability(cal);
+    const busy = events.filter(e => {
+      const blocks = e.availability ? e.availability !== "AVAILABILITY_FREE" : inferred.get(e.id);
+      if (blocks === undefined) this.gap(`the hosted server's reads do not say whether event ${e.id} blocks time, and no suggest_time the copy saw tells`);
+      return blocks;
+    });
+    const minutes = args.durationMinutes ?? 30;
+    const slots = freeStretches(a, b, busy, minutes);
     const shown = ms => ({ dateTime: formatInZone(ms, args.timeZone), timeZone: args.timeZone });
     return sorted(slots.length ? { timeSlots: slots.map(([s, e]) => ({ durationMinutes: Math.round((e - s) / 60000), end: shown(e), endTime: formatInZone(e, args.timeZone), start: shown(s), startTime: formatInZone(s, args.timeZone) })) } : {});
+  }
+
+  // Which events block time, worked out from suggest_time answers the copy saw: an event whose availability no answer
+  // showed is busy (or free) when only that choice gives back the free stretches the server answered.
+  availability(cal) {
+    const known = new Map();
+    if (!this.suggested.length || !this.copy.primary) return known;
+    const events = [...cal.events.values()];
+    for (const seen of this.suggested) {
+      if (seen.emails.length !== 1 || seen.emails[0] !== this.copy.primary || !this.copy.covered(cal, seen.a, seen.b)) continue;
+      if (events.some(e => Date.parse(e.updated) > seen.at && !(Date.parse(e.created) > seen.at))) continue;
+      const present = events.filter(e => e.status !== "cancelled" && !(Date.parse(e.created) > seen.at) && parseInstant(e.end?.dateTime ?? "") > seen.a && parseInstant(e.start?.dateTime ?? "") < seen.b);
+      if (this.copy.expanded(cal, seen.a, seen.b).some(e => !e.start?.dateTime)) continue;
+      const fixed = present.filter(e => e.availability), open = present.filter(e => !e.availability);
+      if (open.length > 8) continue;
+      const fits = [];
+      for (let mask = 0; mask < 1 << open.length; mask++) {
+        const busy = [...fixed.filter(e => e.availability !== "AVAILABILITY_FREE"), ...open.filter((_, i) => mask >> i & 1)];
+        if (JSON.stringify(freeStretches(seen.a, seen.b, busy, seen.minutes)) === JSON.stringify(seen.slots)) fits.push(mask);
+      }
+      if (!fits.length) continue;
+      open.forEach((e, i) => { if (fits.every(mask => (mask >> i & 1) === (fits[0] >> i & 1))) known.set(e.id, !!(fits[0] >> i & 1)); });
+    }
+    return known;
   }
 
   own(list) {
@@ -253,7 +276,13 @@ export class Hosted {
     if (op === "search_events") {
       const cal = copy.cal("primary");
       for (const event of value.events ?? []) this.put(cal, event);
-      this.searches.push({ query: args.query, ids: (value.events ?? []).map(e => e.id), at: Date.parse(observedAt ?? "") || 0 });
+      this.searches.push({ query: args.query, ids: (value.events ?? []).map(e => e.id), limit: args.pageSize ?? 100, at: Date.parse(observedAt ?? "") || 0 });
+      return;
+    }
+    if (op === "suggest_time") {
+      const a = typeof args.startTime === "string" && args.timeZone ? naiveToMs(args.startTime, args.timeZone) : NaN, b = typeof args.endTime === "string" && args.timeZone ? naiveToMs(args.endTime, args.timeZone) : NaN;
+      if (!Number.isFinite(a) || !Number.isFinite(b) || !(b > a) || args.preferences !== undefined) return;
+      this.suggested.push({ emails: args.attendeeEmails ?? [], a, b, minutes: args.durationMinutes ?? 30, slots: (value.timeSlots ?? []).map(s => [parseInstant(s.startTime), parseInstant(s.endTime)]), at: Date.parse(observedAt ?? "") || 0 });
       return;
     }
     if (op === "get_event" && value.id) return this.put(copy.cal(args.calendarId ?? "primary"), value);
@@ -272,6 +301,17 @@ export class Hosted {
     cal.events.set(event.id, keep(event, cal.events.get(event.id)));
     if (event.creator?.self && event.creator.email) this.copy.setPrimary(event.creator.email);
   }
+}
+
+function freeStretches(a, b, events, minutes) {
+  const busy = events.map(e => [Math.max(a, parseInstant(e.start.dateTime)), Math.min(b, parseInstant(e.end.dateTime))]).sort((x, y) => x[0] - y[0]);
+  const slots = [];
+  let at = a;
+  for (const [s, e] of [...busy, [b, b]]) {
+    if (s - at >= minutes * 60000) slots.push([at, s]);
+    at = Math.max(at, e);
+  }
+  return slots;
 }
 
 function matches(event, query) {

@@ -70,10 +70,12 @@ test("hosted: lists, reads and writes in the shapes Google's hosted server uses"
   assert.equal((await call("get_event", { eventId: created.id })).status, "unsupported");
 });
 
+const slot = (s, e, minutes) => ({ durationMinutes: minutes, end: time(e), endTime: e, start: time(s), startTime: s });
+
 test("hosted: suggest_time returns the free stretches of the user's calendar, and {} when there are none", { timeout: 30000 }, async t => {
-  const call = await start(t, [calendars, listed]);
+  const suggested = seen("suggest_time", { attendeeEmails: [me], startTime: "2026-12-15T08:00:00", endTime: "2026-12-15T10:00:00", timeZone: "America/Chicago", durationMinutes: 30 }, { timeSlots: [slot("2026-12-15T08:40:00-06:00", "2026-12-15T10:00:00-06:00", 80)] }, "2026-11-16T10:30:00Z");
+  const call = await start(t, [calendars, listed, suggested]);
   const ask = (startTime, endTime, durationMinutes) => call("suggest_time", { attendeeEmails: [me], startTime, endTime, timeZone: "America/Chicago", durationMinutes });
-  const slot = (s, e, minutes) => ({ durationMinutes: minutes, end: time(e), endTime: e, start: time(s), startTime: s });
   assert.equal((await ask("2026-12-15T08:00:00", "2026-12-15T12:00:00", 30)).text, JSON.stringify({ timeSlots: [slot("2026-12-15T08:40:00-06:00", "2026-12-15T12:00:00-06:00", 200)] }));
   assert.equal((await ask("2026-12-15T08:00:00", "2026-12-15T08:35:00", 30)).text, "{}");
   assert.equal((await call("suggest_time", { attendeeEmails: ["someone@example.invalid"], startTime: "2026-12-15T09:00:00", endTime: "2026-12-15T12:00:00", timeZone: "America/Chicago" })).status, "unsupported");
@@ -108,4 +110,30 @@ test("hosted: what the copy has not seen answered live stays unsupported", { tim
   ]) assert.equal((await call(op, args)).status, "unsupported", op + " " + JSON.stringify(args));
   const fresh = await start(t, []);
   assert.equal((await fresh("list_calendars", {})).status, "unsupported");
+});
+
+test("S1: suggest_time cannot infer availability from a read view that omits it", { timeout: 30000 }, async t => {
+  const call = await start(t, [calendars, listed]);
+  const reply = await call("suggest_time", {
+    attendeeEmails: [me], startTime: "2026-12-15T08:00:00", endTime: "2026-12-15T09:00:00",
+    timeZone: "America/Chicago", durationMinutes: 30,
+  });
+  assert.equal(reply.status, "unsupported", JSON.stringify(reply));
+});
+
+test("S2: an edited search hit is no longer proof that the event matches", { timeout: 30000 }, async t => {
+  const call = await start(t, [calendars, listed, seen("search_events", { query: "standing" }, {
+    events: [listedEvent("abcdefgh0001", "2026-12-15T08:15:00-06:00", "2026-12-15T08:40:00-06:00")],
+  }, "2026-11-16T11:00:00Z")]);
+  value(await call("update_event", { eventId: "abcdefgh0001", summary: "[phoenix-test] cancelled project unrelated to the query" }));
+  const reply = await call("search_events", { query: "standing" });
+  assert.equal(reply.status, "unsupported", JSON.stringify(reply));
+});
+
+test("S3: a capped search answer cannot establish the complete search result", { timeout: 30000 }, async t => {
+  const call = await start(t, [calendars, listed, seen("search_events", { query: "standing", pageSize: 1 }, {
+    events: [listedEvent("abcdefgh0001", "2026-12-15T08:15:00-06:00", "2026-12-15T08:40:00-06:00")],
+  }, "2026-11-16T11:00:00Z")]);
+  const reply = await call("search_events", { query: "standing", pageSize: 100 });
+  assert.equal(reply.status, "unsupported", JSON.stringify(reply));
 });
