@@ -181,5 +181,9 @@ export type MomentManifest = {
      * Bundle path of the recipe's reading of the session at the moment: the cut, the prompt, the LLM, the tool loadout and the recorded tool answers.
      */
     moment: string;
+    /**
+     * Bundle folder holding the copied files beside the session that the cut needs.
+     */
+    files?: string;
   };
 };
