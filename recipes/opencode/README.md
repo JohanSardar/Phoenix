@@ -85,6 +85,8 @@ Put the image ID and the path to `recipe.yaml` in the Workbench settings.
 
 ## Limits
 
+- Merged with a gap (JOH-55, JOH-61): OpenCode replays that answer new calls were last seen working on the code that became commit ba9d924f, not re-run on the final code. The LLM account they use, OpenCode Go, was out of balance.
+- Merged with a gap (JOH-55, JOH-61): made-up answers were last seen working on the code that became commit ba9d924f, not re-run on the final code. The simulator LLM they use, on OpenCode Go, was out of balance. No other LLM route on the Mac worked for it: DeepSeek was out of balance, the Zen and Kimi keys were expired or invalid, and ChatGPT's backend accepts only streamed replies, which the simulator doesn't send.
 - Phoenix stands in only for OpenCode's built-in tools. A session that used
   MCP or plugin tools can't be cut yet: OpenCode doesn't save their
   descriptions.

@@ -48,7 +48,7 @@ async function projectCopy(cwd: string | undefined, time: string): Promise<Proje
     const left_out: string[] = [];
     if (root && commit) {
       const listing = (await execute("git", ["ls-tree", "-r", "-z", commit], { cwd: root, encoding: "buffer", maxBuffer: 256 * 1024 * 1024 })).stdout.toString("utf8").split("\0").filter(Boolean);
-      const blobs = listing.map(line => { const [meta, path] = line.split("\t") as [string, string]; const [mode, type, sha] = meta.split(" ") as [string, string, string]; return { mode, type, sha, path }; }).filter(blob => blob.type === "blob");
+      const blobs = listing.map(line => { const tab = line.indexOf("\t"); const [mode, type, sha] = line.slice(0, tab).split(" ") as [string, string, string]; return { mode, type, sha, path: line.slice(tab + 1) }; }).filter(blob => blob.type === "blob");
       const write = async (blob: typeof blobs[number]): Promise<void> => {
         const bytes = (await execute("git", ["cat-file", "blob", blob.sha], { cwd: root, encoding: "buffer", maxBuffer: 2 ** 31 - 1 })).stdout;
         await mkdir(dirname(join(files, blob.path)), { recursive: true });
@@ -73,8 +73,8 @@ async function projectCopy(cwd: string | undefined, time: string): Promise<Proje
     const group = async (folder: string): Promise<void> => {
       for (const entry of await readdir(join(files, folder), { withFileTypes: true })) {
         const path = folder ? `${folder}/${entry.name}` : entry.name;
-        if (entry.isDirectory()) { await group(path); continue; }
-        const bytes = (await lstat(join(files, path))).size;
+        if (entry.isDirectory() && (await readdir(join(files, path))).length) { await group(path); continue; }
+        const bytes = entry.isDirectory() ? 0 : (await lstat(join(files, path))).size;
         if (size + bytes > PART_LIMIT && groups.at(-1)!.length) { groups.push([]); size = 0; }
         groups.at(-1)!.push(path);
         size += bytes;
@@ -84,7 +84,7 @@ async function projectCopy(cwd: string | undefined, time: string): Promise<Proje
     const parts: Buffer[] = [];
     for (const [index, paths] of groups.entries()) {
       await writeFile(join(scratch, `list-${index}`), paths.map(path => path + "\0").join(""));
-      await execute("tar", ["-cf", join(scratch, `part-${index}.tar`), "-C", files, "--null", "-T", join(scratch, `list-${index}`)]);
+      await execute("tar", ["-cf", join(scratch, `part-${index}.tar`), "-C", files, "--no-recursion", "--null", "-T", join(scratch, `list-${index}`)]);
       parts.push(await readFile(join(scratch, `part-${index}.tar`)));
       await rm(join(scratch, `part-${index}.tar`));
     }
