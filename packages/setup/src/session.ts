@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { text } from "node:stream/consumers";
 import type { MomentManifest, RecipeDescriptor, TraceEvent } from "@phoenix/formats";
 import { stripSecrets, type SecretPolicy } from "@phoenix/redact";
@@ -29,7 +29,19 @@ export interface SessionMomentOptions {
 }
 
 export interface SessionAnswer { id: string; connector: string; op: string; args: unknown; result: unknown; observed_at: string; before_cut: boolean; world?: "exact" | "any-args" }
-interface Reading { at: number; prompt: string; time: string; model: { provider: string; id: string }; answers: SessionAnswer[]; read_only?: Record<string, string[]>; edits?: { line: number; text: string }[] }
+interface Reading { at: number; prompt: string; time: string; model: { provider: string; id: string }; answers: SessionAnswer[]; read_only?: Record<string, string[]>; edits?: { line: number; text: string }[]; files?: string[] }
+
+async function sideFiles(session: string, patterns: readonly string[]): Promise<string[]> {
+  const found = new Set<string>();
+  for (const pattern of patterns) {
+    if (pattern.startsWith("/") || pattern.split("/").includes("..")) throw new Error(`Session file pattern must stay beside the session: ${pattern}`);
+    if (!pattern.endsWith("/*")) { found.add(pattern); continue; }
+    const folder = pattern.slice(0, -2);
+    const entries = await readdir(join(dirname(session), folder), { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) if (entry.isFile()) found.add(`${folder}/${entry.name}`);
+  }
+  return [...found].sort();
+}
 
 export async function createSessionMoment(o: SessionMomentOptions): Promise<MomentManifest> {
   const resume = o.recipe.descriptor.resume;
@@ -43,9 +55,19 @@ export async function createSessionMoment(o: SessionMomentOptions): Promise<Mome
   if (o.fromBeginning === (o.at !== undefined)) throw new Error("Give the moment a line with --at, or start it --from-beginning");
   const [command, ...args] = resume.moment;
   const where = o.fromBeginning ? ["--from-beginning"] : ["--at", String(o.at)];
+  const stripped = new Map<string, Uint8Array>();
+  for (const path of await sideFiles(o.session, resume.files ?? [])) {
+    const { msg } = await stripSecrets({ body: await readFile(join(dirname(o.session), path)) }, o.policy);
+    if (msg.secrets !== "unscanned") stripped.set(path, msg.body!);
+  }
   const scratch = await mkdtemp(join(tmpdir(), "phoenix-changed-answers-"));
+  const folder = join(scratch, "session-files");
   let stdout: string, stderr: string, code: number | null;
   try {
+    for (const [path, bytes] of stripped) {
+      await mkdir(dirname(join(folder, path)), { recursive: true, mode: 0o700 });
+      await writeFile(join(folder, path), bytes, { mode: 0o600 });
+    }
     const changes: string[] = [];
     for (const [index, change] of (o.changes ?? []).entries()) {
       const original = await readFile(change.file);
@@ -55,12 +77,13 @@ export async function createSessionMoment(o: SessionMomentOptions): Promise<Mome
       await writeFile(file, msg.body ? Buffer.from(msg.body) : original, { mode: 0o600 });
       changes.push("--change", `${change.line}=${file}`);
     }
-    const child = spawn(command!, [...args, ...where, ...changes], { cwd: o.recipe.directory, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(command!, [...args, ...where, ...changes, ...(stripped.size ? ["--files", folder] : [])], { cwd: o.recipe.directory, stdio: ["pipe", "pipe", "pipe"] });
     child.stdin.end(Buffer.from(lines.join("\n")));
     [stdout, stderr, code] = await Promise.all([text(child.stdout), text(child.stderr), new Promise<number | null>(done => child.once("close", done))]);
   } finally { await rm(scratch, { recursive: true, force: true }); }
   if (code !== 0) throw new Error(`The ${o.recipe.descriptor.name} recipe could not read the moment: ${stderr.trim().split("\n").at(-1) ?? code}`);
   const reading = JSON.parse(stdout) as Reading;
+  for (const path of reading.files ?? []) if (!stripped.has(path)) throw new Error(`The ${o.recipe.descriptor.name} recipe named a file it was not given: ${path}`);
   for (const edit of reading.edits ?? []) lines[edit.line - 1] = edit.text;
   reading.answers.push(...o.answers ?? []);
   const session = Buffer.from(lines.join("\n"));
@@ -84,9 +107,11 @@ export async function createSessionMoment(o: SessionMomentOptions): Promise<Mome
       ...(reading.edits?.length ? { changed_answers: reading.edits.map(edit => edit.line) } : {}),
       ...(o.madeUp ? { made_up: true } : {}),
       ...(o.marked ? { marked: o.marked } : {}),
+      ...(reading.files?.length ? { files: "data/session-files" } : {}),
     },
   };
   prepared.files.set("data/session.jsonl", session);
+  for (const path of reading.files ?? []) prepared.files.set(`data/session-files/${path}`, stripped.get(path)!);
   prepared.files.set("data/session-moment.json", JSON.stringify(reading) + "\n");
   await writeMomentBundle(o.out, { manifest, files: prepared.files, blobs: prepared.blobs });
   return manifest;

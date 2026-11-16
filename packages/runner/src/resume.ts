@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { startToolStandIn, type ToolStandIn } from "@phoenix/engine";
 import { parse } from "yaml";
@@ -39,8 +39,15 @@ export async function resumeAttempt(input: {
   const box = join(root, "box");
   for (const part of ["moment", "agent", "out"]) await mkdir(join(box, part), { recursive: true, mode: 0o700 });
   await writeFile(join(box, "moment/cut.jsonl"), session.slice(0, moment.cut_lines).join("\n") + "\n", { mode: 0o600 });
-  await writeFile(join(box, "moment/moment.json"), JSON.stringify({ prompt: moment.prompt, model: moment.model, ...(moment.box ? { box: moment.box } : {}) }), { mode: 0o600 });
-  await writeFile(join(box, "moment/loadout.json"), JSON.stringify(moment.loadout), { mode: 0o600 });
+  const { answers: _answers, loadout, ...reading } = moment;
+  await writeFile(join(box, "moment/moment.json"), JSON.stringify(reading), { mode: 0o600 });
+  await writeFile(join(box, "moment/loadout.json"), JSON.stringify(loadout), { mode: 0o600 });
+  if (resume.files) for (const [path, bytes] of bundle.files) {
+    if (!path.startsWith(`${resume.files}/`)) continue;
+    const target = join(box, "moment/files", path.slice(resume.files.length + 1));
+    await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+    await writeFile(target, bytes, { mode: 0o600 });
+  }
   const plugins = new Map(plan.runner.plugins.map(plugin => [plugin.descriptor.connector, plugin.descriptor]));
   const standIn: ToolStandIn = await startToolStandIn({
     host: TOOLS_HOST,
