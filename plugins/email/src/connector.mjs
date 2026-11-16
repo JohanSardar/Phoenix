@@ -336,6 +336,20 @@ export class Connector {
     return made;
   }
 
+  // Mail the copy made by running a past himalaya send again is the same message a later connector
+  // answer shows under Gmail's id; it takes that id when exactly one such message matches.
+  claim(fields) {
+    if (!fields?.id || this.box.messages.has(fields.id)) return;
+    const to = [...(fields.toRecipients ?? [])].sort().join(","), at = Number(fields.internalDate);
+    const found = [...this.box.messages.values()].filter(m => m.provisional && m.fields.subject === fields.subject && m.fields.sender === fields.sender
+      && [...(m.fields.toRecipients ?? [])].sort().join(",") === to && (!Number.isFinite(at) || Math.abs(Number(m.internalDate) - at) < 120000));
+    if (found.length !== 1) return;
+    const m = found[0];
+    delete m.provisional;
+    this.adopt(m.id, fields.id);
+    this.rethread(m, fields.threadId);
+  }
+
   // Learns the mailbox from one recorded connector answer.
   ingest(tool, args, value, at, past) {
     const a = args ?? {};
@@ -343,6 +357,7 @@ export class Connector {
     const learnAccount = url => { const m = /authuser=([^#&]+)/.exec(url ?? ""); if (m && !this.box.account.email) this.box.account.email = decodeURIComponent(m[1]); };
     const learn = (fields, know) => {
       learnAccount(fields.viewUrl);
+      this.claim(fields);
       if (!past && this.box.messages.has(fields.id)) return;
       const m = this.box.upsert(fields, { at, know: [know] });
       const me = fields.addressDisplayNames?.find(x => x.emailAddress === this.box.account.email);

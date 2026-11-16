@@ -48,6 +48,7 @@ export function reads(argv, entries) {
 // A UID the real service printed. The copy gives its own UIDs to mail it made, such as a replayed send,
 // and a later real listing replaces them.
 function realUid(box, m, folder, uid) {
+  for (const o of box.messages.values()) if (o !== m && o.uids[folder] === uid) { delete o.uids[folder]; o.realUids?.delete(folder); }
   m.uids[folder] = uid;
   (m.realUids ??= new Set()).add(folder);
   const info = box.folderInfo?.[folder];
@@ -58,6 +59,11 @@ function realUid(box, m, folder, uid) {
 const minutes = m => new Set([Number(m.internalDate), m.raw ? Date.parse(header(splitHead(m.raw).headers, "date") ?? "") : NaN].filter(Number.isFinite).map(ms => Math.floor(ms / 60000)));
 
 const byUid = (box, folder, uid) => [...box.messages.values()].find(m => m.uids[folder] === uid);
+const byRealUid = (box, folder, uid) => [...box.messages.values()].find(m => m.uids[folder] === uid && m.realUids?.has(folder));
+const heads = m => {
+  const headers = m.raw ? splitHead(m.raw).headers : [];
+  return { sender: m.fields.sender ?? addresses(header(headers, "from") ?? "")[0]?.email, to: m.fields.toRecipients ?? addresses(header(headers, "to") ?? "").map(a => a.email) };
+};
 const dateMs = text => { const ms = Date.parse(String(text ?? "").replace(" ", "T")); return Number.isFinite(ms) ? ms : undefined; };
 const offsetOf = text => { const found = /([+-]\d{2}):?(\d{2})$/.exec(String(text ?? "")); return found ? found[1] + found[2] : undefined; };
 
@@ -75,7 +81,12 @@ function envelopes(box, folder, list, newestFirst) {
     const minute = newestFirst && dateMs(e.date) !== undefined ? list.filter(o => o?.date === e.date).length : 0;
     const later = minute ? list.slice(i + 1).filter(o => o?.date === e.date).length : 0;
     const ms = dateMs(e.date) === undefined ? box.nowMs ?? 0 : dateMs(e.date) + Math.min(later, 59) * 1000;
-    let m = byUid(box, folder, uid) ?? [...box.messages.values()].find(o => !o.realUids?.has(folder) && o.fields.subject === e.subject && (o.fields.sender ?? addresses(header(splitHead(o.raw ?? Buffer.alloc(0)).headers, "from") ?? "")[0]?.email) === e.from?.addr && minutes(o).has(Math.floor(ms / 60000)));
+    const alike = [...box.messages.values()].filter(o => {
+      if (o.realUids?.has(folder) || o.fields.subject !== e.subject || !minutes(o).has(Math.floor(ms / 60000))) return false;
+      const { sender, to } = heads(o);
+      return sender === e.from?.addr && (!e.to?.addr || to.includes(e.to.addr));
+    });
+    let m = byRealUid(box, folder, uid) ?? (alike.length === 1 ? alike[0] : undefined);
     if (m) {
       realUid(box, m, folder, uid);
       if (m.minute !== undefined && minute >= m.minute && Math.floor(Number(m.internalDate) / 60000) === Math.floor(ms / 60000)) Object.assign(m, { internalDate: String(ms), minute });
@@ -108,7 +119,7 @@ function read(box, folder, uid, text) {
   const from = addresses(get("from") ?? "")[0];
   const date = get("date");
   const ms = dateMs(date) ?? (date ? Date.parse(date) : undefined);
-  let m = byUid(box, folder, uid);
+  let m = byRealUid(box, folder, uid);
   if (!m) {
     if (!folderLabel(box, folder).known) return;
     const id = box.newId(ms ?? box.nowMs ?? 0);

@@ -74,24 +74,30 @@ async function initialize(params) {
   }
   for (const d of snapshot.drafts ?? []) box.drafts.set(d.id, d.messageId);
   const cut = snapshot.cut_at ? Date.parse(snapshot.cut_at) : Infinity;
-  const answers = [...(snapshot.answers ?? [])].sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
-  for (const answer of answers) {
-    const tool = answer.op.replace(/^tools\/call:/, "");
-    if (!TOOLS.includes(tool) || answer.result?.isError) continue;
-    const at = Date.parse(answer.observed_at);
-    connector.ingest(tool, answer.args, valueOf(answer.result), at, answer.before_cut !== false && at <= cut);
-  }
   aliases = folderAliases(snapshot.himalaya);
   himalaya = new Himalaya(box, snapshot.himalaya);
   await himalaya.start();
-  // A past himalaya write runs again in the copy, in time order with what himalaya calls printed.
-  for (const o of (snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)).sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0))) {
-    if (reads(o.argv, READ_ONLY)) learnHimalaya(box, [o], aliases);
-    else if ((o.code ?? 0) === 0) {
-      const from = /^from:\s*(.*)$/im.exec(String(o.stdin ?? "").split(/\r?\n\r?\n/)[0] ?? "")?.[1];
-      if (!box.account.email && o.argv.includes("send") && from) box.account.email = addresses(from)[0]?.email ?? "";
-      await himalaya.run(o.argv.slice(1), Buffer.from(o.stdin ?? ""), Date.parse(o.at) || box.nowMs || 0);
+  // Connector answers and himalaya calls are one history, in time order. A past himalaya write that
+  // exited 0 before the cut runs again in the copy; what any himalaya call printed is learned.
+  // A step without a time keeps its place after the step before it in its own list.
+  const timed = (list, time, key) => { let last = -Infinity; return list.map(item => { const at = Date.parse(time(item)); last = Number.isFinite(at) ? at : last; return { order: last, at, [key]: item }; }); };
+  const history = [
+    ...timed(snapshot.answers ?? [], a => a.observed_at, "answer"),
+    ...timed((snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)), o => o.at, "o"),
+  ].sort((a, b) => a.order - b.order);
+  for (const { at, answer, o } of history) {
+    if (answer) {
+      const tool = answer.op.replace(/^tools\/call:/, "");
+      if (TOOLS.includes(tool) && !answer.result?.isError) connector.ingest(tool, answer.args, valueOf(answer.result), at, answer.before_cut !== false && at <= cut);
+      continue;
     }
+    learnHimalaya(box, [o], aliases);
+    if (reads(o.argv, READ_ONLY) || o.code !== 0 || !(at <= cut)) continue;
+    const from = /^from:\s*(.*)$/im.exec(String(o.stdin ?? "").split(/\r?\n\r?\n/)[0] ?? "")?.[1];
+    if (!box.account.email && o.argv.includes("send") && from) box.account.email = addresses(from)[0]?.email ?? "";
+    const before = new Set(box.messages.keys());
+    await himalaya.run(o.argv.slice(1), Buffer.from(o.stdin ?? ""), Number.isFinite(at) ? at : box.nowMs ?? 0);
+    for (const [id, m] of box.messages) if (!before.has(id)) { m.provisional = true; box.fromRaw(m); }
   }
   box.missed = undefined;
   for (const m of box.messages.values()) box.fromRaw(m);
