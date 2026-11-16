@@ -29,10 +29,12 @@ export function answeredOutside(call: Call, answer: Answer, ctx: ReplayCtx): voi
 export async function answerCall(call: Call, ctx: ReplayCtx, without: readonly string[] = []): Promise<{ answer: Answer } | { divergence: Divergence }> {
   const skip = new Set([...ctx.policy(call.connector).skip_resolvers ?? [], ...without]);
   const misses: { resolver: string; why: string }[] = [];
+  const afterUntakenWrite = (ctx.emulators?.untaken(call.connector).length ?? 0) > 0;
   for (const resolver of resolvers) {
     if (skip.has(resolver.name)) { misses.push({ resolver: resolver.name, why: "removed for this connector by the manifest" }); continue; }
-    const result = await resolver.resolve(call, ctx);
-    if ("miss" in result) { misses.push({ resolver: resolver.name, why: result.why }); continue; }
+    const resolved = await resolver.resolve(call, ctx);
+    if ("miss" in resolved) { misses.push({ resolver: resolver.name, why: resolved.why }); continue; }
+    const result: Answer = afterUntakenWrite ? { ...resolved, afterUntakenWrite } : resolved;
     if (!skip.has("emulator")) await ctx.emulators?.observe(call, result);
     for (const observer of resolvers) observer.observe?.(call, result, ctx);
     served(call, ctx);

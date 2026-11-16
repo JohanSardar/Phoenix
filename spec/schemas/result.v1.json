@@ -189,6 +189,15 @@
                   "required": ["connector", "op"],
                   "properties": { "connector": { "type": "string" }, "op": { "type": "string" } }
                 }
+              },
+              "after_untaken_write_calls": {
+                "description": "Answers that came after a write to the same service that its working copy could not take, so the write got a made-up answer. Neither the session nor the copy knows what the service would say then.",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["connector", "op"],
+                  "properties": { "connector": { "type": "string" }, "op": { "type": "string" } }
+                }
               }
             }
           },
