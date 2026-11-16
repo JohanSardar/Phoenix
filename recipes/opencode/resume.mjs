@@ -35,11 +35,13 @@ const git = (...args) => spawnSync("git", args, { cwd, stdio: "ignore" });
 git("init", "-q"); git("add", "-A"); git("commit", "-q", "--allow-empty", "-m", "harness");
 
 let opencode = ["opencode"];
-if (existsSync(patch)) {
-  const applied = spawnSync("git", ["apply", patch], { cwd: source, encoding: "utf8" });
-  if (applied.status !== 0) { process.stderr.write("opencode.patch does not apply to OpenCode 1.19.5: " + applied.stderr); process.exit(1); }
+const patches = [...(process.env.PHOENIX_PROJECT ? [["stand-in.patch", "/phoenix/recipe/stand-in.patch"]] : []), ...(existsSync(patch) ? [["opencode.patch", patch]] : [])];
+for (const [name, file] of patches) {
+  const applied = spawnSync("git", ["apply", file], { cwd: source, encoding: "utf8" });
+  if (applied.status !== 0) { process.stderr.write(name + " does not apply to OpenCode 1.19.5: " + applied.stderr); process.exit(1); }
   opencode = ["bun", "run", "--conditions=browser", join(source, "packages/opencode/src/index.ts")];
 }
+if (process.env.PHOENIX_PROJECT) writeFileSync(join(home, "config/opencode/opencode.json"), JSON.stringify({ permission: { external_directory: "allow" } }));
 const run = (args, options = {}) => spawnSync(opencode[0], [...opencode.slice(1), ...args], { cwd, env, encoding: "utf8", maxBuffer: 1 << 30, ...options });
 
 const lines = readFileSync("/phoenix/moment/cut.jsonl", "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));

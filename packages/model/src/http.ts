@@ -39,7 +39,10 @@ export class HttpModelProvider implements ModelProvider {
     else if (c.dialect === "chat-completions") text = record(record(list(value.choices)[0]).message).content;
     else if (c.dialect === "messages") text = list(value.content).filter(item => record(item).type === "text").map(item => record(item).text).filter(t => typeof t === "string").join("");
     else text = list(record(record(list(value.candidates)[0]).content).parts).map(item => record(item).text).filter(t => typeof t === "string").join("");
-    if (typeof text !== "string" || !text.trim()) throw new ModelOutputError("Model response contains no text");
+    if (typeof text !== "string" || !text.trim()) {
+      const stop = [value.status, value.stop_reason, record(list(value.choices)[0]).finish_reason, record(list(value.candidates)[0]).finishReason].find(s => typeof s === "string");
+      throw new ModelOutputError(`Model response contains no text${stop ? ` (stopped: ${stop})` : ""}`);
+    }
     return { text, ...(value.usage ?? value.usageMetadata ? { usage: value.usage ?? value.usageMetadata } : {}) };
   }
 }

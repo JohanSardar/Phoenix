@@ -33,7 +33,7 @@ for (const message of messages) for (const part of message.parts) {
   used.add(part.tool);
   if (NATIVE.includes(part.tool)) continue;
   const { status, input, output, title, metadata, error, attachments } = part.state;
-  answers.push({ id: part.callID, line: message.line, tool: part.tool, connector: "opencode", op: part.tool, args: input ?? {}, result: status === "error" ? { isError: true, error } : { output, title: title ?? "", metadata: metadata ?? {}, ...(attachments?.length ? { attachments } : {}) }, observed_at: new Date(part.state.time?.end ?? message.info.time.created).toISOString(), before_cut: message.line < at_message.line });
+  answers.push({ id: part.callID, line: message.line, tool: part.tool, connector: "opencode", op: part.tool, args: input ?? {}, result: status === "error" ? { isError: true, content: [{ type: "text", text: error ?? "" }] } : { content: [{ type: "text", text: output ?? "" }], structuredContent: { title: title ?? "", metadata: metadata ?? {}, ...(attachments?.length ? { attachments } : {}) } }, observed_at: new Date(part.state.time?.end ?? message.info.time.created).toISOString(), before_cut: message.line < at_message.line });
 }
 const unknown = [...used].filter(name => !STANDS_IN.includes(name) && !NATIVE.includes(name));
 if (unknown.length) throw new Error("The session used tools OpenCode does not build in (" + unknown.join(", ") + "); the recipe cannot stand in for MCP or plugin tools yet");

@@ -87,8 +87,8 @@ export const simulator: Resolver = {
     });
     const check = (value: unknown): boolean => valid(value) && (!output || !!output(call.surface === "cli" ? value : call.surface === "mcp" ? object(value).structuredContent : object(value).body));
     let value = await config.store.get(key);
+    let failure = "";
     if (value === undefined) {
-      let failure = "";
       for (let attempt = 0; attempt < (config.attempts ?? 3); attempt++) {
         let text: string;
         try { text = (await config.provider.complete({
@@ -103,7 +103,7 @@ export const simulator: Resolver = {
         break;
       }
     }
-    if (value === undefined) return { miss: true, why: "simulator exhausted response validation retries" };
+    if (value === undefined) return { miss: true, why: `simulator exhausted response validation retries: ${failure.slice(0, 500)}` };
     if (!check(value)) return { miss: true, why: "stored simulator answer fails response validation" };
     const note = call.readOnly ? "write-once synthesized answer" : "synthesized no-op acknowledgement; no state change";
     if (call.surface === "mcp") {

@@ -88,12 +88,16 @@ Put the image ID and the path to `recipe.yaml` in the Workbench settings.
 - Phoenix stands in only for OpenCode's built-in tools. A session that used
   MCP or plugin tools can't be cut yet: OpenCode doesn't save their
   descriptions.
-- A `read`, `glob`, `grep`, `edit`, `write` or `apply_patch` call runs for real
-  in the box, on the copy of the project's files, and the session's own answer
-  replaces its output when the session made the same call. If the real tool
-  fails on a call the session made, OpenCode shows that failure, not the
-  session's answer. Any other new call gets a made-up answer, labeled in the
-  result.
+- A `read`, `glob`, `grep`, `edit`, `write` or `apply_patch` call the session
+  made gets the session's own answer, and the tool does not run. A new one runs
+  for real in the box, on the copy of the project's files. Any other new call
+  gets a made-up answer, labeled in the result.
+- To skip the tool for a call the session made, the box runs OpenCode from its
+  source with `stand-in.patch` applied. This is slower to start than the built
+  OpenCode.
+- In the box, OpenCode may read and write outside the project folder without
+  asking, because everything there is a copy. A harness's own
+  `permission.external_directory` rule still wins.
 - Permission rules on command patterns are not applied to stand-in tools.
 - Subagents started by `task` are answered from the session, not run again.
 - The resumed run uses the real clock.

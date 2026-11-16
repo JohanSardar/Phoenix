@@ -1,0 +1,19 @@
+diff --git a/packages/opencode/src/session/tools.ts b/packages/opencode/src/session/tools.ts
+index 99f7aec..b98aff5 100644
+--- a/packages/opencode/src/session/tools.ts
++++ b/packages/opencode/src/session/tools.ts
+@@ -103,12 +103,12 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
+         return run.promise(
+           Effect.gen(function* () {
+             const ctx = context(args, options)
+-            yield* plugin.trigger(
++            const before: { args: typeof args; result?: any } = yield* plugin.trigger(
+               "tool.execute.before",
+               { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
+               { args },
+             )
+-            const result = yield* item.execute(args, ctx)
++            const result = before.result ?? (yield* item.execute(args, ctx))
+             const output = {
+               ...result,
+               attachments: result.attachments?.map((attachment) => ({

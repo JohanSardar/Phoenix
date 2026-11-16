@@ -6,6 +6,10 @@ const MARK = "__phoenix_stand_in";
 const CONTINUE = process.env.PHOENIX_OPENCODE_CONTINUE;
 const boxed = new Set(process.env.PHOENIX_PROJECT ? loadout.in_box ?? [] : []);
 const stood = loadout.tools.filter(name => !boxed.has(name));
+const native = result => {
+  const extra = result.structuredContent ?? result;
+  return { output: result.output ?? (result.content ?? []).map(block => block.text ?? "").join("\n"), title: extra.title ?? "", metadata: extra.metadata ?? {}, ...(extra.attachments ? { attachments: extra.attachments } : {}) };
+};
 
 export const PhoenixStandIn = async () => {
   const builtin = new Map();
@@ -28,8 +32,8 @@ export const PhoenixStandIn = async () => {
     async execute(args, ctx) {
       const reply = await ask("tools/call", name, args, ctx.callID, {}, ctx.abort);
       if (reply.error) throw new Error("Phoenix stopped this replay: " + reply.error.message);
-      if (reply.result.isError) throw new Error(reply.result.error);
-      return { output: reply.result.output ?? (reply.result.content ?? []).map(block => block.text ?? "").join("\n"), title: reply.result.title ?? "", metadata: reply.result.metadata ?? {}, ...(reply.result.attachments ? { attachments: reply.result.attachments } : {}) };
+      if (reply.result.isError) throw new Error(reply.result.error ?? native(reply.result).output);
+      return native(reply.result);
     },
   };
   return {
@@ -38,20 +42,15 @@ export const PhoenixStandIn = async () => {
       if (!boxed.has(name)) return;
       const reply = await ask("tools/call", name, output.args, callID);
       if (reply.error) throw new Error("Phoenix stopped this replay: " + reply.error.message);
-      pending.set(callID, { args: output.args, reply });
+      if (reply.run_in_box) { pending.set(callID, output.args); return; }
+      if (reply.result.isError) throw new Error(reply.result.error ?? native(reply.result).output);
+      output.result = native(reply.result);
     },
     "tool.execute.after": async ({ tool: name, callID }, output) => {
-      const slot = pending.get(callID);
-      if (!slot) return;
+      if (!pending.has(callID)) return;
+      const args = pending.get(callID);
       pending.delete(callID);
-      if (slot.reply.run_in_box) {
-        await ask("phoenix/ran", name, slot.args, callID, { result: { output: output.output, title: output.title ?? "", metadata: output.metadata ?? {} } });
-        return;
-      }
-      if (slot.reply.result.isError) throw new Error(slot.reply.result.error);
-      output.output = slot.reply.result.output;
-      output.title = slot.reply.result.title ?? "";
-      output.metadata = slot.reply.result.metadata ?? {};
+      await ask("phoenix/ran", name, args, callID, { result: { output: output.output, title: output.title ?? "", metadata: output.metadata ?? {} } });
     },
     "tool.definition": async ({ toolID }, output) => {
       if (!stood.includes(toolID)) return;
