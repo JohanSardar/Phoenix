@@ -14,7 +14,7 @@ if login["provider"] == "openai-codex":
     llm = {"model_name": f"chatgpt/{model}", "model_kwargs": {"drop_params": True}}
     keys = {"CHATGPT_TOKEN_DIR": tokens}
 else:
-    llm = {"model_name": f"openai/{model}", "model_kwargs": {"api_base": login["base"], "extra_headers": {"x-opencode-session": str(uuid.uuid4())}, "drop_params": True}}
+    llm = {"model_name": f"openai/{model}", "model_kwargs": {"api_base": "https://opencode.ai/inference/go/openai/v1", "extra_headers": {"x-opencode-session": str(uuid.uuid4())}, "drop_params": True}}
     keys = {"OPENAI_API_KEY": login["key"]}
 
 phoenix = {
