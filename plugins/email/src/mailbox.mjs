@@ -250,12 +250,17 @@ export class Mailbox {
     return label;
   }
 
+  highestLabel() {
+    this.labelCounter ??= Math.max(0, ...this.labels.map(l => Number(/^Label_(\d{1,9})$/.exec(l.labelId)?.[1] ?? 0)));
+    return this.labelCounter;
+  }
+
   createLabel(name, { labelListVisibility = "LABEL_SHOW", messageListVisibility = "SHOW" } = {}) {
-    const counter = this.labelCounter ?? Math.max(0, ...this.labels.map(l => Number(/^Label_(\d{1,9})$/.exec(l.labelId)?.[1] ?? 0)));
-    return this.addLabel({ labelId: `Label_${counter + 1}`, labelListVisibility, labelType: "USER", messageListVisibility, messagesTotal: 0, messagesUnread: 0, name, threadsTotal: 0, threadsUnread: 0 });
+    return this.addLabel({ labelId: `Label_${this.highestLabel() + 1}`, labelListVisibility, labelType: "USER", messageListVisibility, messagesTotal: 0, messagesUnread: 0, name, threadsTotal: 0, threadsUnread: 0 });
   }
 
   deleteLabel(labelId) {
+    this.highestLabel();
     for (const m of this.messages.values()) if (m.labelIds.includes(labelId)) this.relabel(m, [], [labelId]);
     this.labels = this.labels.filter(l => l.labelId !== labelId);
     this.labelDeltas.delete(labelId);

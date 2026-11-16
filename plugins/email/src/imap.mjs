@@ -345,7 +345,7 @@ export function startImap(box, { log } = {}) {
             if (cmd === "CLOSE" && selected && !readOnly) for (const m of folders.messages(selected)) if (folders.deleted(m, selected)) folders.expunge(m, selected);
             selected = null; return ok("Returned to authenticated state. (Success)");
           }
-          case "CREATE": { if (!box.labels) return no("[UNAVAILABLE] the copy never saw the label list"); box.createLabel(String(args[0])); return ok("Success"); }
+          case "CREATE": { if (!box.labels) { box.missed = "the copy never saw the label list"; return no(`[UNAVAILABLE] ${box.missed}`); } box.createLabel(String(args[0])); return ok("Success"); }
           case "DELETE": { const label = box.labels?.find(l => l.labelType === "USER" && l.name === String(args[0])); if (!label) return no("[NONEXISTENT] Folder doesn't exist."); box.deleteLabel(label.labelId); return ok("Success"); }
           case "SUBSCRIBE": case "UNSUBSCRIBE": return ok();
           case "APPEND": {

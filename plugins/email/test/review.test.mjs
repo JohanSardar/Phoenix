@@ -21,7 +21,7 @@ async function serve(t, snapshot = {}) {
   const path = join(root, "snapshot.json");
   await writeFile(path, JSON.stringify({ account: { email: "test@example.com" }, ...snapshot }));
   const child = spawn(process.execPath, [join(here, "../src/serve.mjs")], {
-    env: { PATH: process.env.PATH, HOME: root, TMPDIR: root },
+    env: { PATH: process.env.PATH, HOME: root, TMPDIR: root, PHOENIX_HIMALAYA: process.env.PHOENIX_HIMALAYA ?? "himalaya" },
     stdio: ["pipe", "pipe", "pipe"],
   });
   t.after(async () => {
@@ -45,6 +45,10 @@ async function serve(t, snapshot = {}) {
       surface: "mcp", layer: "agent", op: `tools/call:${tool}`, args, now,
       raw: { body: Buffer.from(JSON.stringify(raw)).toString("base64") },
     });
+  };
+  call.cli = argv => {
+    const args = { argv: ["himalaya", ...argv], cwd: root, env: {}, terminals: { stdin: null, stdout: null, stderr: null } };
+    return request("call", { surface: "cli", layer: "agent", op: "himalaya", args, now, raw: { body: Buffer.from(JSON.stringify(args)).toString("base64") } });
   };
   return call;
 }
@@ -112,4 +116,33 @@ test("S5: sending a new draft makes its fully known thread readable", async t =>
   const thread = payload(await call("get_thread", { threadId: sent.threadId }));
   assert.equal(thread.messageCount, 1);
   assert.equal(thread.messages[0].plaintextBody, "Draft body");
+});
+
+test("S6: deleting a seeded label does not allow its id to be reused", async t => {
+  const call = await serve(t, { labels: [{
+    labelId: "Label_1", labelType: "USER", name: "[phoenix-test] old",
+  }] });
+  payload(await call("delete_label", { labelId: "Label_1" }));
+  const created = payload(await call("create_label", { displayName: "[phoenix-test] new" }));
+  assert.notEqual(created.labelId, "Label_1");
+});
+
+test("S7: renaming to another label's name falls through without changing it", async t => {
+  const labels = [
+    { labelId: "Label_1", labelType: "USER", name: "[phoenix-test] alpha" },
+    { labelId: "Label_2", labelType: "USER", name: "[phoenix-test] beta" },
+  ];
+  const call = await serve(t, { labels });
+  const reply = await call("update_label", { labelId: "Label_1", displayName: labels[1].name });
+  assert.equal(reply.status, "unsupported", JSON.stringify(reply));
+  assert.deepEqual(payload(await call("list_labels", {})).labels, labels);
+});
+
+test("S8: himalaya folder creation falls through when the label list is unknown", async t => {
+  const call = await serve(t);
+  const reply = await call.cli(["folder", "add", "[phoenix-test] new"]);
+  const detail = reply.status === "answer"
+    ? JSON.parse(Buffer.from(reply.value.body, "base64").toString()).map(f => Buffer.from(f.bytes, "base64").toString())
+    : reply;
+  assert.equal(reply.status, "unsupported", JSON.stringify(detail));
 });

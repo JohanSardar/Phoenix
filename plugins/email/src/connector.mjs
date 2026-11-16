@@ -86,6 +86,7 @@ export class Connector {
       case "update_label": {
         const l = this.userLabel(a.labelId);
         if ((a.colorPreset && a.colorPreset !== "LABEL_COLOR_PRESET_UNSPECIFIED") || a.color || String(a.displayName ?? "").includes("/")) throw new Unsupported("the copy answers only renames and visibility changes");
+        if (a.displayName !== undefined && this.box.labels.some(x => x !== l && x.name.toLowerCase() === String(a.displayName).toLowerCase())) throw new Unsupported(`a label named ${a.displayName} already exists`);
         const out = { labelId: l.labelId };
         if (a.displayName !== undefined) l.name = out.name = a.displayName;
         for (const k of ["labelListVisibility", "messageListVisibility"]) if (a[k] && !a[k].endsWith("_UNSPECIFIED")) l[k] = out[k] = a[k];
