@@ -111,6 +111,10 @@ export interface TraceEvent {
    * On replay results: the resolver that answered.
    */
   resolver?: string;
+  /**
+   * On replay results: true when an earlier write to this service got a made-up answer because its working copy could not take it, so neither the session nor the copy knows what the service would say now.
+   */
+  after_untaken_write?: boolean;
   secrets?:
     | "unscanned"
     | {
