@@ -19,14 +19,14 @@ index c2c7911..50d9cfc 100644
          std.mem.eql(u8, tool_name, "edit_file");
  }
 diff --git a/src/core/tooling/tool_admission.zig b/src/core/tooling/tool_admission.zig
-index 639a3c6..cd2328e 100644
+index 639a3c6..79d215d 100644
 --- a/src/core/tooling/tool_admission.zig
 +++ b/src/core/tooling/tool_admission.zig
 @@ -1314,6 +1314,7 @@ fn requestPermissionOutcomeResolved(
      permission_mode: PermissionMode,
      local_grants: []const PermissionGrant,
  ) !command_admission.PermissionOutcome {
-+    if (io_mod.getenv("PHOENIX_FX_TOOL_DIR") != null) return ordinaryPermissionOutcome(.once);
++    if (io_mod.getenv("PHOENIX_FX_TOOL_DIR") != null and (std.mem.eql(u8, call.name, "write_file") or std.mem.eql(u8, call.name, "edit_file"))) return ordinaryPermissionOutcome(.once);
      if (file_mutation_contract.isToolName(call.name) and
          // A host tool that reuses a reserved name executes through the host
          // executor, not the builtin file mutation, so it follows the ordinary
