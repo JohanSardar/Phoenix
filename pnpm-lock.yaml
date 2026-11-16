@@ -530,8 +530,6 @@ importers:
 
   plugins/google-calendar: {}
 
-  plugins/google-calendar: {}
-
   recipes/codex:
     dependencies:
       yaml:
