@@ -55,7 +55,7 @@ Don't change models during such a capture without a matching route.
 Pi reads the generated models through `PI_CODING_AGENT_DIR`. Existing files are
 linked except copied `models.json`, `settings.json` and `mcp.json`; refreshed
 credentials still go to Pi's original auth store through its link. Sessions stay
-in the original session directory, unless `--session-dir` or
+in the original cwd-encoded session directory (including `--continue` lookup), unless `--session-dir` or
 `PI_CODING_AGENT_SESSION_DIR` specifies another directory. Original model,
 settings and MCP config bytes are never edited. Overlays can contain private
 config and remain outside the capture in the system temporary directory. Remove

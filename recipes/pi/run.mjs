@@ -73,7 +73,9 @@ try {
   }
   await appendFile(join(capture, "coverage.jsonl"), JSON.stringify({ recipe: "pi", routes, model: gateway ? "models.json baseUrl; SSE" : "transcript", mcp: mcp ? "configured stdio servers" : "transcript", limitations: misses, retained_overlay: runtime, cwd_overlay: cwd !== process.cwd() }) + "\n", { mode: 0o600 });
   process.stderr.write(`Pi private config overlay: ${runtime}\n`);
-  const child = spawn("pi", args, { cwd, env: { ...process.env, PI_CODING_AGENT_DIR: agent, PI_CODING_AGENT_SESSION_DIR: process.env.PI_CODING_AGENT_SESSION_DIR ?? join(source, "sessions") }, stdio: "inherit" });
+  const sessionCwd = resolve(process.env.PHOENIX_CWD ?? process.cwd());
+  const sessionDir = join(source, "sessions", `--${sessionCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`);
+  const child = spawn("pi", args, { cwd, env: { ...process.env, PI_CODING_AGENT_DIR: agent, PI_CODING_AGENT_SESSION_DIR: process.env.PI_CODING_AGENT_SESSION_DIR ?? sessionDir }, stdio: "inherit" });
   const signals = new Map(["SIGINT", "SIGTERM", "SIGHUP"].map(signal => [signal, () => child.kill(signal)]));
   for (const [signal, forward] of signals) process.on(signal, forward);
   child.on("error", () => { process.stderr.write("Pi could not start\n"); process.exitCode = 127; });
