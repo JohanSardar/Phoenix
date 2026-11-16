@@ -31,8 +31,7 @@ const blobs = values.files && existsSync(join(values.files, "blobs")) ? join(val
 const output = result => {
   const hash = /^result-([0-9a-f]{64})\.txt$/.exec(result.artifact_ref ?? "")?.[1];
   if (hash && blobs && existsSync(join(blobs, hash))) return readFileSync(join(blobs, hash), "utf8");
-  const preview = result.preview ?? "";
-  return hash && !(Buffer.byteLength(preview) >= result.stored_bytes) ? undefined : preview;
+  return hash ? undefined : result.preview ?? "";
 };
 const route = name => identities[name] ? { connector: identities[name].server, op: identities[name].tool } : { connector: "fx", op: name };
 const calls = new Map();
