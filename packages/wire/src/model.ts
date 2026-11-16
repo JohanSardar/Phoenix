@@ -1,5 +1,6 @@
 import { decodeJson, object, type Decode } from "./json.ts";
-import { decodeSse } from "./mcp.ts";
+import { decodeSse, type SseMessage } from "./mcp.ts";
+import { decodeHttpBody, header, type Headers } from "./http.ts";
 
 export type ModelDialectName = "messages" | "chat-completions" | "responses" | "generate-content";
 export interface InferenceOperation { method: string; path: string }
@@ -13,6 +14,7 @@ export interface ModelDialect {
   toolUses(value: unknown): ToolUse[];
   providerState(request: Record<string, unknown>): string[];
   externalAccess(request: Record<string, unknown>): string[];
+  isTerminal(event: SseMessage): boolean;
 }
 
 function toolUses(value: unknown): ToolUse[] {
@@ -113,6 +115,15 @@ function dialect(name: ModelDialectName, inferenceOperations: InferenceOperation
     toolUses,
     providerState: request => ["previous_response_id", "conversation", "cachedContent"].filter(key => request[key] !== undefined && request[key] !== null),
     externalAccess,
+    isTerminal(event) {
+      if (name === "chat-completions") return event.data === "[DONE]";
+      const decoded = decodeJson(new TextEncoder().encode(event.data));
+      if (!decoded.ok) return false;
+      const value = object(decoded.value);
+      if (name === "messages") return value.type === "message_stop";
+      if (name === "responses") return ["response.completed", "response.failed", "response.incomplete"].some(type => value.type === type && object(value.response).status === type.slice("response.".length));
+      return false;
+    },
   };
 }
 
@@ -122,6 +133,14 @@ export const modelDialects: Readonly<Record<ModelDialectName, ModelDialect>> = {
   responses: dialect("responses", [{ method: "POST", path: "/v1/responses" }], "input", true),
   "generate-content": dialect("generate-content", [{ method: "POST", path: "/v1beta/models/{model}:generateContent" }, { method: "POST", path: "/v1beta/models/{model}:streamGenerateContent" }], "contents", false),
 };
+
+export function modelStreamComplete(name: ModelDialectName, bytes: Uint8Array, headers: Headers): boolean {
+  if (!header(headers, "content-type")?.toLowerCase().includes("text/event-stream")) return false;
+  const body = decodeHttpBody(bytes, headers);
+  if (!body.ok) return false;
+  const sse = decodeSse(body.value);
+  return sse.ok && sse.value.some(event => modelDialects[name].isTerminal(event));
+}
 
 export function decodeModelBody(bytes: Uint8Array, contentType: string): Decode<unknown[]> {
   if (!contentType.toLowerCase().includes("text/event-stream")) {

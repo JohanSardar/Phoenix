@@ -91,6 +91,10 @@ export interface TraceEvent {
    */
   partial?: boolean;
   /**
+   * Partial only because the transport closed before EOF, with no known missing body frames. A protocol terminal event may establish completion.
+   */
+  transport_partial?: boolean;
+  /**
    * Copies dropped before this one, carried after a drop.
    */
   dropped?: {

@@ -1,5 +1,5 @@
 import type { TraceEvent } from "@phoenix/formats";
-import { decodeHttpHead, decodeJson, header, type HttpRequest, type Surface } from "@phoenix/wire";
+import { decodeHttpHead, decodeJson, header, modelStreamComplete, type HttpRequest, type ModelDialectName, type Surface } from "@phoenix/wire";
 import { httpShape, mcpShape, toCall } from "./normalize.ts";
 import { cliRecording, cliShape } from "./cli.ts";
 import { mcpHttpMessages, mcpHttpShape } from "./mcp-http.ts";
@@ -60,21 +60,24 @@ async function pairMcp(list: readonly TraceEvent[], body: (e: TraceEvent) => Pro
   return paired;
 }
 
-async function pairHttp(list: readonly TraceEvent[], body: (e: TraceEvent) => Promise<Uint8Array>, surface: "http" | "mcp" = "http"): Promise<Paired[]> {
+async function pairHttp(list: readonly TraceEvent[], body: (e: TraceEvent) => Promise<Uint8Array>, surface: "http" | "mcp" = "http", model?: { connector: string; dialect: ModelDialectName }): Promise<Paired[]> {
   const framed = list.some(e => e.op === "open");
   const call = list.find(e => framed ? e.op === "frame:out:0" : e.kind === "call");
   const result = list.find(e => framed ? e.op === "frame:back:2" : e.kind === "result" && e.op !== "fragment:back:2");
   const requestMeta = framed ? list.find(e => e.op === "open") : list.filter(e => e.kind === "meta")[0];
   const responseMeta = framed ? list.find(e => e.op === "frame:back:1") : list.filter(e => e.kind === "meta")[1];
-  if (!call || !result || !requestMeta || !responseMeta || call.partial || result.partial) return [];
+  if (!call || !result || !requestMeta || !responseMeta || call.partial) return [];
   const head = decodeJson(await body(requestMeta));
   if (!head.ok) return [];
   const request = { body: await body(call), head: (framed ? (head.value as { meta: { request: HttpRequest } }).meta.request : head.value) as HttpRequest };
   const shape = surface === "mcp" ? mcpHttpShape(request.head, request.body) : httpShape(request.head, request.body);
   const encoding = result.body?.content_encoding;
+  const response = { body: await body(result), head: decodeHttpHead(await body(responseMeta)), ...(encoding ? { contentEncoding: encoding } : {}) };
+  if (result.partial && !(result.transport_partial && surface === "http" && model && model.connector === result.connector && modelStreamComplete(model.dialect, response.body,
+    encoding ? response.head.headers.filter((_, i, headers) => headers[i - i % 2]!.toLowerCase() !== "content-encoding") : response.head.headers))) return [];
   return [{
     call, result, surface, op: shape.op, args: shape.args, request, during: [], after: [],
-    response: { body: await body(result), head: decodeHttpHead(await body(responseMeta)), ...(encoding ? { contentEncoding: encoding } : {}) },
+    response,
   }];
 }
 
@@ -83,6 +86,7 @@ export async function buildIndex(events: readonly TraceEvent[], options: {
   policy(connector: string): ConnectorPolicy;
   start: StartPoint;
   startTime?: string;
+  model?: { connector: string; dialect: ModelDialectName };
 }): Promise<ExchangeIndex> {
   const at = typeof options.start === "object" ? options.start.at : undefined;
   const cut = options.start === "beginning" ? 0 : at === undefined ? events.length : events.findIndex(e => eventId(e) === at);
@@ -106,7 +110,7 @@ export async function buildIndex(events: readonly TraceEvent[], options: {
       if (http || decoded && decoded.ok && typeof (decoded.value as { method?: unknown }).method === "string") paired.push(...await pairHttp(list, options.body, "mcp"));
       else paired.push(...await pairMcp(list, options.body, notifications.get(connector)!));
     }
-    else if (list[0]!.surface === "http") paired.push(...await pairHttp(list, options.body));
+    else if (list[0]!.surface === "http") paired.push(...await pairHttp(list, options.body, "http", options.model));
     else if (list[0]!.surface === "cli") {
       const cli = await cliRecording(list, options.body);
       if (cli) paired.push({ ...cli, surface: "cli", ...cliShape(cli.invocation), request: { body: Buffer.from(JSON.stringify(cli.invocation)) }, response: { body: Buffer.from(JSON.stringify(cli.frames)) }, during: [], after: [] });
