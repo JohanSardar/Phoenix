@@ -31,9 +31,6 @@ phoenix moment create --session session.jsonl --recipe recipes/opencode/recipe.y
 - An LLM step (an assistant message): OpenCode resumes in the middle of the
   turn, just before that step, and the LLM takes the step again.
 
-Use `--from-beginning` in place of `--at` to start at the session's first message,
-with its original prompt.
-
 Tool calls are named `opencode.<tool>` in checks, for example `opencode.bash`.
 
 ## What happens in a replay
@@ -88,12 +85,21 @@ Put the image ID and the path to `recipe.yaml` in the Workbench settings.
 
 ## Limits
 
+- Merged with a gap (JOH-55, JOH-61): OpenCode replays that answer new calls were last seen working on the code that became commit ba9d924f, not re-run on the final code. The LLM account they use, OpenCode Go, was out of balance.
+- Merged with a gap (JOH-55, JOH-61): made-up answers were last seen working on the code that became commit ba9d924f, not re-run on the final code. The simulator LLM they use, on OpenCode Go, was out of balance. No other LLM route on the Mac worked for it: DeepSeek was out of balance, the Zen and Kimi keys were expired or invalid, and ChatGPT's backend accepts only streamed replies, which the simulator doesn't send.
 - Phoenix stands in only for OpenCode's built-in tools. A session that used
   MCP or plugin tools can't be cut yet: OpenCode doesn't save their
   descriptions.
-- Known gap, merged with Johan's decision of 2026-11-16: a tool call the
-  session never made gets no answer, and the replay stops there, unless a
-  plugin answers it. Ticket T11 (JOH-55) owns the fix, for every harness.
+- A `read`, `glob`, `grep`, `edit`, `write` or `apply_patch` call the session
+  made gets the session's own answer, and the tool does not run. A new one runs
+  for real in the box, on the copy of the project's files. Any other new call
+  gets a made-up answer, labeled in the result.
+- To skip the tool for a call the session made, the box runs OpenCode from its
+  source with `stand-in.patch` applied. This is slower to start than the built
+  OpenCode.
+- In the box, OpenCode may read and write outside the project folder without
+  asking, because everything there is a copy. A harness's own
+  `permission.external_directory` rule still wins.
 - The replays that proved this recipe did not run on the sessions' own LLMs.
   One session's LLM is retired, and the other's provider returned an error, so
   both harnesses named an OpenCode Go LLM in `opencode.json`.

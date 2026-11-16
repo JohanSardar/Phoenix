@@ -114,10 +114,12 @@ it did. CLI output does not recreate file writes.
 
 `phoenix moment create --session <copy of a pi session file> --recipe recipes/pi/recipe.yaml --at <line>` cuts the session before the user turn that holds that line. In the box, `resume.mjs` resumes pi from the cut with `pi --fork`. Phoenix answers every tool call.
 
-- pi-mcp-adapter hides MCP tools behind its `mcp` tool and, after a connect, behind `mcp__<server>`. `adapter.mjs` turns each such call back into the server and tool it reaches, so a calendar call through the adapter is answered as the calendar's own call. The adapter's own questions (status, list, search, describe, connect) are answered from the session. A question the session never asked has no answer, and the replay stops there.
+- pi-mcp-adapter hides MCP tools behind its `mcp` tool and, after a connect, behind `mcp__<server>`. `adapter.mjs` turns each such call back into the server and tool it reaches, so a calendar call through the adapter is answered as the calendar's own call. The adapter's own questions (status, list, search, describe, connect) are answered from the session. A question the session never asked gets a made-up answer, labeled in the result.
+- pi's `read`, `write`, `edit`, `ls`, `grep` and `find` run for real in the box when the session never made that call, on the copy of the project's files. pi runs in the session's folder, where the copy sits. Every other new call, `bash` included, gets a made-up answer.
 - The box's clock is the moment's time. `clock.mjs` moves only the clock pi's JavaScript sees. The TLS library keeps the real clock, so the LLM's certificate still checks out for an older moment.
 - The harness is `APPEND_SYSTEM.md` plus any pi extension in the harness's `extensions/` folder. Both load in the box.
 - pi reaches its LLM directly, with nothing from Phoenix in between. The box may reach only the addresses of the hosts in `resume.llm_hosts`, on port 443, looked up once before pi starts. DNS and every other address are shut.
+- Merged with a gap (JOH-55, JOH-61): made-up answers were last seen working on the code that became commit ba9d924f, not re-run on the final code. The simulator LLM they use, on OpenCode Go, was out of balance. No other LLM route on the Mac worked for it: DeepSeek was out of balance, the Zen and Kimi keys were expired or invalid, and ChatGPT's backend accepts only streamed replies, which the simulator doesn't send.
 - Known limit, by Johan's decision on 2026-11-16: another site that shares the LLM provider's addresses can be reached on port 443. Closing it would need a gate in the LLM's path, which Johan ruled out as too complicated. Don't add one.
 
 ## Mark, from the beginning, made up

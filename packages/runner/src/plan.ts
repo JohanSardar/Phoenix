@@ -79,7 +79,7 @@ export async function resolvePlan(root: string, ledger: string, request: ReplayR
     if (!/^sha256:[a-f0-9]{64}$/.test(plugin.image)) throw new Error("Plugin image must be digest-pinned");
     const descriptor = checked("plugin", JSON.parse(await readFile(join(plugin.directory, "phoenix-plugin.json"), "utf8")));
     if (!plugin.name || !plugin.version || /[~^*<>=| ]/.test(plugin.version)) throw new Error("Plugin versions must be resolved, not ranges");
-    if (!bundle.manifest.connectors?.[descriptor.connector]) throw new Error(`Plugin connector is not in this moment: ${descriptor.connector}`);
+    if (![descriptor.connector, ...descriptor.recognize.mcp_servers ?? []].some(name => bundle.manifest.connectors?.[name])) throw new Error(`Plugin connector is not in this moment: ${descriptor.connector}`);
     for (const path of [plugin.snapshot, plugin.seed]) if (path && !bundle.files.has(path)) throw new Error(`Plugin input is not locked bundle data: ${path}`);
     const { directory: _, ...settings } = plugin;
     plugins.push({ ...settings, descriptor, tree: await treeDigest(plugin.directory) });

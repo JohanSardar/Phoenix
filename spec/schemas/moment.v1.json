@@ -406,6 +406,49 @@
           "type": "string",
           "description": "Bundle path of the recipe's reading of the session at the moment: the cut, the prompt, the LLM, the tool loadout and the recorded tool answers."
         },
+        "files": {
+          "type": "string",
+          "description": "Bundle folder holding the copied files beside the session that the cut needs."
+        },
+        "project": {
+          "type": "object",
+          "required": ["tar", "root", "source", "taken_at"],
+          "description": "A copy of the project's files, laid out at the same folder inside the box. File reads and writes the session never made run for real on this copy.",
+          "properties": {
+            "tar": {
+              "type": "string",
+              "description": "Bundle path of the copy, as a tar file."
+            },
+            "root": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The project's folder on the machine where the session ran. The copy sits at this path inside the box."
+            },
+            "source": {
+              "enum": ["git", "today"],
+              "description": "git: the folder's files as committed at the moment's time. today: the folder's files as they were when the moment was made."
+            },
+            "commit": {
+              "type": "string",
+              "description": "The commit the copy came from, when source is git."
+            },
+            "taken_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the files in the copy were current."
+            },
+            "more": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Bundle paths of more tar files, when the copy is too big for one. Unpack them after tar, into the same folder."
+            },
+            "left_out": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Files Phoenix could not read when it made the copy. They are missing inside the box."
+            }
+          }
+        },
         "from_beginning": {
           "type": "boolean",
           "description": "The replay starts at the session's first message, with its original prompt."

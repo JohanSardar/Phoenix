@@ -48,7 +48,7 @@ const root = process.env.REVIEW_ROOT;
 const map = path => typeof path !== 'string' ? path
   : path.replace(/^\\/phoenix\\/recipe\\/stand-in\\.mjs$/, root + '/stand-in.mjs')
     .replace(/^\\/phoenix\\//, root + '/').replace(/^\\/worktree(?=\\/|$)/, root + '/worktree');
-for (const name of ['copyFileSync', 'cpSync', 'openSync', 'existsSync', 'mkdirSync', 'readFileSync', 'renameSync', 'writeFileSync']) {
+for (const name of ['copyFileSync', 'cpSync', 'openSync', 'existsSync', 'mkdirSync', 'readdirSync', 'readFileSync', 'renameSync', 'writeFileSync']) {
   const original = fs[name];
   fs[name] = (...args) => original(...args.map(map));
 }

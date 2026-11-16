@@ -57,6 +57,35 @@ export interface ReplayResult {
     tiebreak: boolean;
     status: "pass" | "fail" | "unassessed";
     discounted?: boolean;
+    /**
+     * True when this sample's pass or fail rests on a made-up tool answer: every expectation that decided it came after one.
+     */
+    leaned_on_made_up?: boolean;
+    /**
+     * Where each tool answer in the sample's last attempt came from.
+     */
+    answers?: {
+      /**
+       * Answered from the session's own recorded results.
+       */
+      session: number;
+      /**
+       * Run for real inside the box, on the copy of the project's files.
+       */
+      files_copy: number;
+      /**
+       * Answered by a service's working copy, such as the calendar plugin.
+       */
+      working_copy: number;
+      /**
+       * Made up by the simulator LLM. Never real.
+       */
+      made_up: number;
+      made_up_calls: {
+        connector: string;
+        op: string;
+      }[];
+    };
     attempts: {
       attempt: number;
       status: "running" | "interrupted" | "finished";
@@ -77,6 +106,25 @@ export interface ReplayResult {
     };
   }[];
   tiebreak_ran: boolean;
+  /**
+   * True when a sample that counts toward the verdict passed or failed on a made-up tool answer.
+   */
+  leaned_on_made_up?: boolean;
+  /**
+   * Which copy of the project's files the box used.
+   */
+  files_copy?: {
+    /**
+     * git: as committed at the moment's time. today: as the files were when the moment was made.
+     */
+    source: "git" | "today";
+    commit?: string;
+    taken_at: string;
+    /**
+     * How many files Phoenix could not read when it made the copy. They are missing inside the box.
+     */
+    left_out?: number;
+  };
   baseline?: {
     pass: number;
     fail: number;

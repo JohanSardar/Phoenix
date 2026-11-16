@@ -31,17 +31,19 @@ index 639a3c6..79d215d 100644
          // A host tool that reuses a reserved name executes through the host
          // executor, not the builtin file mutation, so it follows the ordinary
 diff --git a/src/core/tooling/tool_dispatch.zig b/src/core/tooling/tool_dispatch.zig
-index 268ac86..1cd9756 100644
+index 268ac86..66aeab0 100644
 --- a/src/core/tooling/tool_dispatch.zig
 +++ b/src/core/tooling/tool_dispatch.zig
-@@ -905,12 +905,34 @@ pub fn dispatchToolCall(ctx: DispatchContext, registry: Registry, call: message.
+@@ -905,12 +905,37 @@ pub fn dispatchToolCall(ctx: DispatchContext, registry: Registry, call: message.
      }
  }
  
 +var phoenix_call_counter = std.atomic.Value(u64).init(0);
++pub threadlocal var phoenix_running_real: bool = false;
 +
 +/// Phoenix replay: hands one tool call to the stand-in helper and returns its answer instead of running the tool.
-+pub fn phoenixStandIn(alloc: Allocator, dir: []const u8, call: message.ToolCall) DispatchError!AuthorizedDispatchResult {
++/// Returns null when Phoenix says to run the tool for real, on the copy of the project's files in the box.
++pub fn phoenixStandIn(alloc: Allocator, dir: []const u8, call: message.ToolCall) DispatchError!?AuthorizedDispatchResult {
 +    const helper = io_mod.getenv("PHOENIX_FX_TOOL_HELPER") orelse return phoenixStop(alloc);
 +    const path = try alloc.print("{s}/call-{d}.json", .{ dir, phoenix_call_counter.fetchAdd(1, .seq_cst) });
 +    defer alloc.free(path);
@@ -52,10 +54,11 @@ index 268ac86..1cd9756 100644
 +    defer alloc.free(result.stdout);
 +    defer alloc.free(result.stderr);
 +    if (result.term != .exited or result.term.exited != 0 or result.stdout.len == 0) return phoenixStop(alloc);
++    if (result.stdout[0] == '2') return null;
 +    return .{ .status = if (result.stdout[0] == '0') .success else .failure, .body = try alloc.dupe(u8, result.stdout[1..]) };
 +}
 +
-+fn phoenixStop(alloc: Allocator) DispatchError!AuthorizedDispatchResult {
++fn phoenixStop(alloc: Allocator) DispatchError!?AuthorizedDispatchResult {
 +    return .{ .status = .failure, .body = try alloc.dupe(u8, "Phoenix stopped this replay: the tool call could not be answered") };
 +}
 +
@@ -65,19 +68,23 @@ index 268ac86..1cd9756 100644
      registry: Registry,
      call: message.ToolCall,
  ) DispatchError!AuthorizedDispatchResult {
-+    if (io_mod.getenv("PHOENIX_FX_TOOL_DIR")) |dir| return phoenixStandIn(ctx.allocator, dir, call);
++    if (!phoenix_running_real) if (io_mod.getenv("PHOENIX_FX_TOOL_DIR")) |dir| if (try phoenixStandIn(ctx.allocator, dir, call)) |answer| return answer;
      const validated = try decodeAndValidateRegisteredToolCall(ctx, registry, call);
      switch (validated) {
          .not_registered => return .{ .status = .failure, .body = try ctx.allocator.print("unknown tool: {s}", .{call.name}) },
 diff --git a/src/core/tooling/tool_runtime.zig b/src/core/tooling/tool_runtime.zig
-index c8b8512..5447666 100644
+index c8b8512..04e1991 100644
 --- a/src/core/tooling/tool_runtime.zig
 +++ b/src/core/tooling/tool_runtime.zig
-@@ -431,6 +431,7 @@ pub fn executeToolCallAuthorized(
+@@ -431,6 +431,11 @@ pub fn executeToolCallAuthorized(
      execution_ctx.command_replay_capture = request.command_replay_capture;
      execution_ctx.command_replay_unavailable = request.command_replay_unavailable;
  
-+    if (io_mod.getenv("PHOENIX_FX_TOOL_DIR")) |dir| return toolExecutionResultFromDispatch(try tool_dispatch.phoenixStandIn(request.result_allocator, dir, request.call), .{});
++    if (io_mod.getenv("PHOENIX_FX_TOOL_DIR")) |dir| {
++        if (try tool_dispatch.phoenixStandIn(request.result_allocator, dir, request.call)) |answer| return toolExecutionResultFromDispatch(answer, .{});
++        tool_dispatch.phoenix_running_real = true;
++    }
++    defer tool_dispatch.phoenix_running_real = false;
      const started_at_ms = io_mod.milliTimestamp();
      const uses_file_mutation_contract = if (registeredToolSpec(
          execution_ctx,

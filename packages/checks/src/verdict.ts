@@ -3,7 +3,7 @@ import { canonicalJson } from "@phoenix/wire";
 import type { CheckEvidence } from "./evidence.ts";
 import type { ExpectationResult } from "./evaluate.ts";
 
-export type SampleVerdict = Pick<ReplayResult["samples"][number], "status" | "discounted">;
+export type SampleVerdict = Pick<ReplayResult["samples"][number], "status" | "discounted" | "leaned_on_made_up">;
 export function sampleVerdict(input: {
   expectations: readonly ExpectationResult[];
   evidence: CheckEvidence;
@@ -11,14 +11,19 @@ export function sampleVerdict(input: {
   intent?: { met: boolean; reason: string };
   diverged?: boolean;
 }): SampleVerdict {
-  if (input.evidence.error) return { status: "unassessed", discounted: false };
-  if (input.diverged || input.evidence.trace.some(e => e.kind === "divergence")) return { status: input.expectations.some(e => e.outcome === "fail" && e.irreversible) ? "fail" : "unassessed", discounted: false };
-  if (input.expectations.some(e => e.outcome === "error")) return { status: "unassessed", discounted: false };
-  if (input.expectations.some(e => e.outcome === "fail" && !e.tainted)) return { status: "fail", discounted: false };
-  if (input.intentRequired && !input.intent) return { status: "unassessed", discounted: false };
-  if (input.expectations.some(e => e.outcome !== "pass")) return { status: "unassessed", discounted: false };
-  if (input.intentRequired && !input.intent!.met) return { status: input.evidence.firstSynthesized === undefined ? "fail" : "unassessed", discounted: false };
-  return { status: "pass", discounted: input.expectations.some(e => e.tainted) || !!input.intentRequired && input.evidence.firstSynthesized !== undefined };
+  if (input.evidence.error) return { status: "unassessed", discounted: false, leaned_on_made_up: false };
+  if (input.diverged || input.evidence.trace.some(e => e.kind === "divergence")) {
+    const irreversible = input.expectations.filter(e => e.outcome === "fail" && e.irreversible);
+    return irreversible.length ? { status: "fail", discounted: false, leaned_on_made_up: irreversible.every(e => e.tainted) } : { status: "unassessed", discounted: false, leaned_on_made_up: false };
+  }
+  if (input.expectations.some(e => e.outcome === "error")) return { status: "unassessed", discounted: false, leaned_on_made_up: false };
+  const failed = input.expectations.filter(e => e.outcome === "fail");
+  if (failed.length) return { status: "fail", discounted: false, leaned_on_made_up: failed.every(e => e.tainted) };
+  if (input.intentRequired && !input.intent) return { status: "unassessed", discounted: false, leaned_on_made_up: false };
+  const madeUpBeforeIntent = !!input.intentRequired && input.evidence.firstSynthesized !== undefined;
+  if (input.intentRequired && !input.intent!.met) return { status: "fail", discounted: false, leaned_on_made_up: madeUpBeforeIntent };
+  const leaned = input.expectations.some(e => e.tainted) || madeUpBeforeIntent;
+  return { status: "pass", discounted: leaned, leaned_on_made_up: leaned };
 }
 
 export interface MomentVerdict {

@@ -59,5 +59,6 @@ process.stdout.write(JSON.stringify({
   loadout: { identities },
   answers,
   read_only: { fx: ["read_file", "grep_files", "glob_files", "read_tool_result"] },
+  in_box: { fx: ["read_file", "write_file", "edit_file", "grep_files", "glob_files"] },
   files: [...files].sort(),
 }) + "\n");

@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, copyFileSync, cpSync, openSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, openSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
@@ -22,16 +22,26 @@ copyFileSync("/phoenix/moment/loadout.json", join(home, "loadout.json"));
 
 const cwd = box.directory;
 mkdirSync(cwd, { recursive: true });
-cpSync("/worktree", cwd, { recursive: true, filter: path => path !== patch });
+const copy = (from, to) => {
+  for (const entry of readdirSync(from, { withFileTypes: true })) {
+    const path = join(from, entry.name);
+    if (path === patch) continue;
+    if (entry.isDirectory()) { mkdirSync(join(to, entry.name), { recursive: true }); copy(path, join(to, entry.name)); }
+    else writeFileSync(join(to, entry.name), readFileSync(path));
+  }
+};
+copy("/worktree", cwd);
 const git = (...args) => spawnSync("git", args, { cwd, stdio: "ignore" });
 git("init", "-q"); git("add", "-A"); git("commit", "-q", "--allow-empty", "-m", "harness");
 
 let opencode = ["opencode"];
-if (existsSync(patch)) {
-  const applied = spawnSync("git", ["apply", patch], { cwd: source, encoding: "utf8" });
-  if (applied.status !== 0) { process.stderr.write("opencode.patch does not apply to OpenCode 1.19.5: " + applied.stderr); process.exit(1); }
+const patches = [...(process.env.PHOENIX_PROJECT ? [["stand-in.patch", "/phoenix/recipe/stand-in.patch"]] : []), ...(existsSync(patch) ? [["opencode.patch", patch]] : [])];
+for (const [name, file] of patches) {
+  const applied = spawnSync("git", ["apply", file], { cwd: source, encoding: "utf8" });
+  if (applied.status !== 0) { process.stderr.write(name + " does not apply to OpenCode 1.19.5: " + applied.stderr); process.exit(1); }
   opencode = ["bun", "run", "--conditions=browser", join(source, "packages/opencode/src/index.ts")];
 }
+if (process.env.PHOENIX_PROJECT) writeFileSync(join(home, "config/opencode/opencode.json"), JSON.stringify({ permission: { external_directory: "allow" } }));
 const run = (args, options = {}) => spawnSync(opencode[0], [...opencode.slice(1), ...args], { cwd, env, encoding: "utf8", maxBuffer: 1 << 30, ...options });
 
 const lines = readFileSync("/phoenix/moment/cut.jsonl", "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));

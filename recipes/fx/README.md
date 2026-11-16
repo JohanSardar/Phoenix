@@ -4,7 +4,7 @@ This recipe covers the native `vercel-labs/fx` ACP agent, not the JSON viewer of
 
 ## Put fx back in a moment
 
-This works on any saved fx session, with nothing from Phoenix attached when it was recorded. Phoenix copies the session, cuts it just before a user turn, and resumes fx from the cut inside the sealed box. fx talks straight to its own LLM. Phoenix answers every tool call, from the session's own tool results first, and stops the replay on a call it can't answer.
+This works on any saved fx session, with nothing from Phoenix attached when it was recorded. Phoenix copies the session, cuts it just before a user turn, and resumes fx from the cut inside the sealed box. fx talks straight to its own LLM. Phoenix answers every tool call, from the session's own tool results first. A `read_file`, `write_file`, `edit_file`, `grep_files` or `glob_files` call the session never made runs for real in the box, on the copy of the project's files. Any other new call gets a made-up answer, labeled in the result.
 
 Build the box image once and put its id in the Workbench settings as `image`, with this recipe as `recipe`:
 
@@ -22,7 +22,7 @@ phoenix moment create --session ~/.fx/sessions/v2/SESSION_ID/log.jsonl \
   --recipe recipes/fx/recipe.yaml --at LINE --id ID --check check.yaml OUT
 ```
 
-Phoenix also copies the session's `blobs/` folder, which holds the full tool outputs, with secrets stripped. Blobs it can't scan, such as fx's binary command replays, are left out. A tool call whose full output was left out gets no answer, so a replay that makes that call again stops there. The original session is never changed.
+Phoenix also copies the session's `blobs/` folder, which holds the full tool outputs, with secrets stripped. Blobs it can't scan, such as fx's binary command replays, are left out. A tool call whose full output was left out has no session answer, so a replay that makes that call again gets it answered like a new call. The original session is never changed.
 
 The harness is a folder with `run: { resume: {} }` in its `phoenix.harness.yaml`. Three files in it change how fx acts:
 
@@ -109,6 +109,8 @@ Only the installed Codex subscription was available for real provider proof; the
 Build `Dockerfile` on top of a prepared Phoenix sandbox image and resolve the resulting image to its digest before giving it to runner. It includes the checksum-verified Linux fx release, not the Mac binary, credentials, sessions or a model account. `recipe.yaml`'s image name is a build target, not a mutable image passed to runner.
 
 Wire MCP/CLI evidence can replay those connectors. The current generic runner rewrites only `mcpServers` JSON configurations, so use that explicit config format when recording a run intended for echo. Live capture also accepts fx's canonical `mcp` command arrays, but the runner cannot directly rewrite that native format; it reports a setup failure rather than silently changing the evidence.
+
+Merged with a gap (JOH-55, JOH-61): made-up answers were last seen working on the code that became commit ba9d924f, not re-run on the final code. The simulator LLM they use, on OpenCode Go, was out of balance. No other LLM route on the Mac worked for it: DeepSeek was out of balance, the Zen and Kimi keys were expired or invalid, and ChatGPT's backend accepts only streamed replies, which the simulator doesn't send.
 
 Session evidence alone cannot supply missing provider requests, a complete system prompt, tool definitions, MCP envelopes or CLI frame bytes. Setup must explicitly derive/fill missing evidence, with its provenance. A pinned-subscription capture without model wire is **not a full frozen-prefix echo**; runner must report drift or incompleteness rather than a fabricated passing echo. Keep its fidelity report with the coverage report. Static fx clock coverage is real/unknown even when the Node probe is virtual; the recipe does not claim full clock virtualization.
 

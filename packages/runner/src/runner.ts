@@ -52,6 +52,18 @@ async function sampleTrace(root: string): Promise<{ events: TraceEvent[]; body(e
   } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return { events: [], body, blobs: {} }; throw error; }
 }
 
+function answerSources(trace: readonly TraceEvent[]): NonNullable<Sample["answers"]> {
+  const results = trace.filter(e => e.kind === "result" && e.stream.startsWith("stand-in"));
+  const madeUp = results.filter(e => e.provenance === "synthesized");
+  return {
+    session: results.filter(e => e.resolver === "recorded").length,
+    files_copy: results.filter(e => e.resolver === "files-copy").length,
+    working_copy: results.filter(e => e.resolver === "overlay" || e.resolver === "emulator").length,
+    made_up: madeUp.length,
+    made_up_calls: madeUp.map(e => ({ connector: e.connector ?? "", op: e.op ?? "" })),
+  };
+}
+
 export class Runner {
   readonly #options: RunnerOptions;
 
@@ -177,6 +189,8 @@ export class Runner {
       const result: ReplayResult = {
         phoenix_result: 1, plan: id, check: plan.check, ledger_entry: approval, start: plan.start, prefix_edits: [...edits].sort().map(field => ({ field })),
         samples: status.samples.map(({ complete: _, ...sample }) => sample), tiebreak_ran: status.samples.some(s => s.tiebreak),
+        leaned_on_made_up: status.samples.some(s => s.status !== "unassessed" && s.leaned_on_made_up),
+        ...(bundle.manifest.resume?.project ? { files_copy: { source: bundle.manifest.resume.project.source, ...(bundle.manifest.resume.project.commit ? { commit: bundle.manifest.resume.project.commit } : {}), taken_at: bundle.manifest.resume.project.taken_at, left_out: bundle.manifest.resume.project.left_out?.length ?? 0 } } : {}),
         verdict: verdict.verdict, discount: verdict.discount, ...(verdict.meets_check !== undefined ? { meets_check: verdict.meets_check } : {}),
         ...(grades.length ? { fidelity_grade: weakestTier(...grades) } : {}),
       };
@@ -251,8 +265,10 @@ export class Runner {
     const states = new Map<string, unknown>();
     let outcome: { kind: "finished"; code: number | null } | { kind: "interrupted"; why: string } | { kind: "diverged"; trigger: string; detail: string };
     try {
+      const simulation = plan.start !== "echo" && plan.runner.simulator;
+      const simulator = simulation ? createSimulator({ moment: plan.bundle, root: join(this.#options.root, "simulator"), configuration: { ...simulation.config, model: simulation.model.id }, headers: modelHeaders(simulation.headers), improverModel: simulation.improverModel, attempts: simulation.config.attempts, outputSchemas: simulation.config.outputSchemas }) : undefined;
       if (plan.runner.recipe) {
-        outcome = await resumeAttempt({ id, directory, root, plan, bundle, sandbox, hmacKey, capture: `${id.slice(7)}-${sample.sample}-${attempt.attempt}`, started: async container => { attempt.container = container; await persist(); } });
+        outcome = await resumeAttempt({ id, directory, root, plan, bundle, sandbox, hmacKey, capture: `${id.slice(7)}-${sample.sample}-${attempt.attempt}`, ...(simulator ? { simulator } : {}), started: async container => { attempt.container = container; await persist(); } });
       } else {
       const endpoints = plan.runner.harness.endpoints, model = plan.runner.model;
       if (!endpoints || !model) throw new Error("This harness names no model endpoint to replay against");
@@ -260,8 +276,6 @@ export class Runner {
       const dialect = resolveModelDialect(endpoints.model.dialect);
       if (!dialect) throw new Error(`Unsupported model dialect: ${endpoints.model.dialect}`);
       const headers = modelHeaders(plan.start === "echo" ? undefined : model.headers);
-      const simulation = plan.start !== "echo" && plan.runner.simulator;
-      const simulator = simulation ? createSimulator({ moment: plan.bundle, root: join(this.#options.root, "simulator"), configuration: { ...simulation.config, model: simulation.model.id }, headers: modelHeaders(simulation.headers), improverModel: simulation.improverModel, attempts: simulation.config.attempts, outputSchemas: simulation.config.outputSchemas }) : undefined;
       const start = plan.start === "mark" ? { at: bundle.manifest.mark! } : plan.start;
       const emulators: NonNullable<EngineOptions["emulators"]>[number][] = [];
       for (const [index, plugin] of plan.runner.plugins.entries()) {
@@ -339,7 +353,7 @@ export class Runner {
       const prior = priors.find(prior => prior?.expectations.some(e => e.outcome === "fail" && e.irreversible && !e.tainted));
       if (prior) {
         attempt.status = "finished";
-        sample.status = "fail"; sample.discounted = false; sample.complete = true; sample.expectations = prior.expectations;
+        sample.status = "fail"; sample.discounted = false; sample.leaned_on_made_up = false; sample.complete = true; sample.expectations = prior.expectations;
         await persist();
         return;
       }
@@ -353,7 +367,9 @@ export class Runner {
       sample.complete = true;
       sample.status = verdict.status;
       sample.discounted = verdict.discounted;
+      sample.leaned_on_made_up = verdict.leaned_on_made_up;
       sample.expectations = assessed.expectations;
+      if (plan.runner.recipe) sample.answers = answerSources(trace);
       if (outcome.kind === "finished" && outcome.code !== 0) { sample.status = "fail"; attempt.cause = `candidate exited ${outcome.code}`; }
       if (plan.start === "echo" && outcome.kind === "diverged") await save(echoDriftPath(this.#options.root, plan.base_tree, plan.login_context), { result: id, cause: outcome.detail });
     }
