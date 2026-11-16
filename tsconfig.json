@@ -23,6 +23,7 @@
     "packages/*/scripts",
     "reference-harness/src",
     "plugins/*/src",
+    "recipes/*/*.ts",
     "scripts"
   ]
 }
