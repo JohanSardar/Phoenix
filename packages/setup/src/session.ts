@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, stat, statfs, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { text } from "node:stream/consumers";
 import { promisify } from "node:util";
 import type { MomentManifest, RecipeDescriptor, TraceEvent } from "@phoenix/formats";
@@ -36,8 +36,10 @@ type ProjectCopy = Omit<NonNullable<NonNullable<MomentManifest["resume"]>["proje
 
 const PART_LIMIT = 1536 * 1024 * 1024;
 const LIMITS = { git: { bytes: 1024 ** 3, files: 50_000 }, today: { bytes: 200 * 1024 ** 2, files: 10_000 } };
-const SYSTEM_EXACT = ["/", "/Users", "/home", "/root", "/var", "/private", "/private/var", "/tmp", "/private/tmp", "/opt", "/Volumes"];
-const SYSTEM_TREES = ["/System", "/Library", "/Applications", "/usr", "/bin", "/sbin", "/etc", "/private/etc", "/dev", "/cores", "/proc", "/sys", "/boot"];
+const SYSTEM_EXACT = ["/", "/Users", "/home", "/root", "/var", "/private", "/private/var", "/tmp", "/private/tmp", "/opt", "/Volumes", "/var/folders", "/private/var/folders", "/var/tmp", "/private/var/tmp"];
+const SYSTEM_TREES = ["/System", "/Library", "/Applications", "/usr", "/bin", "/sbin", "/etc", "/private/etc", "/var", "/private/var", "/dev", "/cores", "/proc", "/sys", "/boot"];
+const TEMPORARY = ["/var/folders", "/private/var/folders", "/var/tmp", "/private/var/tmp"];
+const SETTINGS = [".ssh", ".gnupg", ".aws", ".azure", ".gcloud", ".config", ".docker", ".kube", ".password-store", ".pki", ".local", ".cache", ".npm", "Keychains"];
 const size = (bytes: number) => bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${Math.ceil(bytes / 1024 ** 2)} MB`;
 
 async function notCopied(folder: string): Promise<string | undefined> {
@@ -45,14 +47,18 @@ async function notCopied(folder: string): Promise<string | undefined> {
   for (const root of new Set([folder, await realpath(folder)])) {
     if (homes.includes(root)) return "the session ran in the home folder";
     if (root === "/" || homes.some(home => home.startsWith(`${root}/`))) return "the session ran in a folder that contains the home folder";
-    if (SYSTEM_EXACT.includes(root) || SYSTEM_TREES.some(tree => root === tree || root.startsWith(`${tree}/`))) return "the session ran in a system folder";
+    const within = (tree: string) => root === tree || root.startsWith(`${tree}/`);
+    if (SYSTEM_EXACT.includes(root) || (SYSTEM_TREES.some(within) && !TEMPORARY.some(within))) return "the session ran in a system folder";
+    if (root.split("/").some(part => SETTINGS.includes(part)) || homes.some(home => within(join(home, "Library")) || (dirname(root) === home && basename(root).startsWith("."))))
+      return "the session ran in a login or settings folder";
   }
   return undefined;
 }
 
 async function checkRoom(bytes: number, places: readonly string[]): Promise<void> {
   const needed = bytes * 3 + 512 * 1024 ** 2;
-  for (const place of places) {
+  for (let place of places) {
+    while (!(await stat(place).catch(() => undefined))) place = dirname(place);
     const disk = await statfs(place);
     if (disk.bavail * disk.bsize < needed) throw new Error(`Not enough disk space to copy the project's files: making the copy needs about ${size(needed)}, and ${place} has ${size(disk.bavail * disk.bsize)} free`);
   }
