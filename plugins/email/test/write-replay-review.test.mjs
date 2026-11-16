@@ -37,14 +37,21 @@ async function copyOf(t, events) {
   t.after(async () => { const exited = once(child, "close"); child.stdin.end(); await exited; await rm(root, { recursive: true, force: true }); });
   const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
   let id = 0;
-  const request = async (method, params) => {
+  const exchange = async (method, params) => {
     child.stdin.write(JSON.stringify({ phoenix_plugin: 1, id: ++id, method, params }) + "\n");
-    const reply = JSON.parse((await lines.next()).value);
+    return JSON.parse((await lines.next()).value);
+  };
+  const request = async (method, params) => {
+    const reply = await exchange(method, params);
     assert.equal(reply.status, "answer", JSON.stringify(reply));
     return reply.value;
   };
   await request("initialize", { snapshot });
   return {
+    response: async argv => {
+      const args = { argv, cwd: root, env: {}, terminals: { stdin: null, stdout: null, stderr: null } };
+      return exchange("call", { surface: "cli", layer: "agent", op: "himalaya", args, now, raw: { body: b64(args), stdin: b64("") } });
+    },
     cli: async (argv, stdin = "") => {
       const args = { argv, cwd: root, env: {}, terminals: { stdin: null, stdout: null, stderr: null } };
       const value = await request("call", { surface: "cli", layer: "agent", op: "himalaya", args, now, raw: { body: b64(args), stdin: b64(stdin) } });
@@ -149,4 +156,63 @@ test("S28: writes observed after an explicit snapshot cut must not be applied", 
     himalaya_output: [{ argv: ["himalaya", "message", "send"], stdin: raw("Future", "Future body."), stdout: "Message successfully sent!\n", code: 0, at: "2026-11-16T20:33:50Z" }],
   });
   assert.deepEqual(JSON.parse(await copy.cli(list(sent))), []);
+});
+
+test("S29: claiming a provisional send must reject a contradictory known body", async t => {
+  const id = ((BigInt(Date.parse("2026-11-16T20:33:50Z")) << 20n) | 1n).toString(16);
+  const message = { id, threadId: id, labelIds: ["SENT"], internalDate: String(Date.parse("2026-11-16T20:33:50Z")), sender: me, toRecipients: ["ana@example.com"], subject: "[phoenix-test] t57 Claim", plaintextBody: "Different observed body.", viewUrl: "https://mail.google.com/mail/?authuser=" + me };
+  const copy = await copyOf(t, [
+    ...cliEvents([{ argv: ["himalaya", "message", "send"], stdin: raw("Claim", "Original sent body."), stdout: "Message successfully sent!\n" }]),
+    ...mcpEvents("get_message", { messageId: id, messageFormat: "FULL_CONTENT" }, message, "2026-11-16T20:33:55Z"),
+  ]);
+  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 2);
+});
+
+test("S30: a captured JSON read of the same Message-ID must not duplicate a replayed send", async t => {
+  const source = await copyOf(t, { account: { email: me } });
+  const message = raw("Direct", "Read the same mail.");
+  await source.cli(["himalaya", "message", "send"], message);
+  const read = ["himalaya", "message", "read", "--preview", "-f", sent, "-o", "json", ...["From", "To", "Subject", "Date", "Message-ID"].flatMap(name => ["-H", name]), "1"];
+  const output = await source.cli(read);
+  assert.match(JSON.parse(output), /message-id:\s*<write-review-Direct@example\.com>/i);
+  const copy = await copyOf(t, cliEvents([
+    { argv: ["himalaya", "message", "send"], stdin: message, stdout: "Message successfully sent!\n" },
+    { argv: read, stdout: output },
+  ]));
+  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 1);
+});
+
+test("S25b: a metadata observation before full content must still claim a replayed send", async t => {
+  const id = ((BigInt(Date.parse("2026-11-16T20:33:40Z")) << 20n) | 1n).toString(16);
+  const metadata = { id, threadId: id, labelIds: ["SENT"], internalDate: String(Date.parse("2026-11-16T20:33:40Z")), sender: me, toRecipients: ["ana@example.com"], viewUrl: "https://mail.google.com/mail/?authuser=" + me };
+  const message = { ...metadata, subject: "[phoenix-test] t57 Once", plaintextBody: "Send once." };
+  const copy = await copyOf(t, [
+    ...cliEvents([{ argv: ["himalaya", "message", "send"], stdin: raw("Once", "Send once."), stdout: "Message successfully sent!\n" }]),
+    ...mcpEvents("get_message", { messageId: id, messageFormat: "METADATA_ONLY" }, metadata, "2026-11-16T20:33:45Z"),
+    ...mcpEvents("get_thread", { threadId: id, messageFormat: "FULL_CONTENT" }, { id, messageCount: 1, messages: [message] }, "2026-11-16T20:33:50Z"),
+  ]);
+  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 1);
+});
+
+test("S31: ambiguous envelope matches must not answer with extra mail", async t => {
+  const source = await copyOf(t, cliEvents([{ argv: list(sent), stdout: [envelope("100", "[phoenix-test] unrelated")] }]));
+  const a = raw("A", "Synthetic body A.").replace("Subject: [phoenix-test] t57 A", "Subject: [phoenix-test] t57 Same");
+  const b = raw("B", "Synthetic body B.").replace("Subject: [phoenix-test] t57 B", "Subject: [phoenix-test] t57 Same").replace("20:34:00", "20:34:30");
+  await source.cli(["himalaya", "message", "send"], a);
+  await source.cli(["himalaya", "message", "send"], b);
+  const argv = [...list(sent), "subject", "t57"];
+  const real = JSON.parse(await source.cli(argv));
+  assert.equal(real.length, 2);
+  const copy = await copyOf(t, cliEvents([
+    { argv: ["himalaya", "message", "send"], stdin: a, stdout: "Message successfully sent!\n" },
+    { argv: ["himalaya", "message", "send"], stdin: b, stdout: "Message successfully sent!\n" },
+    { argv, stdout: real },
+  ]));
+  const response = await copy.response(argv);
+  if (response.status === "unsupported") return;
+  assert.equal(response.status, "answer", JSON.stringify(response));
+  const frames = JSON.parse(Buffer.from(response.value.body, "base64").toString());
+  assert.equal(JSON.parse(Buffer.from(frames.find(frame => frame.stream === 3).bytes, "base64").toString()).code, 0);
+  const stdout = frames.filter(frame => frame.stream === 1).map(frame => Buffer.from(frame.bytes, "base64").toString()).join("");
+  assert.equal(JSON.parse(stdout).length, real.length);
 });

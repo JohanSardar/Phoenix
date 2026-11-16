@@ -87,6 +87,7 @@ function envelopes(box, folder, list, newestFirst) {
       return sender === e.from?.addr && (!e.to?.addr || to.includes(e.to.addr));
     });
     let m = byRealUid(box, folder, uid) ?? (alike.length === 1 ? alike[0] : undefined);
+    if (!m && alike.length > 1) continue;
     if (m) {
       realUid(box, m, folder, uid);
       if (m.minute !== undefined && minute >= m.minute && Math.floor(Number(m.internalDate) / 60000) === Math.floor(ms / 60000)) Object.assign(m, { internalDate: String(ms), minute });
@@ -119,7 +120,9 @@ function read(box, folder, uid, text) {
   const from = addresses(get("from") ?? "")[0];
   const date = get("date");
   const ms = dateMs(date) ?? (date ? Date.parse(date) : undefined);
-  let m = byRealUid(box, folder, uid);
+  const stableId = get("message-id");
+  let m = byRealUid(box, folder, uid) ?? (stableId ? [...box.messages.values()].find(o => o.raw && header(splitHead(o.raw).headers, "message-id") === stableId) : undefined);
+  if (m && !m.realUids?.has(folder)) realUid(box, m, folder, uid);
   if (!m) {
     if (!folderLabel(box, folder).known) return;
     const id = box.newId(ms ?? box.nowMs ?? 0);

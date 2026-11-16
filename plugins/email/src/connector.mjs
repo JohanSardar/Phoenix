@@ -338,16 +338,27 @@ export class Connector {
 
   // Mail the copy made by running a past himalaya send again is the same message a later connector
   // answer shows under Gmail's id; it takes that id when exactly one such message matches.
+  // A message first seen only as metadata is a placeholder, and the replayed send can still become it.
   claim(fields) {
-    if (!fields?.id || this.box.messages.has(fields.id)) return;
+    if (!fields?.id) return;
+    const known = this.box.messages.get(fields.id);
+    if (known && (known.provisional || known.know?.has("body") || known.know?.has("raw"))) return;
     const to = [...(fields.toRecipients ?? [])].sort().join(","), at = Number(fields.internalDate);
+    const text = s => s === undefined ? undefined : String(s).replace(/\r\n/g, "\n").trim();
     const found = [...this.box.messages.values()].filter(m => m.provisional && m.fields.subject === fields.subject && m.fields.sender === fields.sender
-      && [...(m.fields.toRecipients ?? [])].sort().join(",") === to && (!Number.isFinite(at) || Math.abs(Number(m.internalDate) - at) < 120000));
+      && (fields.toRecipients === undefined || [...(m.fields.toRecipients ?? [])].sort().join(",") === to) && (!Number.isFinite(at) || Math.abs(Number(m.internalDate) - at) < 120000)
+      && (text(fields.plaintextBody) === undefined || text(m.fields.plaintextBody) === undefined || text(fields.plaintextBody) === text(m.fields.plaintextBody)));
     if (found.length !== 1) return;
     const m = found[0];
     delete m.provisional;
+    if (known) {
+      for (const [folder, uid] of Object.entries(known.uids ?? {})) if (known.realUids?.has(folder)) { m.uids[folder] = uid; (m.realUids ??= new Set()).add(folder); }
+      const counts = this.box.threadCounts;
+      if (counts.has(known.threadId) && !known.labelIds.includes("DRAFT")) counts.set(known.threadId, counts.get(known.threadId) - 1);
+      this.box.messages.delete(known.id);
+    }
     this.adopt(m.id, fields.id);
-    this.rethread(m, fields.threadId);
+    this.rethread(m, fields.threadId ?? known?.threadId);
   }
 
   // Learns the mailbox from one recorded connector answer.
