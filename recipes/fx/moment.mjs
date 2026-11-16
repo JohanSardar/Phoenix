@@ -30,7 +30,9 @@ if (!prefs?.provider || !prefs.model) throw new Error("The session names no prov
 const blobs = values.files && existsSync(join(values.files, "blobs")) ? join(values.files, "blobs") : undefined;
 const output = result => {
   const hash = /^result-([0-9a-f]{64})\.txt$/.exec(result.artifact_ref ?? "")?.[1];
-  return hash && blobs && existsSync(join(blobs, hash)) ? readFileSync(join(blobs, hash), "utf8") : result.preview ?? "";
+  if (hash && blobs && existsSync(join(blobs, hash))) return readFileSync(join(blobs, hash), "utf8");
+  const preview = result.preview ?? "";
+  return hash && !(Buffer.byteLength(preview) >= result.stored_bytes) ? undefined : preview;
 };
 const route = name => identities[name] ? { connector: identities[name].server, op: identities[name].tool } : { connector: "fx", op: name };
 const calls = new Map();
@@ -41,9 +43,11 @@ for (const { line, record } of records) {
   if (record.type !== "tool_result") continue;
   const call = calls.get(record.data.call_id);
   if (!call) continue;
+  const text = output(record.data);
+  if (text === undefined) continue;
   let args;
   try { args = JSON.parse(call.arguments_json); } catch { args = { arguments_json: call.arguments_json }; }
-  answers.push({ id: record.data.call_id, line, tool: call.tool_name, ...route(call.tool_name), args, result: { content: [{ type: "text", text: output(record.data) }], isError: record.data.status !== "success" }, observed_at: new Date(record.ts).toISOString(), before_cut: line < start.line });
+  answers.push({ id: record.data.call_id, line, tool: call.tool_name, ...route(call.tool_name), args, result: { content: [{ type: "text", text }], isError: record.data.status !== "success" }, observed_at: new Date(record.ts).toISOString(), before_cut: line < start.line });
 }
 
 const files = new Set();
