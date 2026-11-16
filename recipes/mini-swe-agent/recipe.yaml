@@ -22,6 +22,6 @@ resume:
     opencode-go: [opencode.ai]
 limitations:
   - "mini-swe-agent has no resume, so every replay starts at the first message with the moment's prompt."
-  - "Its one tool is bash. Phoenix answers every command, except mini-swe-agent's own finish command, which runs in the box."
+  - "Its one tool is bash. Phoenix answers every command, except mini-swe-agent's own finish command, which ends the run without a shell; anything after it in the same command is not run."
   - "The LLM must speak the OpenAI chat API; only OpenCode Go (opencode.ai) is wired up."
   - "There is no live session file to cut: moments for it are made up."

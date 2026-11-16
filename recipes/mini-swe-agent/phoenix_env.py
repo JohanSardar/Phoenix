@@ -1,6 +1,6 @@
 """mini-swe-agent environment for a Phoenix replay: Phoenix answers every bash command.
 
-mini-swe-agent's own finish command runs in the box, because it is how the agent says it is done, not a call to the world.
+mini-swe-agent's own finish command ends the run here without a shell, and anything after it is not run, because it is how the agent says it is done, not a call to the world.
 """
 import json
 import os
@@ -19,7 +19,7 @@ class PhoenixEnvironment(LocalEnvironment):
     def execute(self, action: dict, cwd: str = "", *, timeout: int | None = None) -> dict:
         command = action.get("command", "")
         if command.strip().startswith(FINISH):
-            return super().execute(action, cwd, timeout=timeout)
+            self._check_finished({"output": "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n", "returncode": 0, "exception_info": ""})
         PhoenixEnvironment.calls += 1
         body = json.dumps({"jsonrpc": "2.0", "id": PhoenixEnvironment.calls, "method": "tools/call", "params": {"name": BASH["op"], "arguments": {"command": command}}}).encode()
         request = urllib.request.Request(f"{os.environ['PHOENIX_TOOLS_URL']}/{BASH['connector']}", data=body, headers={"content-type": "application/json"})
