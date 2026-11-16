@@ -46,10 +46,10 @@ The serve command refuses a snapshot from another Postgres major version. The im
 
 ## Tests
 
-The tests in `test/` start Supabase's own Postgres, so they run only inside the plugin image. On a plain checkout they are skipped, and the run prints why. Build the image as above, then run them in it with the plugin folder mounted:
+The tests in `test/` start Supabase's own Postgres, so they run only inside the plugin image. On a plain checkout they are skipped, and the run prints why. Build the image as above, then run them in it from the repository root. Mount the whole checkout, because the plugin's installed packages link to the repository's `node_modules`:
 
 ```sh
-docker run --rm -v "$PWD/plugins/supabase:/plugin" -w /plugin phoenix-supabase:17 node --test test/
+docker run --rm -v "$PWD:/repo:ro" -w /repo/plugins/supabase phoenix-supabase:17 node --test "test/*.test.mjs"
 ```
 
 ## Read-only tools
