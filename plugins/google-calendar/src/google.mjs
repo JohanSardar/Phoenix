@@ -387,7 +387,9 @@ export class Copy {
     }
     if (next.start && next.end && this.endMs(next, cal) < this.startMs(next, cal)) return apiError(400, "timeRangeEmpty", "The specified time range is empty.");
     const instances = [...cal.events.values()].filter(other => other.recurringEventId === id);
-    if (next.recurrence && timeChanged && instances.some(other => cal.overridden.get(other.id)?.size || JSON.stringify(other.start) !== JSON.stringify(other.originalStartTime))) this.gap(`the copy does not know how moving series ${id} changes its changed occurrences`);
+    const own = new Set(["kind", "etag", "id", "htmlLink", "created", "updated", "sequence", "start", "end", "recurringEventId", "originalStartTime", "recurrence"]);
+    const changedOccurrence = other => cal.overridden.get(other.id)?.size || JSON.stringify(other.start) !== JSON.stringify(other.originalStartTime) || Object.keys({ ...current, ...other }).some(key => !own.has(key) && JSON.stringify(other[key]) !== JSON.stringify(current[key]));
+    if (next.recurrence && timeChanged && instances.some(changedOccurrence)) this.gap(`the copy does not know how moving series ${id} changes its changed occurrences`);
     this.forgetBusy(cal, current, next);
     const { updated, etag } = this.stamp();
     next.updated = updated; next.etag = etag;
