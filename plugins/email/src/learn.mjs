@@ -23,7 +23,8 @@ function command(argv, aliases = {}) {
   }
   const value = (...names) => names.flatMap(n => options[n] ?? []).at(-1);
   const folder = value("-f", "--folder") ?? "INBOX";
-  const sorted = words.some((w, i) => w === "order" && words[i + 1] === "by" && !CONDITIONS.has(words[i - 1]));
+  let sorted = false;
+  for (let i = 2; i < words.length && !sorted; i += CONDITIONS.has(words[i]) ? 2 : 1) sorted = words[i] === "order" && words[i + 1] === "by";
   return { words, folder: aliases[folder.toLowerCase()] ?? folder, json: value("-o", "--output") === "json", newestFirst: !sorted };
 }
 

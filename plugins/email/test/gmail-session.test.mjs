@@ -102,3 +102,15 @@ test("S16: the search word order is not an order-by clause", async t => {
   const copy = await copyOf(t, [[query, envelopes]]);
   assert.deepEqual(JSON.parse(await copy(query)).map(e => e.id), envelopes.map(e => e.id));
 });
+
+test("S17: an order-by clause after a condition-word search value remains a sort", async t => {
+  const all = ["himalaya", "envelope", "list", "-o", "json"];
+  const source = await copyOf(t, [[all, [
+    envelope("68497", "[phoenix-test] date new"), envelope("68496", "[phoenix-test] date old"),
+  ]]]);
+  const query = [...all, "subject", "date", "order", "by", "date", "asc"];
+  const envelopes = JSON.parse(await source(query));
+  assert.equal(envelopes.length, 2);
+  const copy = await copyOf(t, [[query, envelopes]]);
+  assert.deepEqual(JSON.parse(await copy(query)).map(e => e.id), envelopes.map(e => e.id));
+});
