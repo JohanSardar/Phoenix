@@ -1,17 +1,23 @@
 phoenix_recipe: 1
 name: codex
 harness_versions: ["0.169.0"]
-login_modes: [api-key, chatgpt, custom-api-key, custom-oauth, command-auth, local, bedrock, vertex]
+login_modes: [api-key, chatgpt, chatgpt-custom-provider, custom-api-key, custom-oauth, command-auth, local, bedrock, vertex]
 routes:
   - versions: "0.169.0"
     login_mode: api-key
-    surfaces: &http
-      model: [gateway, transcript]
+    surfaces: &native
+      model: [transcript]
       mcp: [mcp-proxy, transcript]
       cli: [cli-proxy, transcript]
   - versions: "0.169.0"
     login_mode: chatgpt
-    surfaces: *http
+    surfaces: *native
+  - versions: "0.169.0"
+    login_mode: chatgpt-custom-provider
+    surfaces: &http
+      model: [gateway, transcript]
+      mcp: [mcp-proxy, transcript]
+      cli: [cli-proxy, transcript]
   - versions: "0.169.0"
     login_mode: custom-api-key
     surfaces: *http
@@ -26,15 +32,12 @@ routes:
     surfaces: *http
   - versions: "0.169.0"
     login_mode: bedrock
-    surfaces: &native
-      model: [transcript]
-      mcp: [mcp-proxy, transcript]
-      cli: [cli-proxy, transcript]
+    surfaces: *native
   - versions: "0.169.0"
     login_mode: vertex
     surfaces: *native
 model:
-  setting: model_providers.<active-provider>.base_url (openai_base_url for built-in openai)
+  setting: model_providers.<active-custom-provider>.base_url
   dialect: openai-responses
 mcp:
   file: ~/.codex/config.toml
@@ -44,13 +47,17 @@ transcript_reader:
   command: [node, transcript-reader.ts]
   harness_versions: ["0.169.0"]
 clock:
-  probe: [codex, --version]
+  probe: [node, clock-probe.ts]
 copy_ignored: false
 launcher: [node, capture.ts]
 limitations:
-  - Gateway is explicit HTTP/SSE capture; it disables WebSockets only for the active provider and never changes its authentication or billing route
+  - Gateway is explicit HTTP/SSE capture for an already selected custom provider; built-in OpenAI ignores the WebSocket disable override and falls back to transcripts
+  - No authentication or billing route is changed; a failed explicit route is refused instead of silently replaced
+  - Project-local .codex/config.toml layers require transcript capture or explicit import; live model and MCP routing are refused
+  - Command-line config/profile/cwd overrides are refused; use the recipe's --cwd to choose the snapshotted task directory
   - Remote MCP URLs are rewritten only with --reverse-mcp naming servers whose authorization remains valid at a loopback URL
   - Remote OAuth, ChatGPT-bound MCP, managed restrictions, native Bedrock signing and Vertex credentials fall back to transcripts
   - Transcripts are model-visible items, not HTTP exchanges, complete tool catalogs, MCP protocol envelopes, raw CLI streams or filesystem side effects
+  - Model responses ending before transport EOF remain partial even if response.completed was observed
   - Absolute commands, shell builtins, reset shell PATH, dynamic/plugin MCP servers and direct HTTP calls can bypass live capture
   - Static Linux builds may use the real clock; clock coverage is informational, not a fidelity penalty
