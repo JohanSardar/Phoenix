@@ -170,6 +170,15 @@ Credentials stay outside the image; use placeholders inside. Preserve the
 original Pi config/system loadout, and report any prefix edits, missing fills,
 or transcript limitations from `fidelity.json`, not merely the check verdict.
 
+The observed Codex OAuth capture completed the task, but its three model
+responses were marked partial: Pi stops at `response.completed` and cancels
+the SSE reader before HTTP EOF. All three retained bodies contain that terminal
+event. Current Phoenix exchange reconstruction excludes those partial results,
+so runner echo blocks with `prefix-drift`: `model request POST /codex/responses
+where the recording has ls on ls`. This is not a successful echo; the native
+transcript import is complete, but it cannot supply the missing wire completion.
+Do not clear partial flags or copy real login state into the sandbox to hide it.
+
 References: the installed Pi docs `models-configuration.md`, `providers.md`,
 `mcp.md`, `rpc.md`, `session-format.md`, and `message-types.md`; upstream
 [configuration](https://pi.dev/docs/latest/models-configuration),

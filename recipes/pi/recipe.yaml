@@ -42,6 +42,7 @@ copy_ignored: false
 limitations:
   - "Gateway is opt-in for one explicit provider/model and an unchanged upstream; no provider or billing-route substitution."
   - "Codex OAuth honors baseUrl; gateway capture selects Pi's supported SSE transport, not WebSocket."
+  - "The observed Codex SSE client cancels after response.completed; HTTP capture results remain partial and current runner echo blocks. Transcript import still works; never clear partial flags."
   - "Copilot OAuth replaces model URLs with token-bound endpoints: use transcript, not gateway."
   - "Radius catalog auth, ambient Bedrock/Vertex/federation, and arbitrary extension transports use transcript unless independently verified."
   - "Only stdio MCP can use the shipped Phoenix launcher proxy. Remote MCP stays on its original URL and uses transcript; no OAuth resource or CA changes."
