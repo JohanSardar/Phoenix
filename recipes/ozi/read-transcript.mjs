@@ -39,21 +39,23 @@ function record(bytes) {
   let value;
   try { value = JSON.parse(match[3]); } catch { unread("invalid JSON", match[2]); return; }
   if (!value || typeof value !== "object" || Array.isArray(value)) { unread("unknown event envelope", match[2]); return; }
-  const task = typeof value.threadId === "string" ? value.threadId : thread;
+  const native = value.kind === "protocol" ? value : value.event;
+  const sourceTask = typeof value.threadId === "string" ? value.threadId : typeof native?.threadId === "string" ? native.threadId : undefined;
+  const task = sourceTask ?? thread;
   const identity = task ? { task } : {};
-  emit("meta", `ozi.${match[2].toLowerCase()}`, match[3], identity, ["ts.wall", "body.inline", ...(value.threadId === task ? ["task"] : [])]);
-  if (value.truncated === true || value.event?.truncated === true || value.event?.payload?.truncated === true) unread("Ozi retained only a bounded summary", match[2]);
+  emit("meta", `ozi.${match[2].toLowerCase()}`, match[3], identity, ["ts.wall", "body.inline", ...(sourceTask === task && task ? ["task"] : [])]);
+  if (value.truncated === true || value.event?.truncated === true || value.event?.payload?.truncated === true || native?.payload?.truncated === true || native?.payload?.payload?.truncated === true) unread("Ozi retained only a bounded summary", match[2]);
   if (Object.hasOwn(value, "version") || Object.hasOwn(value, "v")) unread("unexpected versioned event envelope", match[2]);
   if (match[2] === "NTIVE") {
-    if (value.kind !== "protocol" || !protocols.has(value.protocol) || !value.event || typeof value.event !== "object") {
+    if (native?.kind !== "protocol" || !protocols.has(native.protocol) || (!native.event && !native.payload)) {
       unread("unknown native protocol or version", match[2]); return;
     }
-    const payload = value.event.payload;
-    if (value.protocol === "claude-agent-sdk.query" && payload?.type === "query.open" && task) {
-      emit("task", "start", JSON.stringify({ provider_session: value.providerSessionId }), identity);
+    const payload = native.event?.payload ?? native.payload?.payload;
+    if (native.protocol === "claude-agent-sdk.query" && payload?.type === "query.open" && task) {
+      emit("task", "start", JSON.stringify({ provider_session: native.providerSessionId }), identity);
     }
-    if (value.protocol === "claude-agent-sdk.query" && payload?.type === "result" && task) {
-      emit("task", "end", JSON.stringify({ provider_session: value.providerSessionId }), identity);
+    if (native.protocol === "claude-agent-sdk.query" && payload?.type === "result" && task) {
+      emit("task", "end", JSON.stringify({ provider_session: native.providerSessionId }), identity);
     }
   } else if (typeof value.type !== "string") unread("unknown structured event type", match[2]);
 }
