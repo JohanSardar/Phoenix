@@ -181,7 +181,10 @@ phoenix moment create --session ~/.claude/projects/<dir>/<session>.jsonl \
   --recipe recipes/claude-code/recipe.yaml --at <line> --id <name> --check check.yaml <out>
 ```
 
-`--at` is a line of the session file. `moment.mjs` cuts before the user turn on
+`--at` is a line of the session file. Use `--from-beginning` instead to start at
+the session's first message, with its original prompt. Then nothing is resumed:
+Claude Code starts a new session in the box with the harness prompt and tools
+the session used for its first LLM request. `moment.mjs` cuts before the user turn on
 or before that line and reads, from the session file alone, what the agent had
 at that point: the LLM and effort, the harness prompt, the MCP servers and tool
 definitions offered, the files it had read, and every recorded tool result. The
