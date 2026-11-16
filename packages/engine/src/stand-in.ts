@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import type { Duplex } from "node:stream";
 import { text } from "node:stream/consumers";
-import { answerCall, replayCtx, toCall, type ConnectorPolicy, type Divergence, type Exchange, type ExchangeIndex } from "@phoenix/answer";
+import { answerCall, answeredOutside, replayCtx, toCall, type ConnectorPolicy, type Divergence, type Exchange, type ExchangeIndex, type SimulatorOptions } from "@phoenix/answer";
 import type { CaptureMetadata } from "@phoenix/store";
 import { VirtualClock } from "./clock.ts";
 import { SampleTrace, streamName } from "./trace.ts";
@@ -20,6 +20,9 @@ export interface ToolStandInOptions {
   host: string;
   answers: readonly RecordedToolAnswer[];
   policy(connector: string): ConnectorPolicy;
+  inBox(connector: string, op: string): boolean;
+  simulator?: Omit<SimulatorOptions, "clock">;
+  cutTime: string;
   sample: { root: string; metadata: CaptureMetadata };
   hmacKey: Uint8Array;
 }
@@ -44,8 +47,8 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
     return { ...call, id: answer.id, history: [], frozen: answer.beforeCut, position, completed: position, observedAt: answer.observedAt, provenance: "recorded", request, response: { body: rpc(position, { result: answer.result }) }, during: [], after: [] };
   });
   for (const exchange of exchanges) exchange.history = exchanges.filter(w => w.connector === exchange.connector && !w.readOnly && w.completed < exchange.position).map(w => w.key);
-  const index: ExchangeIndex = { exchanges, prefetch: [], frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), notifications: new Map(), startTime: clock.now().toISOString(), cutTime: clock.now().toISOString() };
-  const ctx = replayCtx(index, options.policy);
+  const index: ExchangeIndex = { exchanges, prefetch: [], frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), notifications: new Map(), startTime: options.cutTime, cutTime: options.cutTime };
+  const ctx = replayCtx(index, options.policy, undefined, options.simulator ? { ...options.simulator, clock: () => options.cutTime } : undefined);
   for (const exchange of index.frozen) if (!exchange.readOnly) ctx.histories = { ...ctx.histories, [exchange.connector]: [...(ctx.histories[exchange.connector] ?? []), exchange.key] };
   let served = 0;
   let stop!: (divergence: Divergence) => void;
@@ -54,11 +57,27 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
     void (async () => {
       const connector = decodeURIComponent(new URL(request.url ?? "/", "http://x").pathname.slice(1));
       const body = Buffer.from(await text(request));
-      const message = JSON.parse(body.toString()) as { id: unknown; method: string; params: { name: string; arguments?: unknown } };
+      const message = JSON.parse(body.toString()) as { id: unknown; method: string; params: { name: string; arguments?: unknown; result?: unknown } };
       const stream = streamName("stand-in", connector);
+      response.setHeader("content-type", "application/json");
+      if (message.method === "phoenix/ran") {
+        const raw = { body: Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: message.id, method: "tools/call", params: { name: message.params.name, arguments: message.params.arguments ?? {} } })) };
+        const call = toCall({ surface: "mcp", connector, op: `tools/call:${message.params.name}`, args: message.params.arguments ?? {}, raw }, options.policy(connector));
+        const reply = rpc(message.id, { result: message.params.result ?? {} });
+        answeredOutside(call, { raw: { body: reply }, provenance: "real", resolver: "files-copy" }, ctx);
+        served++;
+        await trace.append(stream, { kind: "result", surface: "mcp", layer: "agent", connector, op: call.op, body: reply, provenance: "real", resolver: "files-copy" });
+        response.end(rpc(message.id, { result: {} }));
+        return;
+      }
       const call = toCall({ surface: "mcp", connector, op: `tools/call:${message.params.name}`, args: message.params.arguments ?? {}, raw: { body } }, options.policy(connector));
       await trace.append(stream, { kind: "call", surface: "mcp", layer: "agent", connector, op: call.op, body });
-      const answered = await answerCall(call, ctx);
+      const inBox = options.inBox(connector, message.params.name);
+      const answered = await answerCall(call, ctx, inBox ? ["simulator"] : []);
+      if ("divergence" in answered && inBox) {
+        response.end(rpc(message.id, { run_in_box: true }));
+        return;
+      }
       if ("divergence" in answered) {
         const { divergence } = answered;
         await trace.append(stream, { kind: "divergence", connector, op: call.op, body: Buffer.from(JSON.stringify(divergence)) });
@@ -70,7 +89,6 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
       const reply = rpc(message.id, { result: recorded.result });
       served++;
       await trace.append(stream, { kind: "result", surface: "mcp", layer: "agent", connector, op: call.op, body: reply, provenance: answered.answer.provenance, resolver: answered.answer.resolver });
-      response.setHeader("content-type", "application/json");
       response.end(reply);
     })().catch(error => {
       stop({ trigger: "lifecycle", detail: error instanceof Error ? error.message : String(error) });

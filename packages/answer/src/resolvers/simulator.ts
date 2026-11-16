@@ -21,6 +21,15 @@ const cliResult = {
   },
 };
 
+const topLevel = (schema: Record<string, unknown>): Record<string, unknown> => {
+  const types = (part: unknown): Record<string, unknown> => {
+    const node = object(part);
+    return Array.isArray(node.anyOf) ? { anyOf: node.anyOf.map(types) } : node.type ? { type: node.type } : {};
+  };
+  if (Array.isArray(schema.anyOf)) return { anyOf: schema.anyOf.map(part => topLevel(object(part))) };
+  return schema.properties ? { ...schema, properties: Object.fromEntries(Object.entries(object(schema.properties)).map(([key, part]) => [key, types(part)])) } : schema;
+};
+
 export const simulator: Resolver = {
   name: "simulator",
   async resolve(call, ctx) {
@@ -56,8 +65,8 @@ export const simulator: Resolver = {
         }
       }
     }
-    if (call.surface !== "cli" && !samples.length && declared === undefined) return { miss: true, why: "no declared or observed response format" };
-    const inferred = call.surface === "cli" ? {} : inferFormat(samples);
+    if (call.surface === "http" && !samples.length && declared === undefined) return { miss: true, why: "no declared or observed response format" };
+    const inferred = call.surface === "cli" ? {} : call.surface === "mcp" ? topLevel(inferFormat(samples)) : inferFormat(samples);
     const request = call.surface === "mcp" ? decodeMcp(call.raw.body) : undefined;
     const era = request?.ok ? mcpInfo(request.value).era : undefined;
     const recordedEra = ctx.index.exchanges.filter(e => e.connector === call.connector && e.surface === "mcp").flatMap(e => [e.request.body, e.response.body]).flatMap(bytes => {

@@ -80,4 +80,5 @@ process.stdout.write(JSON.stringify({
   loadout: { sections, harness_sections: ["addendum"], tools: [...tools.values()].map(tool => ({ ...tool, ...route(tool.name) })), adapter },
   answers,
   read_only: { pi: ["read", "grep", "find", "ls"], [ADAPTER]: METADATA },
+  in_box: { pi: ["read", "write", "edit", "ls", "grep", "find"] },
 }) + "\n");

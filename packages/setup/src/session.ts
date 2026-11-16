@@ -1,14 +1,17 @@
-import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { text } from "node:stream/consumers";
+import { promisify } from "node:util";
 import type { MomentManifest, RecipeDescriptor, TraceEvent } from "@phoenix/formats";
 import { stripSecrets, type SecretPolicy } from "@phoenix/redact";
 import { readCapture, writeMomentBundle } from "@phoenix/store";
 import { prepareSnapshotMoment } from "./manual.ts";
 
 const eventId = (e: TraceEvent) => e.id ?? `${e.stream}:${e.seq}`;
+const execute = promisify(execFile);
+const COPY_LIMIT = 512 * 1024 * 1024;
 
 export interface SessionMomentOptions {
   recipe: { directory: string; descriptor: RecipeDescriptor };
@@ -22,7 +25,20 @@ export interface SessionMomentOptions {
   timezone?: string;
 }
 
-interface Reading { prompt: string; time: string; model: { provider: string; id: string }; answers: { connector: string }[]; read_only?: Record<string, string[]>; files?: string[] }
+interface Reading { prompt: string; time: string; cwd?: string; model: { provider: string; id: string }; answers: { connector: string }[]; read_only?: Record<string, string[]>; files?: string[] }
+type ProjectCopy = Omit<NonNullable<NonNullable<MomentManifest["resume"]>["project"]>, "tar"> & { bytes: Buffer };
+
+async function projectCopy(cwd: string | undefined, time: string): Promise<ProjectCopy | undefined> {
+  if (!cwd || !(await stat(cwd).catch(() => undefined))?.isDirectory()) return undefined;
+  const run = async (command: string, args: string[], at = cwd) => (await execute(command, args, { cwd: at, encoding: "buffer", maxBuffer: COPY_LIMIT })).stdout;
+  const root = await run("git", ["rev-parse", "--show-toplevel"]).then(out => out.toString("utf8").trim(), () => undefined);
+  const commit = root && await run("git", ["rev-list", "-1", `--before=${time}`, "HEAD"], root).then(out => out.toString("utf8").trim(), () => "");
+  if (root && commit) {
+    const taken_at = new Date((await run("git", ["show", "-s", "--format=%cI", commit], root)).toString("utf8").trim()).toISOString();
+    return { root, source: "git", commit, taken_at, bytes: await run("git", ["archive", "--format=tar", commit], root) };
+  }
+  return { root: cwd, source: "today", taken_at: new Date().toISOString(), bytes: await run("tar", ["-cf", "-", "--exclude=./.git", "--exclude=node_modules", "."]) };
+}
 
 async function sideFiles(session: string, patterns: readonly string[]): Promise<string[]> {
   const found = new Set<string>();
@@ -78,12 +94,14 @@ export async function createSessionMoment(o: SessionMomentOptions): Promise<Mome
   const mark = atLine.find(e => e.kind === "call") ?? atLine[0];
   if (!mark) throw new Error(`The imported session has no event for line ${o.at}`);
   const prepared = await prepareSnapshotMoment({ capture: o.capture, task, mark: eventId(mark), start: "mark", id: o.id, connectors: [], check: o.check, workdir: false, prompt: reading.prompt, ...(o.timezone ? { timezone: o.timezone } : {}) });
+  const copy = await projectCopy(reading.cwd, reading.time);
   const connectors: NonNullable<MomentManifest["connectors"]> = {};
-  for (const name of new Set(reading.answers.map(a => a.connector))) connectors[name] = { surface: "mcp", routes: ["transcript"], tier: "recorded", origin: "captured", read_only: (reading.read_only?.[name] ?? []).map(op => ({ op: `tools/call:${op}`, source: "annotation" as const })), data: [{ path: "data/run.jsonl", kind: "run-evidence" }] };
+  for (const name of new Set(reading.answers.map(a => a.connector))) connectors[name] = { surface: "mcp", routes: ["transcript"], tier: "recorded", origin: "captured", allow_synthesized: true, read_only: (reading.read_only?.[name] ?? []).map(op => ({ op: `tools/call:${op}`, source: "annotation" as const })), data: [{ path: "data/run.jsonl", kind: "run-evidence" }] };
   const manifest: MomentManifest = {
     ...prepared.manifest, clock: { time: reading.time, timezone: prepared.manifest.clock!.timezone }, model: { id: `${reading.model.provider}/${reading.model.id}` }, connectors,
-    resume: { recipe: o.recipe.descriptor.name, session: "data/session.jsonl", moment: "data/session-moment.json", ...(reading.files?.length ? { files: "data/session-files" } : {}) },
+    resume: { recipe: o.recipe.descriptor.name, session: "data/session.jsonl", moment: "data/session-moment.json", ...(reading.files?.length ? { files: "data/session-files" } : {}), ...(copy ? { project: { tar: "data/project.tar", root: copy.root, source: copy.source, ...(copy.commit ? { commit: copy.commit } : {}), taken_at: copy.taken_at } } : {}) },
   };
+  if (copy) prepared.files.set("data/project.tar", copy.bytes);
   prepared.files.set("data/session.jsonl", session);
   for (const path of reading.files ?? []) prepared.files.set(`data/session-files/${path}`, stripped.get(path)!);
   prepared.files.set("data/session-moment.json", stdout);
