@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { startToolStandIn, type SimulatorOptions, type ToolStandIn } from "@phoenix/engine";
+import { startToolStandIn, type SimulatorOptions, type ToolStandIn, type ToolStandInOptions } from "@phoenix/engine";
 import { parse } from "yaml";
 import type { RecipeDescriptor } from "@phoenix/formats";
 import { writeClockFile, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
@@ -82,15 +82,37 @@ export async function resumeAttempt(input: {
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
     await writeFile(target, bytes, { mode: 0o600 });
   }
-  const plugins = new Map(plan.runner.plugins.map(plugin => [plugin.descriptor.connector, plugin.descriptor]));
+  const names = new Set([...moment.answers.map(a => a.connector), ...Object.keys(bundle.manifest.connectors ?? {}), ...Object.keys(moment.in_box ?? {})]);
+  const plugins = new Map<string, { plugin: ResolvedPlan["runner"]["plugins"][number]; index: number }>();
+  for (const [index, plugin] of plan.runner.plugins.entries()) for (const name of names)
+    if (!plugins.has(name) && (name === plugin.descriptor.connector || plugin.descriptor.recognize.mcp_servers?.includes(name))) plugins.set(name, { plugin, index });
+  const time = bundle.manifest.clock?.time ?? new Date().toISOString();
+  const emulators: NonNullable<ToolStandInOptions["emulators"]>[number][] = [];
+  for (const [name, { plugin, index }] of plugins) {
+    if (!plugin.descriptor.serve) continue;
+    const pluginRoot = join(root, "emulators", name);
+    await mkdir(join(pluginRoot, "inputs"), { recursive: true, mode: 0o700 });
+    const all = moment.answers.filter(a => a.connector === name);
+    const firstWrite = all.findIndex(a => !a.before_cut && !plugin.descriptor.read_only?.includes(`tools/call:${a.op}`));
+    const own = all.filter((a, at) => a.before_cut || firstWrite < 0 || at < firstWrite);
+    const snapshot = own.flatMap((a, seq) => [
+      { v: 1, capture: input.capture, stream: "session", seq: seq * 2, ts: { wall: a.observed_at }, kind: "call", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: seq, method: "tools/call", params: { name: a.op, arguments: a.args } }) } },
+      { v: 1, capture: input.capture, stream: "session", seq: seq * 2 + 1, ts: { wall: a.observed_at }, kind: "result", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: seq, result: a.result }) } },
+    ].map(event => JSON.stringify(event) + "\n")).join("");
+    await writeFile(join(pluginRoot, "inputs/snapshot"), plugin.snapshot ? bundle.files.get(plugin.snapshot)! : snapshot, { mode: 0o600 });
+    await writeFile(join(pluginRoot, "inputs/seed"), plugin.seed ? bundle.files.get(plugin.seed)! : JSON.stringify({ seed: `sha256:${createHash("sha256").update(`${input.id}:${input.capture}`).digest("hex")}` }), { mode: 0o600 });
+    await writeClockFile(join(pluginRoot, "clock"), time);
+    emulators.push({ plugin: { directory: join(directory, "inputs/plugins", String(index)), descriptor: { ...plugin.descriptor, connector: name } }, options: { context: { snapshot: "/inputs/snapshot", seed: "/inputs/seed" }, env: plugin.env, replay: { sandbox, spec: { image: plugin.image, mounts: [{ source: join(directory, "inputs/plugins", String(index)), target: "/plugin", readOnly: true }, { source: join(pluginRoot, "inputs"), target: "/inputs", readOnly: true }], workdir: "/plugin", clockFile: join(pluginRoot, "clock"), dontFakeMonotonic: true } } } });
+  }
   const standIn: ToolStandIn = await startToolStandIn({
+    emulators,
     host: TOOLS_HOST,
     answers: moment.answers.map(a => ({ id: a.id, connector: a.connector, op: a.op, args: a.args, result: a.result, observedAt: a.observed_at, beforeCut: a.before_cut, ...(a.world ? { world: a.world } : {}) })),
     inBox: (connector, op) => !!project && (moment.in_box?.[connector] ?? []).includes(op),
     ...(input.simulator ? { simulator: input.simulator } : {}),
     cutTime: bundle.manifest.clock?.time ?? new Date().toISOString(),
     policy: connector => {
-      const plugin = plugins.get(connector);
+      const plugin = plugins.get(connector)?.plugin.descriptor;
       return { ...bundle.manifest.connectors?.[connector], ...(plugin ? { entity_map: plugin.entity_map, read_only: (plugin.read_only ?? []).map(op => ({ op, source: "plugin" as const })), volatile: plugin.volatile ?? [] } : {}) };
     },
     sample: { root: join(root, "trace"), metadata: { capture: input.capture, harness: { name: plan.runner.harness.name, tree: plan.candidate_tree }, recipe: { name: recipe.name, version: "1" }, routes: ["tap"], started_at: new Date().toISOString(), boot_id: input.capture } },
@@ -101,7 +123,6 @@ export async function resumeAttempt(input: {
   try {
     const [login, ...loginArgs] = recipe.resume.login;
     await execute(login!, [...loginArgs, join(box, "agent"), moment.model.provider], { cwd: recipeDirectory });
-    const time = bundle.manifest.clock?.time ?? new Date().toISOString();
     await writeClockFile(join(root, "clock"), time);
     const { clock } = parse(await readFile(join(recipeDirectory, recipe.file), "utf8")) as RecipeDescriptor;
     const running = await sandbox.start({

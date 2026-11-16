@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import type { Duplex } from "node:stream";
 import { text } from "node:stream/consumers";
-import { answerCall, answeredOutside, replayCtx, toCall, type ConnectorPolicy, type Divergence, type Exchange, type ExchangeIndex, type SimulatorOptions } from "@phoenix/answer";
+import { answerCall, answeredOutside, Emulators, replayCtx, toCall, type ConnectorPolicy, type EmulatorConfig, type Divergence, type Exchange, type ExchangeIndex, type SimulatorOptions } from "@phoenix/answer";
 import type { CaptureMetadata } from "@phoenix/store";
 import { VirtualClock } from "./clock.ts";
 import { SampleTrace, streamName } from "./trace.ts";
@@ -23,6 +23,7 @@ export interface ToolStandInOptions {
   policy(connector: string): ConnectorPolicy;
   inBox(connector: string, op: string): boolean;
   simulator?: Omit<SimulatorOptions, "clock">;
+  emulators?: readonly EmulatorConfig[];
   cutTime: string;
   sample: { root: string; metadata: CaptureMetadata };
   hmacKey: Uint8Array;
@@ -40,6 +41,8 @@ const rpc = (id: unknown, body: object) => Buffer.from(JSON.stringify({ jsonrpc:
 
 export async function startToolStandIn(options: ToolStandInOptions): Promise<ToolStandIn> {
   const policy = (connector: string): ConnectorPolicy => ({ allow_synthesized: true, ...options.policy(connector) });
+  const started = Date.now();
+  const emulators = await Emulators.start((options.emulators ?? []).filter(c => !policy(c.plugin.descriptor.connector).skip_resolvers?.includes("emulator")), () => new Date(Date.parse(options.cutTime) + Date.now() - started));
   const clock = new VirtualClock(new Date());
   const trace = await SampleTrace.create(options.sample.root, options.sample.metadata, clock, options.hmacKey);
   const exchanges: Exchange[] = options.answers.map((answer, position) => {
@@ -51,7 +54,7 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
   });
   for (const exchange of exchanges) exchange.history = exchanges.filter(w => w.connector === exchange.connector && !w.readOnly && w.completed < exchange.position).map(w => w.key);
   const index: ExchangeIndex = { exchanges, prefetch: [], frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), notifications: new Map(), startTime: options.cutTime, cutTime: options.cutTime };
-  const ctx = replayCtx(index, policy, undefined, options.simulator ? { ...options.simulator, clock: () => options.cutTime } : undefined);
+  const ctx = replayCtx(index, policy, emulators, options.simulator ? { ...options.simulator, clock: () => options.cutTime } : undefined);
   for (const exchange of index.frozen) if (!exchange.readOnly) ctx.histories = { ...ctx.histories, [exchange.connector]: [...(ctx.histories[exchange.connector] ?? []), exchange.key] };
   let served = 0;
   let stop!: (divergence: Divergence) => void;
@@ -106,6 +109,6 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
     served: () => served,
     async note(op, value) { await trace.append("resume", { kind: "meta", op, body: Buffer.from(typeof value === "string" ? value : JSON.stringify(value)) }); },
     stopped,
-    async close() { server.close(); await trace.close(); },
+    async close() { server.close(); try { await emulators.close(); } finally { await trace.close(); } },
   };
 }
