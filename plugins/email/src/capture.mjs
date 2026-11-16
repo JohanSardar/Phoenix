@@ -70,9 +70,12 @@ async function plan(segments) {
   }
   const reads = new Map();
   for (const argv of commands) {
-    const [command, group, action, ...rest] = argv;
-    if (group === "envelope" && action === "list") reads.set(JSON.stringify(argv), argv);
-    if (group === "message" && action === "read") { const read = [command, group, action, "--preview", ...rest.filter(a => a !== "--preview" && a !== "-p")]; reads.set(JSON.stringify(read), read); }
+    const at = argv.findIndex((word, i) => i > 0 && ((word === "envelope" && argv[i + 1] === "list") || (word === "message" && argv[i + 1] === "read")));
+    if (at < 0) continue;
+    const [group, action] = argv.slice(at, at + 2);
+    const options = [...argv.slice(1, at), ...argv.slice(at + 2)];
+    const read = group === "envelope" ? ["himalaya", group, action, ...options] : ["himalaya", group, action, "--preview", ...options.filter(a => a !== "--preview" && a !== "-p")];
+    reads.set(JSON.stringify(read), read);
   }
   const cli = commands.length ? [["himalaya", "folder", "list"], ...reads.values()].map(argv => ({ op: "himalaya", args: { argv: ["himalaya", ...argv.slice(1)] } })) : [];
   if (!used) return { mcp: [], cli };

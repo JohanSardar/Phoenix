@@ -73,9 +73,10 @@ export async function captureConnection(target: CaptureTarget, connector: string
         try {
           if (stdin.length) await run.write(frame("out", 0, stdin, false));
           await run.write(frame("out", 0, new Uint8Array(), true));
-          const frames = [{ dir: "out", stream: 0, bytes: stdin.toString("base64"), last: true }];
-          for await (const f of run.frames()) frames.push({ dir: "back", stream: f.stream, bytes: Buffer.from(f.bytes).toString("base64"), last: f.last });
-          if (!frames.some(f => f.stream === 3)) throw new Error("Capture CLI read ended without an exit status");
+          const streams = new Map<number, Buffer[]>([[1, []], [2, []], [3, []]]);
+          for await (const f of run.frames()) streams.get(f.stream)?.push(Buffer.from(f.bytes));
+          if (!streams.get(3)!.length) throw new Error("Capture CLI read ended without an exit status");
+          const frames = [{ dir: "out", stream: 0, bytes: stdin.toString("base64"), last: true }, ...[1, 2, 3].map(stream => ({ dir: "back", stream, bytes: Buffer.concat(streams.get(stream)!).toString("base64"), last: true }))];
           return { request: { body: Buffer.from(JSON.stringify(invocation)) }, response: { body: Buffer.from(JSON.stringify(frames)) } };
         } finally { clearTimeout(timer); }
       }
