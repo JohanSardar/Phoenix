@@ -49,7 +49,11 @@ if (name === "Bash" && (!failed || exit)) {
   keep();
   log("recorded");
   allow(!failed && !existsSync(input.tool_input.file_path) ? { ...input.tool_input, file_path: join(process.env.HOME, "placeholder.txt") } : undefined);
-} else if (["Write", "Edit", "NotebookEdit", "Glob", "Grep"].includes(name)) {
+} else if (["Glob", "Grep"].includes(name)) {
+  keep();
+  log("recorded");
+  allow(failed ? undefined : { pattern: "phoenix-placeholder", path: process.env.HOME });
+} else if (["Write", "Edit", "NotebookEdit"].includes(name)) {
   keep();
   log("recorded");
   allow();

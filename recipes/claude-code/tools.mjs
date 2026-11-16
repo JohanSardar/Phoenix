@@ -5,6 +5,13 @@ export const CONNECTOR = "claude-code";
 export const NATIVE = ["ToolSearch", "TodoWrite", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "EnterPlanMode", "ExitPlanMode", "ListAgents"];
 export const READ_ONLY = ["Read", "Glob", "Grep", "WebFetch", "WebSearch", "Skill"];
 
+const hidden = /^\[secret:[0-9a-f]{64}\]$/;
+export function mendSchema(schema) {
+  if (Array.isArray(schema)) return schema.map(mendSchema);
+  if (!schema || typeof schema !== "object") return schema;
+  return Object.fromEntries(Object.entries(schema).map(([key, value]) => [key, key === "properties" && value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([name, inner]) => [name, typeof inner === "string" && hidden.test(inner) ? {} : mendSchema(inner)])) : mendSchema(value)]));
+}
+
 export const mcpName = name => /^mcp__(.+?)__(.+)$/.exec(name);
 
 export function route(name) {

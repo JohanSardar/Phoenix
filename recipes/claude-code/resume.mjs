@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { NATIVE } from "./tools.mjs";
+import { NATIVE, mendSchema } from "./tools.mjs";
 
 const moment = JSON.parse(readFileSync("/phoenix/moment/moment.json", "utf8"));
 const loadout = JSON.parse(readFileSync("/phoenix/moment/loadout.json", "utf8"));
@@ -12,18 +12,12 @@ const project = join(home, ".claude", "projects", box.cwd.replace(/[^a-zA-Z0-9]/
 for (const dir of [project, answers]) mkdirSync(dir, { recursive: true });
 renameSync(join(home, "credentials.json"), join(home, ".claude", ".credentials.json"));
 writeFileSync(join(home, ".claude.json"), JSON.stringify({ hasCompletedOnboarding: true }));
-const hidden = /^\[secret:[0-9a-f]{64}\]$/;
-const mend = schema => {
-  if (Array.isArray(schema)) return schema.map(mend);
-  if (!schema || typeof schema !== "object") return schema;
-  return Object.fromEntries(Object.entries(schema).map(([key, value]) => [key, key === "properties" && value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([name, inner]) => [name, typeof inner === "string" && hidden.test(inner) ? {} : mend(inner)])) : mend(value)]));
-};
 const cut = readFileSync("/phoenix/moment/cut.jsonl", "utf8").split("\n").map(line => {
   if (!line.includes('"prompt_snapshot"')) return line;
   const entry = JSON.parse(line);
   const snapshot = entry.attachment;
   if (snapshot?.type !== "prompt_snapshot") return line;
-  if (snapshot.tools) snapshot.tools = snapshot.tools.map(tool => ({ ...tool, schema: mend(tool.schema) }));
+  if (snapshot.tools) snapshot.tools = snapshot.tools.map(tool => ({ ...tool, schema: mendSchema(tool.schema) }));
   if (snapshot.systemPrompt && existsSync("/worktree/SYSTEM.md")) snapshot.systemPrompt = [readFileSync("/worktree/SYSTEM.md", "utf8")];
   if (snapshot.systemPrompt && existsSync("/worktree/APPEND_SYSTEM.md")) snapshot.systemPrompt = [...snapshot.systemPrompt, readFileSync("/worktree/APPEND_SYSTEM.md", "utf8")];
   return JSON.stringify(entry);

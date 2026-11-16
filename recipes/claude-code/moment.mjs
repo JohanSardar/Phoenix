@@ -1,6 +1,6 @@
 import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
-import { CONNECTOR, NATIVE, READ_ONLY, callArgs, mcpName, route } from "./tools.mjs";
+import { CONNECTOR, NATIVE, READ_ONLY, callArgs, mcpName, mendSchema, route } from "./tools.mjs";
 
 const { values } = parseArgs({ options: { at: { type: "string" } } });
 const at = Number(values.at);
@@ -33,7 +33,7 @@ const blocks = shape.system.map(block => block.text);
 const system = snapshot?.cliPrefix !== undefined && blocks[0] === snapshot.cliPrefix ? blocks.slice(1) : blocks.slice(/^You are (Claude Code|a Claude agent)\b/.test(blocks[0] ?? "") ? 1 : 0);
 
 const definitions = new Map();
-const define = (tool, always) => { if (mcpName(tool.name) && tool.input_schema) definitions.set(tool.name, { description: tool.description ?? "", input_schema: tool.input_schema, always }); };
+const define = (tool, always) => { if (mcpName(tool.name) && tool.input_schema) definitions.set(tool.name, { description: tool.description ?? "", input_schema: mendSchema(tool.input_schema), always }); };
 const records = cutOff => entries.filter(({ line }) => cutOff(line));
 for (const window of [line => line > cut, line => line <= cut]) for (const { entry } of records(window)) {
   if (entry.type === "api-request-shape") for (const tool of entry.shape.tools ?? []) define(tool, !tool.defer_loading);
