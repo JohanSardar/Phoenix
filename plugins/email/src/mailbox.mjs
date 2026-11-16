@@ -241,6 +241,26 @@ export class Mailbox {
     this.changes.push({ id: message.id, removed: true });
   }
 
+  // Gmail numbers labels made through its API Label_1, Label_2, ... and lists user labels by id.
+  addLabel(label) {
+    const n = /^Label_(\d{1,9})$/.exec(label.labelId)?.[1];
+    if (n) this.labelCounter = Math.max(this.labelCounter ?? 0, Number(n));
+    const all = [...(this.labels ?? []).filter(l => l.labelId !== label.labelId), label];
+    this.labels = [...all.filter(l => l.labelType !== "USER"), ...all.filter(l => l.labelType === "USER").sort((a, b) => a.labelId < b.labelId ? -1 : a.labelId > b.labelId ? 1 : 0)];
+    return label;
+  }
+
+  createLabel(name, { labelListVisibility = "LABEL_SHOW", messageListVisibility = "SHOW" } = {}) {
+    const counter = this.labelCounter ?? Math.max(0, ...this.labels.map(l => Number(/^Label_(\d{1,9})$/.exec(l.labelId)?.[1] ?? 0)));
+    return this.addLabel({ labelId: `Label_${counter + 1}`, labelListVisibility, labelType: "USER", messageListVisibility, messagesTotal: 0, messagesUnread: 0, name, threadsTotal: 0, threadsUnread: 0 });
+  }
+
+  deleteLabel(labelId) {
+    for (const m of this.messages.values()) if (m.labelIds.includes(labelId)) this.relabel(m, [], [labelId]);
+    this.labels = this.labels.filter(l => l.labelId !== labelId);
+    this.labelDeltas.delete(labelId);
+  }
+
   labelId(nameOrId) {
     const wanted = nameOrId.toLowerCase().replace(/[-_ ]/g, "");
     const known = this.labels?.find(l => l.labelId.toLowerCase() === nameOrId.toLowerCase() || l.name.toLowerCase().replace(/[-_ /]/g, "") === wanted.replace(/\//g, ""));

@@ -4,7 +4,7 @@ A working copy of one Gmail mailbox for Phoenix. It is a separately installed pl
 
 The copy answers two ways into the same mailbox:
 
-- 28 of the claude.ai Gmail connector's 31 tools (MCP server name `claude_ai_Gmail`, ops `tools/call:<tool>`)
+- the claude.ai Gmail connector's 31 tools (MCP server name `claude_ai_Gmail`, ops `tools/call:<tool>`)
 - the `himalaya` command (CLI surface, op `himalaya`)
 
 A write through one is seen by the other. If the agent stars a message with himalaya, the connector's next search shows it starred.
@@ -70,6 +70,6 @@ The plugin test kit was run on 38 answers recorded from the real connector. Thes
 
 - himalaya's stdin is not passed. The CLI call reaches the plugin before any stdin is sent, so `himalaya message send` with the message on stdin gets an empty message. Passing the message as an argument works.
 - Attachment bytes are not held.
-- `create_label`, `update_label` and `delete_label` are not covered. No session has used them, so there is no real answer to copy their shape from.
+- `create_label` and `update_label` answer only plain labels: a color or a nested name (with `/`) falls through, because no real answer for those has been recorded.
 - A search with plain words falls through when any message the copy holds has content it never saw, because the copy can't tell whether those words are in it.
 - himalaya output is compared only with the copy's own IMAP so far, not with himalaya against real Gmail.

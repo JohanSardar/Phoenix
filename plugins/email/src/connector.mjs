@@ -4,7 +4,7 @@ import { buildMessage, rfc2822 } from "./mime.mjs";
 import { BODY_KEYS, compileQuery, htmlText, keysFor, knowsFor, snippetOf, sortLabels } from "./mailbox.mjs";
 
 export const READ_ONLY = ["search_threads", "get_thread", "get_message", "list_labels", "list_drafts", "get_draft", "download_gmail_attachment"];
-export const TOOLS = [...READ_ONLY, "send_message", "reply", "forward", "create_draft", "update_draft", "delete_draft", "label_message", "unlabel_message", "label_thread", "unlabel_thread", "update_message_labels", "trash_message", "untrash_message", "trash_thread", "untrash_thread", "mark_message_spam", "unmark_message_spam", "mark_thread_spam", "unmark_thread_spam", "apply_sensitive_message_label", "apply_sensitive_thread_label"];
+export const TOOLS = [...READ_ONLY, "send_message", "reply", "forward", "create_draft", "update_draft", "delete_draft", "label_message", "unlabel_message", "label_thread", "unlabel_thread", "update_message_labels", "trash_message", "untrash_message", "trash_thread", "untrash_thread", "mark_message_spam", "unmark_message_spam", "mark_thread_spam", "unmark_thread_spam", "apply_sensitive_message_label", "apply_sensitive_thread_label", "create_label", "update_label", "delete_label"];
 
 export class Unsupported extends Error {}
 export class ToolError extends Error {}
@@ -75,6 +75,23 @@ export class Connector {
       case "unmark_thread_spam": for (const m of this.threadMessages(a.threadId)) this.box.relabel(m, ["INBOX"], ["SPAM"]); return {};
       case "apply_sensitive_message_label": this.box.relabel(this.message(a.messageId), [a.labelOption], ["INBOX"]); return {};
       case "apply_sensitive_thread_label": for (const m of this.threadMessages(a.threadId)) this.box.relabel(m, [a.labelOption], ["INBOX"]); return {};
+      case "create_label": {
+        if (!this.box.labels) throw new Unsupported("the copy never saw the label list");
+        if ((a.colorPreset && a.colorPreset !== "LABEL_COLOR_PRESET_UNSPECIFIED") || a.color || String(a.displayName ?? "").includes("/")) throw new Unsupported("the copy answers only plain, unnested labels without a color");
+        if (this.box.labels.some(l => l.name.toLowerCase() === String(a.displayName ?? "").toLowerCase())) throw new Unsupported(`a label named ${a.displayName} already exists`);
+        const visible = v => v && !v.endsWith("_UNSPECIFIED") ? v : undefined;
+        const l = this.box.createLabel(a.displayName, { labelListVisibility: visible(a.labelListVisibility), messageListVisibility: visible(a.messageListVisibility) });
+        return sorted({ color: {}, labelId: l.labelId, labelListVisibility: l.labelListVisibility, messageListVisibility: l.messageListVisibility, name: l.name });
+      }
+      case "update_label": {
+        const l = this.userLabel(a.labelId);
+        if ((a.colorPreset && a.colorPreset !== "LABEL_COLOR_PRESET_UNSPECIFIED") || a.color || String(a.displayName ?? "").includes("/")) throw new Unsupported("the copy answers only renames and visibility changes");
+        const out = { labelId: l.labelId };
+        if (a.displayName !== undefined) l.name = out.name = a.displayName;
+        for (const k of ["labelListVisibility", "messageListVisibility"]) if (a[k] && !a[k].endsWith("_UNSPECIFIED")) l[k] = out[k] = a[k];
+        return sorted(out);
+      }
+      case "delete_label": this.box.deleteLabel(this.userLabel(a.labelId).labelId); return {};
       case "send_message": return this.send(a, nowMs);
       case "reply": return this.reply(a, nowMs);
       case "forward": return this.forward(a, nowMs);
@@ -90,6 +107,12 @@ export class Connector {
       }
       default: throw new Unsupported(`the copy does not answer ${tool}`);
     }
+  }
+
+  userLabel(labelId) {
+    const l = this.box.labels?.find(x => x.labelId === labelId);
+    if (!l || l.labelType !== "USER") throw new Unsupported(`label ${labelId} is not a user label the copy holds`);
+    return l;
   }
 
   threadMessages(threadId) {
@@ -327,6 +350,10 @@ export class Connector {
         }
         if (tool === "update_draft" && value.messageId) {
           try { const made = this.updateDraft(a, at); this.adopt(made.messageId, value.messageId); this.box.drafts.set(a.draftId, value.messageId); } catch { /* draft unknown to the copy */ }
+          break;
+        }
+        if (tool === "create_label" && value.labelId && this.box.labels) {
+          this.box.addLabel({ labelId: value.labelId, labelListVisibility: value.labelListVisibility, labelType: "USER", messageListVisibility: value.messageListVisibility, messagesTotal: 0, messagesUnread: 0, name: value.name, threadsTotal: 0, threadsUnread: 0 });
           break;
         }
         if (tool === "delete_draft") { const id = this.box.drafts.get(a.draftId); this.box.drafts.delete(a.draftId); if (id) this.box.messages.delete(id); break; }
