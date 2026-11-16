@@ -92,7 +92,7 @@ export class ContainerSandbox implements Sandbox {
         "--mount", `type=bind,src=${clockFile},dst=/phoenix-clock,readonly`, ...envArgs,
         ...(spec.workdir ? ["--workdir", spec.workdir] : []), "--entrypoint", "/bin/sh", spec.image,
         "-c", "trap 'exit 0' TERM INT; while :; do sleep 3600 & wait $!; done"]);
-      await this.require(["exec", workload, "/bin/sh", "-c", "printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:1\n' > /etc/resolv.conf"]);
+      await this.require(["exec", "-u", "0", workload, "/bin/sh", "-c", "printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:1\n' > /etc/resolv.conf"]);
       const exec = (argv: string[]) => this.command(["exec", workload, ...argv]);
       const clock: ClockReport = { clock: "unknown", binaries: [] };
       if (spec.clockProbe) {

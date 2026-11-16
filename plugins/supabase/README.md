@@ -1,0 +1,57 @@
+# Supabase
+
+An optional, separately installable Phoenix plugin implementing [plugin interface v1](../../spec/plugin.md). It gives replays a working copy of Supabase, so a replay never reaches the real Supabase. It imports no Phoenix internals. Pack it with `npm pack` and install the tarball with `npm install --install-strategy=nested`, so the plugin folder holds its own `node_modules` when it is mounted in the box. Node 24 or later runs it without a build.
+
+## How the copy works
+
+The copy is the real thing where it can be. It runs Supabase's own MCP server, `@supabase/mcp-server-supabase` 0.17.0. Only the management API under it is redirected. `src/route.mjs` is loaded into that server with `--import` and replaces `fetch`. In a replay, every request goes to the stand-in API in `src/api.mjs` on the box's loopback.
+
+- SQL (`execute_sql`, `apply_migration`, and the SQL behind `list_tables` and `list_extensions`) runs in a real Postgres inside the box. It is Supabase's own Postgres build: the plugin's image copies the `/nix` store of `supabase/postgres` onto Debian. Read-only SQL runs as `supabase_read_only_user`, the way the real API runs it. Other SQL runs as `postgres`.
+- The Postgres is built from the moment's snapshot when the copy starts: roles and their settings, the database owner, schemas, extensions, types, functions, tables, rows, constraints, indexes, views, triggers, row level security, comments, owners and grants. It also gets the real server's settings: locale (ICU en-US), time zone, date style, statement timeout, preloaded libraries, and the text of `version()`.
+- Other API requests are answered from the API replies in the snapshot. Two answers are worked out from a recorded list: an edge function or notebook that is not in the recorded list gets Supabase's "not found" reply.
+- Writes stay in the copy, so a later read shows them. After a replay changes the schema, the recorded TypeScript types and advisors are no longer used.
+
+Anything else is a miss, never a guess. The serve command answers `unsupported`, and the answer chain goes on. These are misses:
+
+- an API request the snapshot does not hold, such as creating a branch or deploying an edge function;
+- SQL that touches a table whose rows the snapshot does not fully hold. The copy asks Postgres which tables a statement touches with `EXPLAIN`. A table counts as fully held when the snapshot read all its rows, or when Postgres counted no rows in it;
+- logs after the replay wrote something, and logs for a time window the snapshot does not hold.
+
+The server's own settings come from the moment. If the session's server ran with `--read-only`, as Johan's launcher entry does, the copy runs read-only too, and refuses writes with the same error Supabase gives.
+
+## The snapshot
+
+`phoenix-supabase-snapshot` (`src/snapshot.mjs`) is a stdio MCP server for taking the snapshot. It wraps the command that starts the real Supabase MCP server, for example Johan's launcher:
+
+```json
+{ "mcpServers": { "supabase": { "command": "node", "args": ["<install root>/node_modules/@phoenix/plugin-supabase/src/snapshot.mjs", "python3", "<path>/mcp-launch.py", "supabase"] } } }
+```
+
+Give the host this file as the MCP settings it reads (`phoenix mark --mcp-config`). The harness's own settings stay as they are. While the snapshot is taken, `src/route.mjs` lets through only GET requests, read-only SQL (`read_only` is forced on) and the advisors run. Every other request is refused before it leaves the machine. Each tool answer carries the API replies behind it in `_meta["phoenix/supabase-api"]`.
+
+The server adds one read-only tool, `phoenix_database_snapshot`. It reads the database's structure and the rows of the tables the session's SQL named, with SELECT only. It also reads the rows of tables those tables point at with foreign keys, and of tables under their views. It reads at most `PHOENIX_SUPABASE_ROW_LIMIT` rows of each table (1000 by default). The capture command (`src/capture.mjs`) plans the reads: the snapshot, every read the session made, and the lists a later call may need.
+
+The snapshot shows Supabase as it was when it was taken, not at the cut.
+
+## The box
+
+Build the image with the Supabase Postgres image of the project's version. `list_tables`' server and `select version()` show the version.
+
+```sh
+docker build --build-arg PG_IMAGE=supabase/postgres:17.6.1.166 -t phoenix-supabase:17 plugins/supabase
+```
+
+The serve command refuses a snapshot from another Postgres major version. The image runs as the `postgres` user, because Postgres will not start as root.
+
+## Read-only tools
+
+`phoenix-plugin.json` lists the tools the server shows for one project, in read-only and read-write mode. It marks the 14 tools that only read as read-only. `execute_sql`, `apply_migration`, `run_notebook` and the branch, edge function and notebook tools that change something are not read-only.
+
+## Proof boundary
+
+Side by side with the real Supabase (48 calls on a real project), the copy's answers differ in these ways:
+
+- `list_tables`: the order of the tables and of the foreign keys can differ. Postgres returns them in the order they sit on disk, and the copy creates them in a different order. The content is the same.
+- `query_logs`: the copy answers with the logs as they were when the snapshot was taken.
+
+Not compared with the real thing: a write on the real Supabase. Nothing was ever written to a real project. The write answers were compared with a real Supabase Postgres 17.6 instead. The read-write mode was only seen on a moment whose read-only setting was changed by hand. Johan's own settings run Supabase read-only.
