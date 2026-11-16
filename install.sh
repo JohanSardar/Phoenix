@@ -76,7 +76,7 @@ target="$install_dir/versions/$version"
 
 cat > "$tmp/phoenix" <<EOF
 #!/bin/sh
-PATH="\$PATH:$target/node/bin" exec "$target/node/bin/node" "$target/app/packages/cli/src/phoenix.ts" "\$@"
+exec "$target/node/bin/node" "$target/app/packages/cli/src/phoenix.ts" "\$@"
 EOF
 chmod 755 "$tmp/phoenix"
 mv -f "$tmp/phoenix" "$install_dir/bin/phoenix"

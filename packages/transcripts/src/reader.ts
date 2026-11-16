@@ -32,7 +32,7 @@ export async function importTranscript(options: {
   const source = resolve(options.source), bytes = await readFile(source);
   const sourceDigest = digest(bytes);
   const reader = `${descriptor.value.name}.${digest(Buffer.from(JSON.stringify({ command, harness_versions }))).slice(7, 23)}`;
-  const child = spawn(command[0]!, command.slice(1), {
+  const child = spawn(command[0] === "node" ? process.execPath : command[0]!, command.slice(1), {
     cwd: options.reader.directory,
     env: { ...process.env, PHOENIX_SOURCE: source },
     stdio: ["pipe", "pipe", "pipe"],
