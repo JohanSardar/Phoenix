@@ -61,12 +61,7 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
       const stream = streamName("stand-in", connector);
       response.setHeader("content-type", "application/json");
       if (message.method === "phoenix/ran") {
-        const raw = { body: Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: message.id, method: "tools/call", params: { name: message.params.name, arguments: message.params.arguments ?? {} } })) };
-        const call = toCall({ surface: "mcp", connector, op: `tools/call:${message.params.name}`, args: message.params.arguments ?? {}, raw }, options.policy(connector));
-        const reply = rpc(message.id, { result: message.params.result ?? {} });
-        answeredOutside(call, { raw: { body: reply }, provenance: "real", resolver: "files-copy" }, ctx);
-        served++;
-        await trace.append(stream, { kind: "result", surface: "mcp", layer: "agent", connector, op: call.op, body: reply, provenance: "real", resolver: "files-copy" });
+        await trace.append(stream, { kind: "meta", connector, op: "files-copy.output", body: Buffer.from(JSON.stringify({ tool: message.params.name, result: message.params.result ?? null })) });
         response.end(rpc(message.id, { result: {} }));
         return;
       }
@@ -75,7 +70,11 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
       const inBox = options.inBox(connector, message.params.name);
       const answered = await answerCall(call, ctx, inBox ? ["simulator"] : []);
       if ("divergence" in answered && inBox) {
-        response.end(rpc(message.id, { run_in_box: true }));
+        const reply = rpc(message.id, { run_in_box: true });
+        answeredOutside(call, { raw: { body: reply }, provenance: "real", resolver: "files-copy" }, ctx);
+        served++;
+        await trace.append(stream, { kind: "result", surface: "mcp", layer: "agent", connector, op: call.op, body: reply, provenance: "real", resolver: "files-copy" });
+        response.end(reply);
         return;
       }
       if ("divergence" in answered) {
