@@ -88,9 +88,9 @@ Put the image ID and the path to `recipe.yaml` in the Workbench settings.
 - Phoenix stands in only for OpenCode's built-in tools. A session that used
   MCP or plugin tools can't be cut yet: OpenCode doesn't save their
   descriptions.
-- Known gap (2026-11-16): a tool call the session never made gets no answer,
-  and the replay stops there, unless a plugin answers it. Ticket T11 (JOH-55)
-  fixes this for every harness.
+- Known gap, merged with Johan's decision of 2026-11-16: a tool call the
+  session never made gets no answer, and the replay stops there, unless a
+  plugin answers it. Ticket T11 (JOH-55) owns the fix, for every harness.
 - The replays that proved this recipe did not run on the sessions' own LLMs.
   One session's LLM is retired, and the other's provider returned an error, so
   both harnesses named an OpenCode Go LLM in `opencode.json`.
