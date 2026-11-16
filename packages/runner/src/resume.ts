@@ -67,9 +67,11 @@ export async function resumeAttempt(input: {
   let copied: Map<string, string> | undefined;
   if (project) {
     await mkdir(join(box, "project"), { recursive: true, mode: 0o700 });
-    await writeFile(join(box, "project.tar"), bundle.files.get(project.tar)!, { mode: 0o600 });
-    await execute("tar", ["-xf", join(box, "project.tar"), "-C", join(box, "project")]);
-    await rm(join(box, "project.tar"));
+    for (const part of [project.tar, ...project.more ?? []]) {
+      await writeFile(join(box, "project.tar"), bundle.files.get(part)!, { mode: 0o600 });
+      await execute("tar", ["-xf", join(box, "project.tar"), "-C", join(box, "project")]);
+      await rm(join(box, "project.tar"));
+    }
     copied = await fileHashes(join(box, "project"));
   }
   await writeFile(join(box, "moment/cut.jsonl"), session.slice(0, moment.cut_lines).join("\n") + "\n", { mode: 0o600 });

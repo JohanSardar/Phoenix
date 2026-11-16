@@ -210,6 +210,10 @@ export type MomentManifest = {
        */
       taken_at: string;
       /**
+       * Bundle paths of more tar files, when the copy is too big for one. Unpack them after tar, into the same folder.
+       */
+      more?: string[];
+      /**
        * Files Phoenix could not read when it made the copy. They are missing inside the box.
        */
       left_out?: string[];

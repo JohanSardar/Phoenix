@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { text } from "node:stream/consumers";
@@ -32,33 +32,65 @@ export interface SessionMomentOptions {
 
 export interface SessionAnswer { id: string; connector: string; op: string; args: unknown; result: unknown; observed_at: string; before_cut: boolean; world?: "exact" | "any-args" }
 interface Reading { at: number; prompt: string; time: string; cwd?: string; model: { provider: string; id: string }; answers: SessionAnswer[]; read_only?: Record<string, string[]>; files?: string[]; edits?: { line: number; text: string }[] }
-type ProjectCopy = Omit<NonNullable<NonNullable<MomentManifest["resume"]>["project"]>, "tar"> & { bytes: Buffer };
+type ProjectCopy = Omit<NonNullable<NonNullable<MomentManifest["resume"]>["project"]>, "tar" | "more"> & { parts: Buffer[] };
+
+const PART_LIMIT = 1536 * 1024 * 1024;
+
 async function projectCopy(cwd: string | undefined, time: string): Promise<ProjectCopy | undefined> {
   if (!cwd || !(await stat(cwd).catch(() => undefined))?.isDirectory()) return undefined;
   const git = async (args: string[], at = cwd) => (await execute("git", args, { cwd: at, encoding: "utf8" })).stdout.trim();
   const root = await git(["rev-parse", "--show-toplevel"]).catch(() => undefined);
   const commit = root && await git(["rev-list", "-1", `--before=${time}`, "HEAD"], root).catch(() => "");
   const scratch = await mkdtemp(join(tmpdir(), "phoenix-copy-"));
+  const files = join(scratch, "files");
   try {
-    const tar = join(scratch, "project.tar");
-    if (root && commit) {
-      await execute("git", ["archive", "--format=tar", "-o", tar, commit], { cwd: root });
-      return { root, source: "git", commit, taken_at: new Date(await git(["show", "-s", "--format=%cI", commit], root)).toISOString(), left_out: [], bytes: await readFile(tar) };
-    }
+    await mkdir(files);
     const left_out: string[] = [];
-    const walk = async (folder: string): Promise<void> => {
-      for (const entry of await readdir(join(cwd, folder), { withFileTypes: true }).catch(() => { left_out.push(folder); return []; })) {
+    if (root && commit) {
+      const listing = (await execute("git", ["ls-tree", "-r", "-z", commit], { cwd: root, encoding: "buffer", maxBuffer: 256 * 1024 * 1024 })).stdout.toString("utf8").split("\0").filter(Boolean);
+      const blobs = listing.map(line => { const [meta, path] = line.split("\t") as [string, string]; const [mode, type, sha] = meta.split(" ") as [string, string, string]; return { mode, type, sha, path }; }).filter(blob => blob.type === "blob");
+      const write = async (blob: typeof blobs[number]): Promise<void> => {
+        const bytes = (await execute("git", ["cat-file", "blob", blob.sha], { cwd: root, encoding: "buffer", maxBuffer: 2 ** 31 - 1 })).stdout;
+        await mkdir(dirname(join(files, blob.path)), { recursive: true });
+        if (blob.mode === "120000") await symlink(bytes.toString("utf8"), join(files, blob.path));
+        else await writeFile(join(files, blob.path), bytes, { mode: blob.mode === "100755" ? 0o755 : 0o644 });
+      };
+      const queue = [...blobs];
+      await Promise.all(Array.from({ length: 8 }, async () => { for (let blob = queue.shift(); blob; blob = queue.shift()) await write(blob); }));
+    } else {
+      const walk = async (folder: string): Promise<void> => {
+        for (const entry of await readdir(join(cwd, folder), { withFileTypes: true }).catch(() => { left_out.push(folder); return []; })) {
+          const path = folder ? `${folder}/${entry.name}` : entry.name;
+          if (entry.isDirectory()) { if (entry.name !== ".git" && entry.name !== "node_modules") { await mkdir(join(files, path)); await walk(path); } continue; }
+          if (entry.isSymbolicLink()) await symlink(await readlink(join(cwd, path)), join(files, path));
+          else if (entry.isFile()) await copyFile(join(cwd, path), join(files, path)).catch(() => left_out.push(path));
+        }
+      };
+      await walk("");
+    }
+    const groups: string[][] = [[]];
+    let size = 0;
+    const group = async (folder: string): Promise<void> => {
+      for (const entry of await readdir(join(files, folder), { withFileTypes: true })) {
         const path = folder ? `${folder}/${entry.name}` : entry.name;
-        const target = join(scratch, "files", path);
-        if (entry.isDirectory()) { if (entry.name !== ".git" && entry.name !== "node_modules") { await mkdir(target, { recursive: true }); await walk(path); } continue; }
-        if (entry.isSymbolicLink()) { await symlink(await readlink(join(cwd, path)), target); continue; }
-        if (entry.isFile()) await copyFile(join(cwd, path), target).catch(() => left_out.push(path));
+        if (entry.isDirectory()) { await group(path); continue; }
+        const bytes = (await lstat(join(files, path))).size;
+        if (size + bytes > PART_LIMIT && groups.at(-1)!.length) { groups.push([]); size = 0; }
+        groups.at(-1)!.push(path);
+        size += bytes;
       }
     };
-    await mkdir(join(scratch, "files"));
-    await walk("");
-    await execute("tar", ["-cf", tar, "-C", join(scratch, "files"), "."]);
-    return { root: cwd, source: "today", taken_at: new Date().toISOString(), left_out: left_out.sort(), bytes: await readFile(tar) };
+    await group("");
+    const parts: Buffer[] = [];
+    for (const [index, paths] of groups.entries()) {
+      await writeFile(join(scratch, `list-${index}`), paths.map(path => path + "\0").join(""));
+      await execute("tar", ["-cf", join(scratch, `part-${index}.tar`), "-C", files, "--null", "-T", join(scratch, `list-${index}`)]);
+      parts.push(await readFile(join(scratch, `part-${index}.tar`)));
+      await rm(join(scratch, `part-${index}.tar`));
+    }
+    return root && commit
+      ? { root, source: "git", commit, taken_at: new Date(await git(["show", "-s", "--format=%cI", commit], root)).toISOString(), left_out, parts }
+      : { root: cwd, source: "today", taken_at: new Date().toISOString(), left_out: left_out.sort(), parts };
   } finally { await rm(scratch, { recursive: true, force: true }); }
 }
 
@@ -134,14 +166,14 @@ export async function createSessionMoment(o: SessionMomentOptions): Promise<Mome
     resume: {
       recipe: o.recipe.descriptor.name, session: "data/session.jsonl", moment: "data/session-moment.json",
       ...(reading.files?.length ? { files: "data/session-files" } : {}),
-      ...(copy ? { project: { tar: "data/project.tar", root: copy.root, source: copy.source, ...(copy.commit ? { commit: copy.commit } : {}), taken_at: copy.taken_at, left_out: copy.left_out } } : {}),
+      ...(copy ? { project: { tar: "data/project.tar", ...(copy.parts.length > 1 ? { more: copy.parts.slice(1).map((_, index) => `data/project.${index + 1}.tar`) } : {}), root: copy.root, source: copy.source, ...(copy.commit ? { commit: copy.commit } : {}), taken_at: copy.taken_at, left_out: copy.left_out } } : {}),
       ...(o.fromBeginning ? { from_beginning: true } : {}),
       ...(reading.edits?.length ? { changed_answers: reading.edits.map(edit => edit.line) } : {}),
       ...(o.madeUp ? { made_up: true } : {}),
       ...(o.marked ? { marked: o.marked } : {}),
     },
   };
-  if (copy) prepared.files.set("data/project.tar", copy.bytes);
+  for (const [index, part] of copy?.parts.entries() ?? []) prepared.files.set(index ? `data/project.${index}.tar` : "data/project.tar", part);
   prepared.files.set("data/session.jsonl", session);
   for (const path of reading.files ?? []) prepared.files.set(`data/session-files/${path}`, stripped.get(path)!);
   prepared.files.set("data/session-moment.json", JSON.stringify(reading) + "\n");
