@@ -5,6 +5,7 @@ import { createInterface } from "node:readline";
 import { Mailbox } from "./mailbox.mjs";
 import { Connector, TOOLS, ToolError, Unsupported } from "./connector.mjs";
 import { Himalaya } from "./himalaya.mjs";
+import { learnHimalaya } from "./learn.mjs";
 
 let box, connector, himalaya;
 
@@ -15,23 +16,38 @@ const valueOf = result => {
   try { return text === undefined ? undefined : JSON.parse(text); } catch { return undefined; }
 };
 
-// A snapshot is either the plugin's own JSON or capture events (one JSON object per line) that
-// pair each recorded tools/call with its result.
+// A snapshot is either the plugin's own JSON or capture events (one JSON object per line). Capture
+// events pair each recorded tools/call with its result, and collect what each himalaya call printed:
+// a recorded call's stdout frames, or a command-line capture read's response frames.
 function readSnapshot(text) {
   try {
     const value = JSON.parse(text);
     if (value && typeof value === "object" && !Array.isArray(value) && value.kind === undefined) return value;
   } catch { /* capture events */ }
-  const calls = new Map(), answers = [];
+  const calls = new Map(), answers = [], runs = new Map(), output = [];
+  const stdoutOf = frames => Buffer.concat(frames.filter(f => f.dir === "back" && f.stream === 1).map(f => Buffer.from(f.bytes, "base64"))).toString("utf8");
   for (const line of text.split("\n").filter(Boolean)) {
     const event = JSON.parse(line);
-    const body = event.body?.inline === undefined ? undefined : JSON.parse(event.body.inline);
+    if (event.body?.inline === undefined) continue;
+    if (event.surface === "cli") {
+      const frame = /^(frame|fragment):back:1$/.test(event.op ?? "");
+      if (event.kind === "prefetch") {
+        const read = JSON.parse(event.body.inline);
+        if (Array.isArray(read.args?.argv)) output.push({ argv: read.args.argv, stdout: stdoutOf(JSON.parse(read.response.body)), at: event.ts?.wall });
+      } else if (event.kind === "call" && !/^(frame|fragment):/.test(event.op ?? "")) {
+        const value = JSON.parse(event.body.inline);
+        const argv = event.op === "open" ? value.meta?.argv : value.argv;
+        if (Array.isArray(argv)) { const run = { argv, stdout: "", at: event.ts?.wall }; runs.set(event.stream, run); output.push(run); }
+      } else if (event.kind === "result" && frame && runs.has(event.stream)) runs.get(event.stream).stdout += event.body.inline;
+      continue;
+    }
+    const body = JSON.parse(event.body.inline);
     if (!body) continue;
     const key = JSON.stringify([event.stream, body.id]);
     if (event.kind === "call" && body.method === "tools/call") calls.set(key, body.params);
     if (event.kind === "result" && calls.has(key) && body.result) answers.push({ op: `tools/call:${calls.get(key).name}`, args: calls.get(key).arguments ?? {}, result: body.result, observed_at: event.ts?.wall });
   }
-  return { answers };
+  return { answers, himalaya_output: output };
 }
 
 async function initialize(params) {
@@ -57,6 +73,7 @@ async function initialize(params) {
     const at = Date.parse(answer.observed_at);
     connector.ingest(tool, answer.args, valueOf(answer.result), at, answer.before_cut !== false && at <= cut);
   }
+  learnHimalaya(box, (snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)).sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0)));
   for (const m of box.messages.values()) box.fromRaw(m);
   box.changes = [];
   himalaya = new Himalaya(box, snapshot.himalaya);

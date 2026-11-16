@@ -30,9 +30,12 @@ A write through one is seen by the other. If the agent stars a message with hima
 | `messages`, `drafts` | Messages and drafts already known |
 | `answers` | Recorded connector answers `{ op, args, result, observed_at }` |
 
-The snapshot can also be capture events, one JSON line per call and per result. That is what the resume path writes; each `tools/call` is paired with its result to make `answers`.
+The snapshot can also be capture events, one JSON line per call and per result. That is what the resume path writes; each `tools/call` is paired with its result to make `answers`. A recorded himalaya call (its invocation and stdout frames) and a command-line capture read (a `prefetch` event) become `himalaya_output`.
+
+The copy learns mail from himalaya's JSON output (`-o json`). `envelope list` gives each message its real id in that folder, its flags, subject, sender, recipient and date. `message read` of one id gives that message its headers and body. A message seen only in a list keeps its body unknown, so reading it falls through. Plain-text output is not parsed.
 | `cut_at` | Answers observed at or before this time are the moment's past |
 | `himalaya` | `{ top, accounts: [{ name, lines, default }] }`: the person's himalaya settings without connection or login lines |
+| `himalaya_output` | `[{ argv, stdout, at }]`: what himalaya calls printed |
 
 The copy learns the mailbox from the answers in time order. A recorded send, reply or draft is replayed inside the copy and takes the id Gmail gave it. Gmail ids carry the millisecond the message was made, so the copy also takes Gmail's `internalDate` from the id.
 
@@ -46,7 +49,7 @@ For himalaya, read-only entries are the first words of a command: `himalaya fold
 
 `src/capture.mjs` plans reads of everything the session touched through the connector: `list_labels`, then `get_thread` (FULL_CONTENT) for each thread, `get_message` (RAW) for each message, and `get_draft` for each draft. Every planned read is a declared read-only tool. The sidecar makes no network calls.
 
-For a command-line target it plans `himalaya folder list`, plus the session's own `envelope list` and `message read` calls, with `--preview` added and any leading options moved after the subcommand. It never plans a send or another write.
+For a command-line target it plans `himalaya folder list`, plus the session's own `envelope list` calls and one `message read --preview` per id the session read, all as JSON, with the headers the copy needs. It never plans a send or another write.
 
 The claude.ai connector runs inside claude.ai. There is no local MCP command for the host to read through, so a mark reports the connector as not saved, and the copy starts from the answers the session recorded.
 
@@ -76,12 +79,13 @@ Merged with a gap (JOH-57 stays open). Not proven or not built yet:
 
 - himalaya against the real Gmail. Its output is compared only with the copy's own IMAP so far. This waits for Johan's app password.
 - pi on the resume path, the pi half of steps 2 to 4 and 6. pi reaches email only through himalaya.
-- The copy does not yet build its snapshot from what a command-line capture read. The reads are stored, but serve does not use them. The same is true for MCP prefetch.
+- The copy learns mail from himalaya's output and from command-line capture reads, but nothing in the core hands them to it yet: a mark doesn't plan command-line reads, and a resume snapshot holds only MCP answers. MCP prefetch isn't used either. Both wait for the step that recognizes a session's shell command as a plugin's (PHOE-47).
 - The resume path does not yet send a new shell command, one the session never made, to a plugin's copy.
 
 Other limits:
 
 - Attachment bytes are not held.
+- From himalaya output alone, the copy learns messages in INBOX and Gmail's own folders. A label folder needs the label list from the connector.
 - With no himalaya settings from the person, a himalaya send saves its copy to "Sent", which the copy doesn't have. The message is still delivered.
 - `create_label` and `update_label` answer only plain labels: a color or a nested name (with `/`) falls through, because no real answer for those has been recorded.
 - A search with plain words falls through when any message the copy holds has content it never saw, because the copy can't tell whether those words are in it.
