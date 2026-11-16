@@ -1,15 +1,15 @@
 import { createInterface } from "node:readline";
 
 type RecordValue = Record<string, any>;
-let seq = 0, session: string | undefined, version: string | undefined;
+const VERSIONS = ["0.167.0", "0.169.0"];
+let seq = 0, line = 0, session: string | undefined, version: string | undefined;
 const calls = new Map<string, { connector: string; op: string }>();
 function emit(kind: string, row: RecordValue, fields: RecordValue = {}, body: unknown = row.payload, verbatim: string[] = []) {
-  process.stdout.write(JSON.stringify({ v: 1, capture: "reader", stream: "session", seq: seq++, ts: { wall: row.timestamp }, kind, route: "transcript", ...(session && !process.argv.includes("--single-run") ? { task: session } : {}), ...fields, ...(body === undefined ? {} : { body: { inline: typeof body === "string" ? body : JSON.stringify(body) } }), verbatim }) + "\n");
+  process.stdout.write(JSON.stringify({ v: 1, capture: "reader", stream: "session", seq: seq++, ts: { wall: row.timestamp }, kind, route: "transcript", source_line: line, ...(session && !process.argv.includes("--single-run") ? { task: session } : {}), ...fields, ...(body === undefined ? {} : { body: { inline: typeof body === "string" ? body : JSON.stringify(body) } }), verbatim }) + "\n");
 }
 function unread(row: RecordValue, line: number, reason: string) {
   emit("meta", row, { op: "transcript.unread" }, { line, type: typeof row.type === "string" ? row.type : "unknown", reason });
 }
-let line = 0;
 for await (const text of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
   line++;
   let row: RecordValue;
@@ -23,15 +23,15 @@ for await (const text of createInterface({ input: process.stdin, crlfDelay: Infi
     version = p.cli_version;
     session = typeof p.id === "string" ? p.id : typeof p.session_id === "string" ? p.session_id : undefined;
     emit("meta", row, { op: "transcript.coverage" }, {
-      harness_versions: ["0.169.0"],
+      harness_versions: VERSIONS,
       carries: ["logged model-visible response items", "logged tool names, inputs, outputs and call IDs", "completed MCP and command items including logged argv and exit code", "session and turn context", "wall timestamps", "logged base instructions"],
       lacks: ["model HTTP requests and responses", "provider-held history", "complete tool catalog and MCP protocol version", "MCP wire envelopes", "raw CLI streams, terminal/exit controls and filesystem effects", "monotonic time and stream chunk timings", "unlogged or encrypted reasoning"],
     });
-    if (version !== "0.169.0") { unread(row, line, "unsupported cli_version"); continue; }
+    if (!VERSIONS.includes(version!)) { unread(row, line, "unsupported cli_version"); continue; }
     emit("meta", row, { op: "session_meta" }, { id: session, cli_version: version, cwd: p.cwd, model_provider: p.model_provider, base_instructions: p.base_instructions }, ["ts.wall", "body.cli_version", "body.cwd", "body.model_provider", "body.base_instructions", ...(!process.argv.includes("--single-run") && session ? ["task"] : [])]);
     continue;
   }
-  if (version !== "0.169.0") { unread(row, line, "no supported session header"); continue; }
+  if (!VERSIONS.includes(version!)) { unread(row, line, "no supported session header"); continue; }
   if (row.type === "response_item") {
     if (["function_call", "custom_tool_call"].includes(p.type) && typeof p.name === "string" && typeof p.call_id === "string") {
       const fields = { connector: "codex-tools", op: p.name };

@@ -24,6 +24,80 @@ login mode; the launcher never switches between subscription and API billing.
 If HTTP/SSE or endpoint overrides are disallowed, omit `gateway` and use
 `transcript`. No TLS interception is attempted.
 
+## Put Codex back in a moment
+
+Codex saves every session as a file under `~/.codex/sessions/YYYY/MM/DD/`.
+Phoenix can cut that file at a moment and let Codex go on from there in the box,
+with a changed harness. Copy the session file first. Phoenix only reads it.
+
+```sh
+phoenix moment create --session rollout-....jsonl --recipe recipes/codex/recipe.yaml \
+  --at <line> --id <id> --check check.yaml <out-dir>
+```
+
+`--at` is a line of the session file. The moment starts at the user turn that
+holds that line. Codex gets everything before that turn and then the turn's
+message again. Sessions from Codex 0.167.0 and 0.169.0 that used a ChatGPT login
+are supported.
+
+In checks, MCP tools are named `<server>.<tool>`, for example
+`github.create_issue`. Shell commands are `codex-shell.exec`.
+
+### What happens in a replay
+
+The box runs Codex's own `codex exec fork` on the cut session. Codex keeps the
+history and starts a new session from it. Codex talks to its LLM directly at
+chatgpt.com. Nothing from Phoenix sits in between.
+
+Phoenix answers the tool calls from the session's own results:
+
+- Each MCP server of the session is replaced by `mcp-stand-in.mjs`. It offers
+  the server's tools with the descriptions the session saved, and sends every
+  call to Phoenix.
+- Codex runs shell commands with `zsh -lc`. In the box, `zsh`, `bash` and,
+  for Codex only, `sh` are `shell.mjs`, which sends the command to Phoenix
+  instead of running it.
+
+### The harness
+
+- `AGENTS.md`: instructions, added after the session's own global
+  `AGENTS.md`.
+- `config.toml`: Codex settings, laid on top as a Codex profile
+  (`codex exec -p`). `model` swaps the LLM. `[features] shell_tool = false`
+  takes the shell away. `disabled_tools` under `[mcp_servers."<server>"]` hides
+  MCP tools.
+- `models.json`: Codex's LLM list (`model_catalog_json`), when the session's
+  LLM needs one.
+
+List the files you want an agent to change under `editable` in
+`phoenix.harness.yaml`.
+
+### Login
+
+`login.mjs` copies Codex's ChatGPT login into the box for one run, without its
+refresh token. It is deleted after the run and never goes into a bundle, trace
+or git. The login must be valid for 15 more minutes; run `codex` once to
+refresh it.
+
+### Build the box image
+
+```sh
+docker build -f recipes/codex/resume.Dockerfile -t phoenix-codex-resume:0.169.0 recipes/codex
+```
+
+Put the image ID and the path to `recipe.yaml` in the Workbench settings.
+
+### Limits
+
+- A tool call the session never made gets no answer, and the replay stops
+  there. Codex often runs a new shell command first, like `pwd`, so many
+  replays stop early. Ticket T11 (JOH-55) owns the fix, for every harness.
+- The box runs Codex 0.169.0. Its own tool descriptions and base instructions
+  can differ from the ones in an older session.
+- Other sites on chatgpt.com can be reached from the box.
+- A user turn with images or files can't be a moment yet.
+- The resumed run uses the real clock.
+
 ## Login coverage
 
 | Mode | Live model capture | Fallback |

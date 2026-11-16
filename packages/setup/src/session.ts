@@ -65,12 +65,15 @@ export async function createSessionMoment(o: SessionMomentOptions): Promise<Mome
   reading.answers.push(...o.answers ?? []);
   const session = Buffer.from(lines.join("\n"));
   const view = await readCapture(o.capture);
-  const events: TraceEvent[] = [];
-  for await (const event of view.events({ capture: view.metadata.capture, task: "" })) events.push(event);
-  const atLine = events.filter(e => (e as { source_line?: unknown }).source_line === reading.at);
-  const mark = atLine.find(e => e.kind === "call") ?? atLine[0];
+  let mark: TraceEvent | undefined, task = "";
+  for (const run of view.runs()) {
+    const atLine: TraceEvent[] = [];
+    for await (const event of view.events(run)) if ((event as { source_line?: unknown }).source_line === reading.at) atLine.push(event);
+    mark = atLine.find(e => e.kind === "call") ?? atLine[0];
+    if (mark) { task = run.task; break; }
+  }
   if (!mark) throw new Error(`The imported session has no event for line ${reading.at}`);
-  const prepared = await prepareSnapshotMoment({ capture: o.capture, mark: eventId(mark), start: "mark", id: o.id, connectors: [], check: o.check, workdir: false, prompt: reading.prompt, ...(o.timezone ? { timezone: o.timezone } : {}) });
+  const prepared = await prepareSnapshotMoment({ capture: o.capture, mark: eventId(mark), start: "mark", id: o.id, connectors: [], check: o.check, workdir: false, prompt: reading.prompt, ...(task ? { task } : {}), ...(o.timezone ? { timezone: o.timezone } : {}) });
   const connectors: NonNullable<MomentManifest["connectors"]> = {};
   for (const name of new Set(reading.answers.map(a => a.connector))) connectors[name] = { surface: "mcp", routes: ["transcript"], tier: "recorded", origin: reading.answers.every(a => a.connector !== name || a.world) ? "seeded" : "captured", read_only: [...(o.readOnly?.[name] ?? []).map(op => ({ op: `tools/call:${op}`, source: "plugin" as const })), ...(reading.read_only?.[name] ?? []).filter(op => !o.readOnly?.[name]?.includes(op)).map(op => ({ op: `tools/call:${op}`, source: "annotation" as const }))], data: [{ path: "data/run.jsonl", kind: "run-evidence" }] };
   const manifest: MomentManifest = {
