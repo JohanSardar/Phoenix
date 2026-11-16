@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { Mailbox } from "./mailbox.mjs";
 import { Connector, TOOLS, ToolError, Unsupported } from "./connector.mjs";
-import { Himalaya } from "./himalaya.mjs";
+import { Himalaya, folderAliases } from "./himalaya.mjs";
 import { learnHimalaya } from "./learn.mjs";
 
 let box, connector, himalaya;
@@ -73,7 +73,7 @@ async function initialize(params) {
     const at = Date.parse(answer.observed_at);
     connector.ingest(tool, answer.args, valueOf(answer.result), at, answer.before_cut !== false && at <= cut);
   }
-  learnHimalaya(box, (snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)).sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0)));
+  learnHimalaya(box, (snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)).sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0)), folderAliases(snapshot.himalaya));
   for (const m of box.messages.values()) box.fromRaw(m);
   box.changes = [];
   himalaya = new Himalaya(box, snapshot.himalaya);

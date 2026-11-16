@@ -9,7 +9,9 @@ const SYSTEM = { INBOX: "INBOX", "[Gmail]/Drafts": "DRAFT", "[Gmail]/Important":
 export const VALUED = new Set(["-f", "--folder", "-o", "--output", "-a", "--account", "-c", "--config", "-H", "--header", "--page", "-s", "--page-size", "-w", "--max-width"]);
 export const valued = (argv, option) => VALUED.has(option) || (option === "-p" && argv.includes("envelope"));
 
-function command(argv) {
+const CONDITIONS = new Set(["date", "before", "after", "from", "to", "subject", "body", "flag"]);
+
+function command(argv, aliases = {}) {
   const options = {}, words = [];
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
@@ -20,7 +22,9 @@ function command(argv) {
     words.push(a);
   }
   const value = (...names) => names.flatMap(n => options[n] ?? []).at(-1);
-  return { words, folder: value("-f", "--folder") ?? "INBOX", json: value("-o", "--output") === "json", newestFirst: !words.includes("order") };
+  const folder = value("-f", "--folder") ?? "INBOX";
+  const sorted = words.some((w, i) => w === "order" && words[i + 1] === "by" && !CONDITIONS.has(words[i - 1]));
+  return { words, folder: aliases[folder.toLowerCase()] ?? folder, json: value("-o", "--output") === "json", newestFirst: !sorted };
 }
 
 function folderLabel(box, folder) {
@@ -35,7 +39,7 @@ const dateMs = text => { const ms = Date.parse(String(text ?? "").replace(" ", "
 const offsetOf = text => { const found = /([+-]\d{2}):?(\d{2})$/.exec(String(text ?? "")); return found ? found[1] + found[2] : undefined; };
 
 // himalaya prints dates to the minute, newest first. Messages listed in the same minute get seconds
-// that keep the order himalaya printed them in.
+// that keep the order himalaya printed them in; a listing that shows more of that minute refines them.
 function envelopes(box, folder, list, newestFirst) {
   const place = folderLabel(box, folder);
   if (!place.known || !Array.isArray(list)) return;
@@ -45,13 +49,16 @@ function envelopes(box, folder, list, newestFirst) {
     if (place.label === "SENT" && e.from?.addr && !box.account.email) Object.assign(box.account, { email: e.from.addr, name: box.account.name || (e.from.name ?? "") });
     const flags = new Set(e.flags ?? []);
     const labels = [...(place.label ? [place.label] : []), ...(flags.has("Seen") ? [] : ["UNREAD"]), ...(flags.has("Flagged") ? ["STARRED"] : [])];
-    const later = newestFirst && dateMs(e.date) !== undefined ? list.slice(i + 1).filter(o => o?.date === e.date).length : 0;
+    const minute = newestFirst && dateMs(e.date) !== undefined ? list.filter(o => o?.date === e.date).length : 0;
+    const later = minute ? list.slice(i + 1).filter(o => o?.date === e.date).length : 0;
     const ms = dateMs(e.date) === undefined ? box.nowMs ?? 0 : dateMs(e.date) + Math.min(later, 59) * 1000;
     let m = byUid(box, folder, uid) ?? [...box.messages.values()].find(o => o.uids[folder] === undefined && o.fields.subject === e.subject && o.fields.sender === e.from?.addr && Math.floor(Number(o.internalDate) / 60000) === Math.floor(ms / 60000));
-    if (m) m.uids[folder] = uid;
-    else {
+    if (m) {
+      m.uids[folder] = uid;
+      if (m.minute !== undefined && minute >= m.minute && Math.floor(Number(m.internalDate) / 60000) === Math.floor(ms / 60000)) Object.assign(m, { internalDate: String(ms), minute });
+    } else {
       const id = box.newId(ms);
-      m = { id, threadId: id, labelIds: [], internalDate: String(ms), fields: {}, know: new Set(["metadata"]), observedAt: -1, uids: { [folder]: uid } };
+      m = { id, threadId: id, labelIds: [], internalDate: String(ms), fields: {}, know: new Set(["metadata"]), observedAt: -1, uids: { [folder]: uid }, minute };
       box.add(m);
     }
     const others = m.labelIds.filter(l => !["UNREAD", "STARRED", place.label].includes(l));
@@ -102,9 +109,9 @@ function read(box, folder, uid, text) {
   for (const k of ["metadata", "minimal", "body"]) m.know.add(k);
 }
 
-export function learnHimalaya(box, observations) {
+export function learnHimalaya(box, observations, aliases = {}) {
   for (const { argv, stdout } of observations) {
-    const { words, folder, json, newestFirst } = command(argv);
+    const { words, folder, json, newestFirst } = command(argv, aliases);
     if (!json) continue;
     let value;
     try { value = JSON.parse(stdout); } catch { continue; }

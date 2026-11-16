@@ -18,10 +18,10 @@ const session = [
   [["himalaya", "message", "read", "--preview", "-o", "json", "68496"], "From: Test Person <" + me + ">\nTo: " + me + "\nSubject: [phoenix-test] t57 Invoice\n\nInvoice due.\n"],
 ];
 
-async function copyOf(t) {
+async function copyOf(t, observations = session) {
   const root = await mkdtemp(join(import.meta.dirname, ".gmail-session-"));
   const path = join(root, "snapshot.jsonl");
-  const events = session.flatMap(([argv, out], n) => [
+  const events = observations.flatMap(([argv, out], n) => [
     { kind: "call", op: "himalaya", body: { inline: JSON.stringify({ argv, cwd: "/", env: {}, terminals: { stdin: null, stdout: null, stderr: null } }) } },
     { kind: "result", op: "frame:back:1", body: { inline: JSON.stringify(out) + "\n" } },
     { kind: "result", op: "frame:back:3", body: { inline: JSON.stringify({ type: "exit", code: 0, signal: null }) } },
@@ -69,4 +69,36 @@ test("without himalaya settings, sending to oneself and deleting work like Gmail
   await copy(["himalaya", "message", "delete", "68496"]);
   assert.deepEqual(brief(await copy(list("[Gmail]/Sent Mail"))).map(([, subject]) => subject), ["Paid", "Lunch"]);
   assert.deepEqual(brief(await copy(list("[Gmail]/Trash"))).map(([, subject]) => subject), ["Invoice"]);
+});
+
+test("S14: a listing through the new sent alias seeds the same mailbox", async t => {
+  const source = await copyOf(t);
+  const argv = list("sent");
+  const envelopes = JSON.parse(await source(argv));
+  assert.equal(envelopes.length, 2);
+  const copy = await copyOf(t, [[argv, envelopes]]);
+  assert.deepEqual(JSON.parse(await copy(argv)).map(e => e.id), envelopes.map(e => e.id));
+});
+
+test("S15: a fuller later listing refines same-minute ordering", async t => {
+  const source = await copyOf(t);
+  const narrow = ["himalaya", "envelope", "list", "-o", "json", "subject", "Lunch"];
+  const one = JSON.parse(await source(narrow));
+  const both = JSON.parse(await source(list()));
+  assert.equal(one.length, 1);
+  assert.equal(both.length, 2);
+  const copy = await copyOf(t, [[narrow, one], [list(), both]]);
+  assert.deepEqual(JSON.parse(await copy(list())).map(e => e.id), both.map(e => e.id));
+});
+
+test("S16: the search word order is not an order-by clause", async t => {
+  const all = ["himalaya", "envelope", "list", "-o", "json"];
+  const source = await copyOf(t, [[all, [
+    envelope("68497", "[phoenix-test] order new"), envelope("68496", "[phoenix-test] order old"),
+  ]]]);
+  const query = [...all, "subject", "order"];
+  const envelopes = JSON.parse(await source(query));
+  assert.equal(envelopes.length, 2);
+  const copy = await copyOf(t, [[query, envelopes]]);
+  assert.deepEqual(JSON.parse(await copy(query)).map(e => e.id), envelopes.map(e => e.id));
 });

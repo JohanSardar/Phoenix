@@ -10,6 +10,13 @@ const tomlString = s => JSON.stringify(String(s));
 // himalaya's own folder names (Sent, Trash, Drafts) do not exist on Gmail, so a person's working
 // Gmail setup names Gmail's folders. Used when the snapshot carries no himalaya settings.
 const GMAIL_FOLDERS = ['folder.aliases.inbox = "INBOX"', 'folder.aliases.sent = "[Gmail]/Sent Mail"', 'folder.aliases.drafts = "[Gmail]/Drafts"', 'folder.aliases.trash = "[Gmail]/Trash"'];
+
+// The folder names himalaya resolves for the default account, by lower-case alias.
+export function folderAliases(settings) {
+  const accounts = settings?.accounts ?? [{ lines: GMAIL_FOLDERS, default: true }];
+  const account = accounts.find(a => a.default) ?? accounts[0];
+  return Object.fromEntries((account?.lines ?? []).map(line => /^\s*folder\.aliases\.([\w-]+)\s*=\s*"((?:[^"\\]|\\.)*)"\s*$/.exec(line)).filter(Boolean).map(([, key, value]) => [key.toLowerCase(), JSON.parse('"' + value + '"')]));
+}
 const LOG = process.env.PHOENIX_EMAIL_LOG;
 
 export class Himalaya {
