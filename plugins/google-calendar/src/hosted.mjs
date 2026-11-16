@@ -37,6 +37,7 @@ export class Hosted {
     this.searches = [];
     this.suggested = [];
     this.changes = [];
+    this.tick = 0;
   }
 
   gap(why) { this.copy.gap(why); }
@@ -60,8 +61,11 @@ export class Hosted {
   }
   wrote(cal, ms, event) {
     if (cal.hosted) cal.hosted.updated = upSeconds(ms);
-    this.changes.push({ id: event.id, at: ms, created: Date.parse(event.created) });
+    this.mark(event);
   }
+  // Changes, searches and suggestions are ordered by when the copy learned or made them, not by their timestamps,
+  // which can tie or be rounded to the second.
+  mark(event) { this.changes.push({ id: event.id, seq: ++this.tick, created: Date.parse(event.created) }); }
 
   readView(event, zone, ctz) {
     const { kind: _k, etag: _e, availability: _a, visibility: _v, ...shown } = event;
@@ -137,7 +141,7 @@ export class Hosted {
       if (Date.parse(event.updated) > seen.at) this.gap(`event ${event.id} changed after the search ${JSON.stringify(args.query)} was seen, and the copy cannot tell whether it matches now`);
       if (seen.ids.includes(event.id)) events.push(event);
     }
-    for (const change of this.changes) if (change.at > seen.at && cal.events.get(change.id)?.status !== "cancelled") this.gap(`event ${change.id} changed after the search ${JSON.stringify(args.query)} was seen, and the copy cannot tell whether it matches now`);
+    for (const change of this.changes) if (change.seq > seen.seq && cal.events.get(change.id)?.status !== "cancelled") this.gap(`event ${change.id} changed after the search ${JSON.stringify(args.query)} was seen, and the copy cannot tell whether it matches now`);
     if (events.length !== seen.ids.filter(id => cal.events.get(id)?.status !== "cancelled").length) this.gap("the copy has lost an event of a search it saw");
     if (events.length > (args.pageSize ?? 100)) this.gap("the copy has not seen the hosted server page a search");
     const order = new Map(seen.ids.map((id, i) => [id, i]));
@@ -175,7 +179,7 @@ export class Hosted {
     for (const seen of this.suggested) {
       if (seen.emails.length !== 1 || seen.emails[0] !== this.copy.primary || !this.copy.covered(cal, seen.a, seen.b)) continue;
       if (events.some(e => Date.parse(e.updated) > seen.at && !(Date.parse(e.created) > seen.at))) continue;
-      if (this.changes.some(change => change.at > seen.at && !(change.created > seen.at))) continue;
+      if (this.changes.some(change => change.seq > seen.seq && !(change.created > seen.at))) continue;
       const present = events.filter(e => e.status !== "cancelled" && !(Date.parse(e.created) > seen.at) && parseInstant(e.end?.dateTime ?? "") > seen.a && parseInstant(e.start?.dateTime ?? "") < seen.b);
       if (this.copy.expanded(cal, seen.a, seen.b).some(e => !e.start?.dateTime)) continue;
       const fixed = present.filter(e => e.availability), open = present.filter(e => !e.availability);
@@ -276,7 +280,7 @@ export class Hosted {
       const a = typeof args.startTime === "string" && zone ? naiveToMs(args.startTime, zone) : NaN, b = typeof args.endTime === "string" && zone ? naiveToMs(args.endTime, zone) : NaN;
       if (!Number.isFinite(a) || !Number.isFinite(b) || !(b > a)) return;
       const at = Date.parse(observedAt ?? "") || 0, listed = new Set(events.map(e => e.id));
-      for (const event of copy.expanded(cal, a, b, true)) if (!listed.has(event.id)) this.changes.push({ id: event.id, at, created: Date.parse(event.created) });
+      for (const event of copy.expanded(cal, a, b, true)) if (!listed.has(event.id)) this.mark(event);
       copy.dropWindowEvents(cal, a, b, listed);
       copy.addWindow(cal, a, b);
       return;
@@ -284,13 +288,13 @@ export class Hosted {
     if (op === "search_events") {
       const cal = copy.cal("primary");
       for (const event of value.events ?? []) this.put(cal, event);
-      this.searches.push({ query: args.query, ids: (value.events ?? []).map(e => e.id), limit: args.pageSize ?? 100, at: Date.parse(observedAt ?? "") || 0 });
+      this.searches.push({ query: args.query, ids: (value.events ?? []).map(e => e.id), limit: args.pageSize ?? 100, at: Date.parse(observedAt ?? "") || 0, seq: ++this.tick });
       return;
     }
     if (op === "suggest_time") {
       const a = typeof args.startTime === "string" && args.timeZone ? naiveToMs(args.startTime, args.timeZone) : NaN, b = typeof args.endTime === "string" && args.timeZone ? naiveToMs(args.endTime, args.timeZone) : NaN;
       if (!Number.isFinite(a) || !Number.isFinite(b) || !(b > a) || args.preferences !== undefined) return;
-      this.suggested.push({ emails: args.attendeeEmails ?? [], a, b, minutes: args.durationMinutes ?? 30, slots: (value.timeSlots ?? []).map(s => [parseInstant(s.startTime), parseInstant(s.endTime)]), at: Date.parse(observedAt ?? "") || 0 });
+      this.suggested.push({ emails: args.attendeeEmails ?? [], a, b, minutes: args.durationMinutes ?? 30, slots: (value.timeSlots ?? []).map(s => [parseInstant(s.startTime), parseInstant(s.endTime)]), at: Date.parse(observedAt ?? "") || 0, seq: ++this.tick });
       return;
     }
     if (op === "get_event" && value.id) return this.put(copy.cal(args.calendarId ?? "primary"), value);
@@ -304,14 +308,21 @@ export class Hosted {
     const cal = copy.cal(args.calendarId ?? "primary");
     const event = cal.events.get(value.id ?? args.eventId);
     if (!Number.isFinite(at) || !event) return;
-    this.changes.push({ id: event.id, at, created: Date.parse(event.created) });
+    this.mark(event);
     if (cal.hosted && !(Date.parse(cal.hosted.updated) > at)) cal.hosted.updated = upSeconds(at);
   }
   put(cal, event) {
     if (!event?.id) return;
-    cal.events.set(event.id, keep(event, cal.events.get(event.id)));
+    const before = cal.events.get(event.id), after = keep(event, before);
+    cal.events.set(event.id, after);
+    if (before && state(before) !== state(after)) this.mark(after);
     if (event.creator?.self && event.creator.email) this.copy.setPrimary(event.creator.email);
   }
+}
+
+function state(event) {
+  const instant = t => t?.dateTime ? parseInstant(t.dateTime) : t?.date;
+  return JSON.stringify([event.status, event.summary, event.description, event.location, instant(event.start), instant(event.end), event.availability, event.transparency, event.attendees, event.recurrence]);
 }
 
 function freeStretches(a, b, events, minutes) {

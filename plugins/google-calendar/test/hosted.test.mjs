@@ -161,3 +161,27 @@ test("S6: later lists cannot make an old ambiguous suggestion identify which eve
   const reply = await call("suggest_time", { ...ask, endTime: "2026-12-15T09:00:00" });
   assert.equal(reply.status, "unsupported", JSON.stringify(reply));
 });
+
+test("S2: a later edit invalidates a search even when both have the same wall-clock timestamp", { timeout: 30000 }, async t => {
+  const at = "2026-11-16T12:00:00.400Z";
+  const call = await start(t, [calendars, listed, seen("search_events", { query: "standing" }, {
+    events: [listedEvent("abcdefgh0001", "2026-12-15T08:15:00-06:00", "2026-12-15T08:40:00-06:00")],
+  }, at)]);
+  value(await call("update_event", { eventId: "abcdefgh0001", summary: "[phoenix-test] unrelated project" }, at));
+  const reply = await call("search_events", { query: "standing" }, "2026-11-16T12:00:01Z");
+  assert.equal(reply.status, "unsupported", JSON.stringify(reply));
+});
+test("S6: a later event read cannot change the historical event set behind an old suggestion", { timeout: 30000 }, async t => {
+  const a = listedEvent("abcdefgh0001", "2026-12-15T08:15:00-06:00", "2026-12-15T08:40:00-06:00");
+  const b = listedEvent("abcdefgh0002", "2026-12-15T08:15:00-06:00", "2026-12-15T08:40:00-06:00");
+  const moved = { ...a, start: time("2026-12-15T12:15:00-06:00"), end: time("2026-12-15T12:40:00-06:00"), updated: "2026-11-16T10:30:00Z" };
+  const ask = { attendeeEmails: [me], startTime: "2026-12-15T08:00:00", endTime: "2026-12-15T10:00:00", timeZone: "America/Chicago", durationMinutes: 30 };
+  const call = await start(t, [
+    calendars,
+    seen("list_events", day, { ...header, events: [a, b] }),
+    seen("suggest_time", ask, { timeSlots: [slot("2026-12-15T08:40:00-06:00", "2026-12-15T10:00:00-06:00", 80)] }, "2026-11-16T10:30:00.100Z"),
+    seen("get_event", { eventId: a.id }, moved, "2026-11-16T10:30:00.900Z"),
+  ]);
+  const reply = await call("suggest_time", { ...ask, endTime: "2026-12-15T09:00:00" });
+  assert.equal(reply.status, "unsupported", JSON.stringify(reply));
+});
