@@ -24,6 +24,7 @@ async function main() {
   if (values.driver === "codex" && previous.config?.setupMode !== "existing") throw new Error("Select an existing-mode Codex instance explicitly; the managed default cannot be redirected");
   const instance = structuredClone(previous);
   instance.config ??= {};
+  if ((instance.environment ?? []).some(entry => entry.valueRedacted === true) || JSON.stringify(instance.config).includes('"••••••"')) throw new Error("Native credentials remain in the existing Ozi secret store; use its transcript route");
   const environment = new Map((instance.environment ?? []).map(entry => [entry.name, entry]));
   environment.set("PATH", { name: "PATH", value: process.env.PATH ?? "", sensitive: false });
   if (values["model-env"]) {
@@ -44,8 +45,9 @@ async function main() {
         if (value && typeof value === "object") return `{${Object.entries(value).map(([key, child]) => `${JSON.stringify(key)}=${toml(child)}`).join(",")}}`;
         throw new Error("Unsupported native MCP configuration value");
       };
-      const args = Object.entries(config.mcpServers).map(([name, server]) => `-c ${quote(`mcp_servers.${JSON.stringify(name)}=${toml(server)}`)}`).join(" ");
-      instance.config.launchArgs = `${instance.config.launchArgs ?? ""} ${args}`.trim();
+      const args = `-c ${quote(`mcp_servers=${toml(config.mcpServers)}`)}`;
+      const nativeArgs = (environment.get("OZI_CODEX_LAUNCH_ARGS")?.value ?? process.env.OZI_CODEX_LAUNCH_ARGS)?.trim() || instance.config.launchArgs?.trim() || "";
+      instance.config.launchArgs = `${nativeArgs} ${args}`.trim();
       environment.set("OZI_CODEX_LAUNCH_ARGS", { name: "OZI_CODEX_LAUNCH_ARGS", value: instance.config.launchArgs, sensitive: false });
     } else throw new Error("This driver has no demonstrated external MCP launch-argument route; use its transcript");
   }
