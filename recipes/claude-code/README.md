@@ -143,6 +143,23 @@ later start points. Session IDs, dynamic prompts, cwd, native tools, CLI platfor
 differences and model configuration can drift; the runner's fidelity report is
 the authority, not a blanket promise that an unchanged binary can echo perfectly.
 
+Observed on the existing subscription: a harmless real run captured `ls -1`,
+one stdio MCP call and one explicitly authorized HTTP MCP call. All three live
+surfaces recorded, and transcript import completed with 49 reader events.
+After-only import and immutable reimport also completed. The container echo
+replayed MCP discovery, then correctly stopped with `prefix-drift` at
+`history/0/content/0/text`: subscription account-context attachments differ from
+the fresh container's placeholder-key context. Both samples were incomplete,
+with a **blocked** fidelity grade, no synthesized answers and no live inference.
+This proof does not qualify later start points; don't hide that difference or
+copy login state into the container to force a pass.
+
+The tested native CLI also needed a fresh libfaketime shared-memory handle when
+started from Node: delete `FAKETIME_SHARED` from the child's environment while
+keeping `LD_PRELOAD` and the clock file. Otherwise that image failed at startup
+with `sem_open ... File exists`. The runner's Node clock probe saw virtual time;
+the native runtime's clock remains unverified.
+
 Sources: [authentication](https://code.claude.com/docs/en/authentication),
 [gateway](https://code.claude.com/docs/en/llm-gateway),
 [provider endpoints](https://code.claude.com/docs/en/llm-gateway-connect),

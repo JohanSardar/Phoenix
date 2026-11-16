@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve, delimiter } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,7 +76,7 @@ async function main() {
   if (version.status !== 0 || !/^2\.1\.325\b/.test(version.stdout)) throw new Error("This recipe supports installed Claude Code 2.1.325 only; do not install or upgrade automatically");
   const auth = spawnSync(command[0], [...command.slice(1), "auth", "status"], { encoding: "utf8" });
   if (auth.status !== 0 || !JSON.parse(auth.stdout).loggedIn) throw new Error("Claude Code is not logged in; do not log in automatically");
-  const cwd = resolve(values.cwd ?? process.cwd()), home = resolve(values.home ?? process.env.PHOENIX_HOME ?? join(homedir(), ".phoenix"));
+  const cwd = await realpath(resolve(values.cwd ?? process.cwd())), home = resolve(values.home ?? process.env.PHOENIX_HOME ?? join(homedir(), ".phoenix"));
   const mode = values["login-mode"], fallback = ["bedrock", "aws", "claude-apps-gateway", "managed"].includes(mode);
   const routes = (values.routes ?? (fallback ? "mcp-proxy,cli-proxy,transcript" : "gateway,mcp-proxy,cli-proxy,transcript")).split(",");
   if (routes.some(route => !["gateway", "mcp-proxy", "cli-proxy", "transcript"].includes(route)) || fallback && routes.includes("gateway")) throw new Error("Unsupported route for this login mode; use transcript instead");
