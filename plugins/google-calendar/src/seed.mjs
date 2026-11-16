@@ -113,6 +113,7 @@ function learnCocal(copy, op, args, value) {
 
 function learnAdapter(copy, op, args, value, adapter) {
   const calId = adapter.calendarId;
+  for (const ev of Array.isArray(value) ? value : [value]) for (const t of [ev?.start, ev?.end]) copy.sawOffset(calId, t?.dateTime);
   if (op === "list_events" && Array.isArray(value)) return learnList(copy, calId, value, parseInstant(args.timeMin), parseInstant(args.timeMax), !args.privateExtendedProperty?.length);
   if ((op === "get_event" || op === "move_event") && value?.id && value.updated) copy.putEvent(calId, value);
 }
