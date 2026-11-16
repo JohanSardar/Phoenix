@@ -62,16 +62,20 @@ function toolDefinitions(configuration: Record<string, unknown>): Map<string, un
   return tools;
 }
 
-function withoutLoginContext(value: unknown, rules: { name: string; pattern: RegExp }[], found: string[][]): unknown {
-  if (Array.isArray(value)) return value.flatMap(item => {
-    const text = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, unknown>).text : undefined;
-    const rule = typeof text === "string" ? rules.findIndex(r => r.pattern.test(text)) : -1;
-    if (rule < 0) return [withoutLoginContext(item, rules, found)];
-    found[rule]!.push(text as string);
-    return [];
+function withoutLoginContext(history: unknown, rules: { name: string; pattern: RegExp }[], found: string[][]): unknown {
+  if (!rules.length || !Array.isArray(history)) return history;
+  return history.map(turn => {
+    const entry = object(turn);
+    const key = Array.isArray(entry.content) ? "content" : Array.isArray(entry.parts) ? "parts" : undefined;
+    if (!key) return turn;
+    return { ...entry, [key]: (entry[key] as unknown[]).filter(block => {
+      const text = object(block).text;
+      const rule = typeof text === "string" && ["text", "input_text", undefined].includes(object(block).type as string | undefined) ? rules.findIndex(r => r.pattern.test(text)) : -1;
+      if (rule < 0) return true;
+      found[rule]!.push(text as string);
+      return false;
+    }) };
   });
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, withoutLoginContext(item, rules, found)]));
-  return value;
 }
 
 export function comparePrefixRequest(dialectName: ModelDialectName, recorded: Uint8Array | CallMessage, candidate: Uint8Array | CallMessage, loginContext: readonly LoginContext[] = []): PrefixComparison {
