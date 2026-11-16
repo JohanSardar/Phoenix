@@ -52,9 +52,11 @@ async function copyOf(t, events) {
       const args = { argv, cwd: root, env: {}, terminals: { stdin: null, stdout: null, stderr: null } };
       return exchange("call", { surface: "cli", layer: "agent", op: "himalaya", args, now, raw: { body: b64(args), stdin: b64("") } });
     },
-    cli: async (argv, stdin = "") => {
+    cli: async (argv, stdin = "", recorded) => {
       const args = { argv, cwd: root, env: {}, terminals: { stdin: null, stdout: null, stderr: null } };
-      const value = await request("call", { surface: "cli", layer: "agent", op: "himalaya", args, now, raw: { body: b64(args), stdin: b64(stdin) } });
+      const params = { surface: "cli", layer: "agent", op: "himalaya", args, now, raw: { body: b64(args), stdin: b64(stdin) } };
+      if (recorded !== undefined) params.recorded = { body: b64([{ dir: "back", stream: 1, bytes: b64(recorded), last: true }]) };
+      const value = await request("call", params);
       const frames = JSON.parse(Buffer.from(value.body, "base64").toString());
       const text = stream => frames.filter(frame => frame.stream === stream).map(frame => Buffer.from(frame.bytes, "base64").toString()).join("");
       assert.equal(JSON.parse(text(3)).code, 0, text(2));
@@ -180,7 +182,7 @@ test("S30: a captured JSON read of the same Message-ID must not duplicate a repl
     { argv: ["himalaya", "message", "send"], stdin: message, stdout: "Message successfully sent!\n" },
     { argv: read, stdout: output },
   ]));
-  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 1);
+  await assert.rejects(() => copy.cli(list(sent)), /unsupported/);
 });
 
 test("S25b: a metadata observation before full content must still claim a replayed send", async t => {
@@ -265,4 +267,111 @@ test("S32b: an authoritative thread count survives a claim without a metadata pl
     ...mcpEvents("get_message", { messageId: id, messageFormat: "FULL_CONTENT" }, message, "2026-11-16T20:33:50Z"),
   ]);
   await assert.rejects(() => copy.tool("get_thread", { threadId: id, messageFormat: "METADATA_ONLY" }), /only part of thread/);
+});
+
+async function optionalList(copy, argv) {
+  const response = await copy.response(argv);
+  if (response.status === "unsupported") return;
+  assert.equal(response.status, "answer", JSON.stringify(response));
+  const frames = JSON.parse(Buffer.from(response.value.body, "base64").toString());
+  const text = stream => frames.filter(frame => frame.stream === stream).map(frame => Buffer.from(frame.bytes, "base64").toString()).join("");
+  assert.equal(JSON.parse(text(3)).code, 0, text(2));
+  return JSON.parse(text(1));
+}
+
+test("S35: a mirrored list must not attach an unread real UID to a provisional body by content", async t => {
+  const source = await copyOf(t, cliEvents([{ argv: list(sent), stdout: [envelope("775", "[phoenix-test] unrelated")] }]));
+  await source.cli(["himalaya", "message", "send"], raw("Bound", "Other recorded body.").replace("<write-review-Bound@example.com>", "<other-recorded@example.com>"));
+  const argv = [...list(sent), "subject", "Bound"];
+  const real = JSON.parse(await source.cli(argv));
+  assert.equal(real[0].id, "777");
+  const copy = await copyOf(t, cliEvents([{ argv: ["himalaya", "message", "send"], stdin: raw("Bound", "Provisional body."), stdout: "Message successfully sent!\n" }]));
+  await copy.cli(argv, "", real);
+  const response = await copy.response(["himalaya", "message", "read", "--preview", "-f", sent, real[0].id]);
+  if (response.status === "answer") {
+    const frames = JSON.parse(Buffer.from(response.value.body, "base64").toString());
+    t.diagnostic(frames.filter(frame => frame.stream === 1).map(frame => Buffer.from(frame.bytes, "base64").toString()).join(""));
+  }
+  assert.equal(response.status, "unsupported");
+});
+
+test("S36: an older complete list must not erase a later move into its folder", async t => {
+  const message = raw("Moved", "Moved later.");
+  const source = await copyOf(t, { account: { email: me } });
+  const save = ["himalaya", "message", "save", "-f", "INBOX"];
+  const move = ["himalaya", "message", "move", "-f", "INBOX", sent, "1"];
+  const saved = await source.cli(save, message);
+  const empty = await source.cli(list(sent));
+  assert.deepEqual(JSON.parse(empty), []);
+  const moved = await source.cli(move);
+  const query = [...list(sent), "subject", "Moved"];
+  assert.equal(JSON.parse(await source.cli(query)).length, 1);
+  const copy = await copyOf(t, { account: { email: me }, himalaya_output: [
+    { argv: save, stdin: message, stdout: saved, code: 0, at: "2026-11-16T20:33:40Z" },
+    { argv: list(sent), stdout: empty, code: 0, at: "2026-11-16T20:33:41Z" },
+    { argv: move, stdout: moved, code: 0, at: "2026-11-16T20:33:42Z" },
+  ] });
+  const shown = await optionalList(copy, query);
+  if (shown) assert.equal(shown.length, 1);
+});
+
+test("S37: a Message-ID synthesized by the copy cannot prove records different", async t => {
+  const id = ((BigInt(Date.parse("2026-11-16T20:33:40Z")) << 20n) | 1n).toString(16);
+  const message = { id, threadId: id, labelIds: ["SENT"], internalDate: String(Date.parse("2026-11-16T20:33:40Z")), sender: me, toRecipients: ["ana@example.com"], subject: "[phoenix-test] t57 Same", plaintextBody: "Same body.", viewUrl: "https://mail.google.com/mail/?authuser=" + me };
+  const first = { argv: ["himalaya", "message", "send"], stdin: raw("Same", "Same body."), stdout: "Message successfully sent!\n" };
+  const seen = mcpEvents("get_message", { messageId: id, messageFormat: "FULL_CONTENT" }, message, "2026-11-16T20:33:50Z");
+  const baseline = await copyOf(t, [...cliEvents([first]), ...seen]);
+  await assert.rejects(() => baseline.cli(list(sent)), /unsupported/);
+  const other = raw("Other", "Other body.").replace("\r\n\r\n", "\r\nIn-Reply-To: <unseen-parent@example.com>\r\n\r\n");
+  const copy = await copyOf(t, [...cliEvents([first, { argv: ["himalaya", "message", "send"], stdin: other, stdout: "Message successfully sent!\n", at: "2026-11-16T20:33:55Z" }]), ...seen]);
+  await assert.rejects(() => copy.cli(list(sent)), /unsupported/);
+});
+
+test("S38: IDS_ONLY search must not expose ambiguous provisional records", async t => {
+  const id = ((BigInt(Date.parse("2026-11-16T20:33:40Z")) << 20n) | 1n).toString(16);
+  const message = { id, threadId: id, labelIds: ["SENT"], internalDate: String(Date.parse("2026-11-16T20:33:40Z")), sender: me, toRecipients: ["ana@example.com"], subject: "[phoenix-test] t57 Once", plaintextBody: "Send once.", viewUrl: "https://mail.google.com/mail/?authuser=" + me };
+  const copy = await copyOf(t, [
+    ...cliEvents([{ argv: ["himalaya", "message", "send"], stdin: raw("Once", "Send once."), stdout: "Message successfully sent!\n" }]),
+    ...mcpEvents("get_thread", { threadId: id, messageFormat: "FULL_CONTENT" }, { id, messageCount: 1, messages: [message] }, "2026-11-16T20:33:50Z"),
+  ]);
+  await assert.rejects(() => copy.tool("get_message", { messageId: id }), /unsupported/);
+  await assert.rejects(() => copy.tool("search_threads", { query: "t57", view: "THREAD_VIEW_IDS_ONLY" }).then(value => { t.diagnostic(JSON.stringify(value)); return value; }), /unsupported/);
+});
+
+test("S38b: an empty search in an unsettled folder must still fall through", async t => {
+  const message = raw("Self", "Self body.").replace("To: ana@example.com", "To: " + me);
+  const copy = await copyOf(t, { account: { email: me }, himalaya_output: [
+    { argv: ["himalaya", "message", "send"], stdin: message, stdout: "Message successfully sent!\n", code: 0, at: "2026-11-16T20:33:40Z" },
+    { argv: list(sent), stdout: "[]", code: 0, at: "2026-11-16T20:33:41Z" },
+  ] });
+  await assert.rejects(() => copy.cli(list()), /unsupported/);
+  await assert.rejects(() => copy.tool("search_threads", { query: "in:inbox" }).then(value => { t.diagnostic(JSON.stringify(value)); return value; }), /unsupported/);
+});
+
+test("S39: configured page size must not make a full page a complete folder", async t => {
+  const himalaya = { accounts: [{ name: "gmail", default: true, lines: ['folder.aliases.inbox = "INBOX"', 'folder.aliases.sent = "[Gmail]/Sent Mail"', 'folder.aliases.drafts = "[Gmail]/Drafts"', 'folder.aliases.trash = "[Gmail]/Trash"', "envelope.list.page-size = 1"] }] };
+  const source = await copyOf(t, { account: { email: me }, himalaya });
+  const older = raw("Older", "Older body."), newer = raw("Newer", "Newer body.", "35");
+  await source.cli(["himalaya", "message", "send"], older);
+  await source.cli(["himalaya", "message", "send"], newer);
+  const page = list(sent);
+  const partial = JSON.parse(await source.cli(page));
+  assert.equal(partial.length, 1);
+  assert.ok(partial[0].subject.endsWith("Newer"));
+  assert.equal(JSON.parse(await source.cli([...list(sent), "subject", "Older"])).length, 1);
+  const copy = await copyOf(t, { account: { email: me }, himalaya, himalaya_output: [
+    { argv: ["himalaya", "message", "send"], stdin: older, stdout: "Message successfully sent!\n", code: 0, at: "2026-11-16T20:33:40Z" },
+    { argv: page, stdout: JSON.stringify(partial), code: 0, at: "2026-11-16T20:33:41Z" },
+  ] });
+  const shown = await optionalList(copy, [...list(sent), "subject", "Older"]);
+  if (shown) assert.equal(shown.length, 1);
+});
+
+test("S40: separate sends without a Message-ID must get separate server-generated identities", async t => {
+  const copy = await copyOf(t, { account: { email: me } });
+  const message = raw("Bare", "Bare body.").replace(/^Message-ID:.*\r\n/m, "");
+  await copy.cli(["himalaya", "message", "send"], message);
+  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 2);
+  await copy.cli(["himalaya", "message", "send"], message);
+  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 4);
 });

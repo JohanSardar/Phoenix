@@ -47,6 +47,8 @@ export class Folders {
     const members = [...this.box.messages.values()].filter(m => this.inFolder(m, entry)).sort((a, b) => Number(a.internalDate ?? 0) - Number(b.internalDate ?? 0) || (a.id < b.id ? -1 : 1));
     state.uidnext = Math.max(state.uidnext, ...members.filter(m => m.uids[name] !== undefined).map(m => m.uids[name] + 1));
     for (const m of members) if (m.uids[name] === undefined) m.uids[name] = state.uidnext++;
+    state.held ??= new Set();
+    for (const m of members) state.held.add(m.uids[name]);
     return members.sort((a, b) => a.uids[name] - b.uids[name]);
   }
 
@@ -277,11 +279,11 @@ function sequence(set, members, uid, folderName) {
 
 export function startImap(box, { log } = {}) {
   const folders = new Folders(box);
-  // A folder whose records the copy can't tell apart from each other answers nothing.
+  // A folder a past write changed after the session last saw all of it answers nothing.
   const unsure = name => {
     const entry = folders.find(name);
-    if (!entry || !(box.unsettled?.has(entry[1]) || folders.messages(name).some(m => m.ambiguous))) return false;
-    box.missed = `the copy can't tell which of its records in ${entry[0]} are the same message`;
+    if (!entry || !(box.unsettled?.has(entry[1]) || box.unsettled?.has("*"))) return false;
+    box.missed = `the copy can't tell what ${entry[0]} holds after a past himalaya write`;
     return true;
   };
   const server = createServer(socket => {
@@ -386,6 +388,8 @@ export function startImap(box, { log } = {}) {
           }
           case "FETCH": {
             const picked = sequence(args[0], members, uid, selected);
+            const unheld = uid && /^\d+(,\d+)*$/.test(String(args[0])) ? String(args[0]).split(",").map(Number).find(n => !folders.status(selected).held?.has(n)) : undefined;
+            if (unheld !== undefined) { box.missed = `the copy never held message ${unheld} in ${selected}`; return no(`[UNAVAILABLE] ${box.missed}`); }
             let items = Array.isArray(args[1]) ? args[1].map(String) : [String(args[1])];
             const macro = { ALL: ["FLAGS", "INTERNALDATE", "RFC822.SIZE", "ENVELOPE"], FAST: ["FLAGS", "INTERNALDATE", "RFC822.SIZE"], FULL: ["FLAGS", "INTERNALDATE", "RFC822.SIZE", "ENVELOPE", "BODY"] }[items[0]?.toUpperCase()];
             if (macro) items = macro;

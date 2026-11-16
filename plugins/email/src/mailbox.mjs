@@ -133,7 +133,8 @@ export class Mailbox {
   submit(raw, recipients) {
     const given = splitHead(raw).headers, nowMs = this.nowMs ?? Date.now(), added = [];
     if (!header(given, "message-id")) {
-      const h = createHash("sha256").update(raw).update(String(nowMs)).digest("hex");
+      this.generated = (this.generated ?? 0) + 1;
+      const h = createHash("sha256").update(raw).update(String(nowMs)).update(String(this.generated)).digest("hex");
       added.push(`Message-ID: <${h.slice(0, 8)}.${h.slice(8, 16)}.${h.slice(16, 22)}.${h.slice(22, 26)}@mx.google.com>`);
     }
     if (!header(given, "date")) added.push(`Date: ${rfc2822(new Date(nowMs), "America/Los_Angeles")}`);

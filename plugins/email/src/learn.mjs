@@ -160,59 +160,51 @@ export function takeUids(box, argv, ours, theirs, aliases = {}) {
   const identity = e => JSON.stringify([e?.subject, e?.from?.addr, e?.from?.name, e?.to?.addr, e?.date, e?.has_attachment]);
   if (new Set(copy.map(identity)).size !== copy.length) return;
   const pairs = copy.map((e, i) => [byUid(box, folder, Number(e?.id)), Number(real[i]?.id), identity(e) === identity(real[i])]);
-  if (pairs.some(([m, uid, same]) => !m || !Number.isInteger(uid) || !same)) return;
+  if (pairs.some(([m, uid, same]) => !m || m.provisional || !Number.isInteger(uid) || !same)) return;
   const moving = new Set(pairs.map(([m]) => m));
   if (pairs.some(([, uid]) => { const holder = byUid(box, folder, uid); return holder && !moving.has(holder); })) return;
   for (const [m, uid] of pairs) realUid(box, m, folder, uid);
 }
 
-// The folder a list shows in full: an envelope list as JSON with no search, on its first page, shorter than a page.
-export function completeList(argv, stdout, aliases = {}) {
+// What a recorded JSON envelope list shows: its folder and account, how many entries it printed, its
+// page size when the call gave one, and whether it is the first page with no search.
+export function listShape(argv, stdout, aliases = {}) {
   const { words, folder, json } = command(argv, aliases);
-  if (!json || words[0] !== "envelope" || words[1] !== "list" || words.length > 2) return;
+  if (!json || words[0] !== "envelope" || words[1] !== "list") return;
   const option = names => { for (let i = argv.length - 1; i > 0; i--) { if (names.includes(argv[i])) return argv[i + 1]; const eq = names.map(n => argv[i].startsWith(n + "=") && argv[i].slice(n.length + 1)).find(Boolean); if (eq) return eq; } };
-  if (Number(option(["--page", "-p"]) ?? 1) !== 1) return;
   let list;
   try { list = JSON.parse(stdout); } catch { return; }
-  return Array.isArray(list) && list.length < Number(option(["--page-size", "-s"]) ?? 10) ? folder : undefined;
+  if (!Array.isArray(list)) return;
+  const size = option(["--page-size", "-s"]);
+  return { folder, account: option(["--account", "-a"]) ?? "", count: list.length, size: size === undefined ? undefined : Number(size), first: Number(option(["--page", "-p"]) ?? 1) === 1 && words.length === 2 };
 }
 
-const inFolder = (m, label) => (label === "TRASH" || label === "SPAM" || !(m.labelIds.includes("TRASH") || m.labelIds.includes("SPAM"))) && (label === null || m.labelIds.includes(label));
-const NOT_FOLDERS = new Set(["UNREAD"]);
-
-// A record a replayed write made is the same as another record only when a recorded id says so: a
-// Gmail id, a Message-ID the session read, or a UID in a folder's list. In a folder a later complete
-// list shows, it is one of the listed messages, so it leaves the copy, and the other folders it was in
-// become unsettled. When such a record and another can't be told apart by id, and their subject,
-// sender or recipients don't prove them different, they may be one message: both are marked, and the
-// copy answers nothing that would show either.
-export function settle(box, made, complete) {
-  const unsettled = new Set();
-  for (const [folder, at] of complete) {
-    const { known, label } = folderLabel(box, folder);
-    if (!known) continue;
-    for (const m of [...box.messages.values()]) {
-      if (!(made.get(m.id) < at) || m.realUids?.has(folder) || !inFolder(m, label)) continue;
-      for (const l of m.labelIds) if (l !== label && !NOT_FOLDERS.has(l) && !l.startsWith("CATEGORY_")) unsettled.add(l);
-      box.messages.delete(m.id);
-      if (box.threadCounts.has(m.id) && !box.thread(m.id).length) box.threadCounts.delete(m.id);
-    }
+// The folders a himalaya write puts mail into or takes it out of, by name; undefined when the copy can't tell.
+// All Mail, Starred and Important follow from the others.
+export function touches(box, argv, stdin, aliases = {}) {
+  const { words, folder } = command(argv, aliases);
+  const name = word => aliases[String(word ?? "").toLowerCase()] ?? word;
+  const sent = aliases.sent ?? "[Gmail]/Sent Mail", trash = aliases.trash ?? "[Gmail]/Trash";
+  const [noun, verb, target] = words;
+  if ((noun === "message" || noun === "template") && ["send", "reply", "forward"].includes(verb)) {
+    const { headers } = splitHead(Buffer.from(String(stdin ?? "")));
+    const to = ["to", "cc", "bcc"].flatMap(h => addresses(header(headers, h) ?? "").map(x => x.email.toLowerCase()));
+    const me = box.account.email?.toLowerCase();
+    return verb === "send" && me && !to.includes(me) ? [sent] : [sent, "INBOX"];
   }
-  box.unsettled = unsettled;
-  const records = [...box.messages.values()];
-  const apart = (a, b) => {
-    if (a.provisional === b.provisional) return true;
-    if ([...(a.realUids ?? [])].some(folder => b.realUids?.has(folder))) return true;
-    const ids = [a, b].map(m => m.raw ? header(splitHead(m.raw).headers, "message-id") : undefined);
-    if (ids[0] && ids[1]) return ids[0] !== ids[1];
-    const differ = key => a.fields[key] !== undefined && b.fields[key] !== undefined && a.fields[key] !== b.fields[key];
-    if (differ("subject") || differ("sender")) return true;
-    const to = [a, b].map(m => m.fields.toRecipients?.map(x => x.toLowerCase()));
-    return !!(to[0]?.length && to[1]?.length && !to[0].some(x => to[1].includes(x)));
-  };
-  for (const [i, a] of records.entries()) for (const b of records.slice(i + 1)) if (!apart(a, b)) a.ambiguous = b.ambiguous = true;
+  if ((noun === "message" || noun === "template") && verb === "save") return [folder];
+  if (noun === "message" && verb === "move" && target) return [folder, name(target)];
+  if (noun === "message" && verb === "copy" && target) return [name(target)];
+  if (noun === "message" && verb === "delete") return folder === trash ? [folder] : [folder, trash];
+  if (noun === "flag" && ["add", "set", "remove"].includes(verb)) return [folder];
+  if (noun === "folder" && ["expunge", "purge", "delete", "add", "create"].includes(verb) && target) return [name(target)];
 }
 
+// The label a folder name stands for (null for All Mail), or undefined for a folder the copy doesn't know.
+export function labelOf(box, folder) {
+  const place = folderLabel(box, folder);
+  return place.known ? place.label : undefined;
+}
 export function learnHimalaya(box, observations, aliases = {}) {
   for (const { argv, stdout } of observations) {
     const { words, folder, json, newestFirst } = command(argv, aliases);

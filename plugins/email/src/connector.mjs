@@ -27,11 +27,11 @@ export class Connector {
     throw new Unsupported(`message ${id} is not in the copy`);
   }
 
-  // A record in a folder the copy can't settle may be another record's message, so it is not shown.
+  // A folder a past himalaya write changed, after the session last saw all of it, answers nothing.
   settled(m) {
     const unsettled = this.box.unsettled ?? new Set();
     const inTrash = m.labelIds.includes("TRASH") || m.labelIds.includes("SPAM");
-    if (m.ambiguous || (unsettled.has(null) && !inTrash) || m.labelIds.some(l => unsettled.has(l))) throw new Unsupported(`the copy can't tell whether message ${m.id} is the same as another of its records`);
+    if (unsettled.has("*") || (unsettled.has(null) && !inTrash) || m.labelIds.some(l => unsettled.has(l))) throw new Unsupported(`the copy can't tell what the folders of message ${m.id} hold after a past himalaya write`);
   }
 
   render(m, format = "PLAIN_TEXT") {
@@ -46,6 +46,7 @@ export class Connector {
 
   threadView(threadId, format, subset) {
     const messages = this.box.thread(threadId);
+    for (const m of messages) this.settled(m);
     const shown = subset ? messages.slice(-subset) : messages;
     return { id: threadId, messageCount: messages.length, messages: shown.map(m => format === "IDS" ? { id: m.id } : this.render(m, format)), viewUrl: this.box.threadUrl(threadId) };
   }
@@ -131,6 +132,7 @@ export class Connector {
   }
 
   search(a, nowMs) {
+    if (this.box.unsettled?.size) throw new Unsupported("the copy can't tell what some folders hold after a past himalaya write, so it answers no search");
     const { match, mentionsBin, unknown } = compileQuery(a.query ?? "", this.box, nowMs);
     const visible = m => !m.labelIds.includes("DRAFT") && (a.includeTrash || mentionsBin || (!m.labelIds.includes("TRASH") && !m.labelIds.includes("SPAM")));
     const threads = new Map();
@@ -179,6 +181,7 @@ export class Connector {
   }
 
   listDrafts(a, nowMs) {
+    if (this.box.unsettled?.size) throw new Unsupported("the copy can't tell what some folders hold after a past himalaya write, so it lists no drafts");
     const { match } = compileQuery(a.query ?? "", this.box, nowMs);
     const drafts = [...this.box.drafts.entries()].map(([id, messageId]) => [id, this.box.messages.get(messageId)]).filter(([, m]) => m && match(m));
     if (!drafts.length) return {};

@@ -5,12 +5,13 @@ import { createInterface } from "node:readline";
 import { Mailbox } from "./mailbox.mjs";
 import { Connector, TOOLS, ToolError, Unsupported } from "./connector.mjs";
 import { Himalaya, folderAliases } from "./himalaya.mjs";
-import { completeList, learnHimalaya, reads, settle, takeUids } from "./learn.mjs";
+import { labelOf, learnHimalaya, listShape, reads, takeUids, touches } from "./learn.mjs";
 import { addresses } from "./mime.mjs";
 
 let box, connector, himalaya, aliases;
 const READ_ONLY = JSON.parse(await readFile(new URL("../phoenix-plugin.json", import.meta.url), "utf8")).read_only.filter(entry => entry.startsWith("himalaya "));
 
+const DERIVED = [null, "STARRED", "IMPORTANT"];
 const stdoutOf = frames => Buffer.concat(frames.filter(f => f.dir === "back" && f.stream === 1).map(f => Buffer.from(f.bytes, "base64"))).toString("utf8");
 
 // When the engine runs a recorded call against the copy, it also sends the recorded answer.
@@ -77,15 +78,44 @@ async function initialize(params) {
   aliases = folderAliases(snapshot.himalaya);
   himalaya = new Himalaya(box, snapshot.himalaya);
   await himalaya.start();
-  // Connector answers and himalaya calls are one history, in time order. A past himalaya write that
-  // exited 0 before the cut runs again in the copy; what any himalaya call printed is learned.
-  // A step without a time keeps its place after the step before it in its own list.
+  // Connector answers and himalaya calls are one history, in time order; what any himalaya call printed
+  // is learned. A step without a time keeps its place after the step before it in its own list.
+  // A past himalaya write that exited 0 before the cut runs again in the copy only when nothing the
+  // session saw later shows a folder it changed. When a later list proves it shows every folder the
+  // write changed, those lists answer alone and the write doesn't run. Otherwise the copy can't tell
+  // what those folders hold, so they answer unsupported.
   const timed = (list, time, key) => { let last = -Infinity; return list.map(item => { const at = Date.parse(time(item)); last = Number.isFinite(at) ? at : last; return { order: last, at, [key]: item }; }); };
   const history = [
     ...timed(snapshot.answers ?? [], a => a.observed_at, "answer"),
     ...timed((snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)), o => o.at, "o"),
   ].sort((a, b) => a.order - b.order);
-  const made = new Map(), complete = new Map();
+  const pageSize = Number(/^\s*envelope\.list\.page-size\s*=\s*(\d+)/m.exec([...((snapshot.himalaya?.accounts ?? []).find(a => a.default)?.lines ?? []), ...(snapshot.himalaya?.top ?? [])].join("\n"))?.[1]) || undefined;
+  const longest = new Map();
+  for (const { o } of history) {
+    const shape = o && (o.code ?? 0) === 0 ? listShape(o.argv, o.stdout, aliases) : undefined;
+    if (shape && shape.size === undefined) longest.set(shape.account, Math.max(longest.get(shape.account) ?? 0, shape.count));
+  }
+  const whole = shape => shape.first && shape.count < (shape.size ?? pageSize ?? ((longest.get(shape.account) ?? 0) > shape.count ? Infinity : 0));
+  const labels = value => {
+    const found = [];
+    const walk = v => { if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === "object") { if (Array.isArray(v.labelIds)) found.push(v.labelIds); Object.values(v).forEach(walk); } };
+    walk(value);
+    return found;
+  };
+  // What a step of the history shows of each folder, by label (null for All Mail): the whole folder or part of it.
+  const shows = ({ answer, o }) => {
+    const seen = new Map();
+    if (answer) {
+      for (const ids of labels(valueOf(answer.result))) for (const label of ids) if (!DERIVED.includes(label) && label !== "UNREAD" && !label.startsWith("CATEGORY_")) seen.set(label, "part");
+      return seen;
+    }
+    if ((o.code ?? 0) !== 0) return seen;
+    const shape = listShape(o.argv, o.stdout, aliases);
+    if (shape) seen.set(labelOf(box, shape.folder), whole(shape) ? "whole" : "part");
+    else if (o.argv.includes("read") && o.argv.includes("json") && /^\d+$/.test(String(o.argv.at(-1)))) seen.set(labelOf(box, aliases[String(o.argv[o.argv.indexOf("-f") + 1] ?? "").toLowerCase()] ?? (o.argv.includes("-f") ? o.argv[o.argv.indexOf("-f") + 1] : "INBOX")), "part");
+    return seen;
+  };
+  const unsettled = new Set();
   for (const [step, { at, answer, o }] of history.entries()) {
     if (answer) {
       const tool = answer.op.replace(/^tools\/call:/, "");
@@ -93,16 +123,27 @@ async function initialize(params) {
       continue;
     }
     learnHimalaya(box, [o], aliases);
-    const whole = (o.code ?? 0) === 0 && completeList(o.argv, o.stdout, aliases);
-    if (whole) complete.set(whole, step);
     if (reads(o.argv, READ_ONLY) || o.code !== 0 || !(at <= cut)) continue;
     const from = /^from:\s*(.*)$/im.exec(String(o.stdin ?? "").split(/\r?\n\r?\n/)[0] ?? "")?.[1];
     if (!box.account.email && o.argv.includes("send") && from) box.account.email = addresses(from)[0]?.email ?? "";
-    const before = new Set(box.messages.keys());
-    await himalaya.run(o.argv.slice(1), Buffer.from(o.stdin ?? ""), Number.isFinite(at) ? at : box.nowMs ?? 0);
-    for (const [id, m] of box.messages) if (!before.has(id)) { m.provisional = true; made.set(id, step); box.fromRaw(m); }
+    const later = new Map();
+    for (const next of history.slice(step + 1)) {
+      if (!(next.at <= cut) && Number.isFinite(next.at)) continue;
+      for (const [label, how] of shows(next)) if (later.get(label) !== "whole") later.set(label, how);
+    }
+    const changed = touches(box, o.argv, o.stdin, aliases)?.map(folder => labelOf(box, folder));
+    const known = changed && !changed.includes(undefined);
+    if (!(known ? [...changed, ...DERIVED] : [...later.keys()]).some(label => later.has(label))) {
+      const before = new Set(box.messages.keys());
+      await himalaya.run(o.argv.slice(1), Buffer.from(o.stdin ?? ""), Number.isFinite(at) ? at : box.nowMs ?? 0);
+      for (const [id, m] of box.messages) if (!before.has(id)) { m.provisional = true; box.fromRaw(m); }
+      continue;
+    }
+    if (!known) { unsettled.add("*"); continue; }
+    for (const label of changed) if (later.get(label) !== "whole") unsettled.add(label);
+    for (const label of DERIVED) if (later.get(label) === "part") unsettled.add(label);
   }
-  settle(box, made, complete);
+  box.unsettled = unsettled;
   box.missed = undefined;
   for (const m of box.messages.values()) box.fromRaw(m);
   box.changes = [];
