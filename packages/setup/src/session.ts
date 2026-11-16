@@ -22,6 +22,7 @@ export interface SessionMomentOptions {
   answers?: readonly SessionAnswer[];
   readOnly?: Readonly<Record<string, readonly string[]>>;
   marked?: NonNullable<MomentManifest["resume"]>["marked"];
+  project?: { root: string; tar: Buffer; taken_at: string };
   madeUp?: boolean;
   id: string;
   check: string;
@@ -159,7 +160,7 @@ export async function createSessionMoment(o: SessionMomentOptions): Promise<Mome
   }
   if (!mark) throw new Error(`The imported session has no event for line ${reading.at}`);
   const prepared = await prepareSnapshotMoment({ capture: o.capture, mark: eventId(mark), start: "mark", id: o.id, connectors: [], check: o.check, workdir: false, prompt: reading.prompt, ...(task ? { task } : {}), ...(o.timezone ? { timezone: o.timezone } : {}) });
-  const copy = await projectCopy(reading.cwd, reading.time);
+  const copy: ProjectCopy | undefined = o.project ? { root: o.project.root, source: "mark", taken_at: o.project.taken_at, left_out: [], parts: [o.project.tar] } : await projectCopy(reading.cwd, reading.time);
   const connectors: NonNullable<MomentManifest["connectors"]> = {};
   for (const name of new Set(reading.answers.map(a => a.connector))) connectors[name] = { surface: "mcp", routes: ["transcript"], tier: "recorded", origin: reading.answers.every(a => a.connector !== name || a.world) ? "seeded" : "captured", read_only: [...(o.readOnly?.[name] ?? []).map(op => ({ op: `tools/call:${op}`, source: "plugin" as const })), ...(reading.read_only?.[name] ?? []).filter(op => !o.readOnly?.[name]?.includes(op)).map(op => ({ op: `tools/call:${op}`, source: "annotation" as const }))], data: [{ path: "data/run.jsonl", kind: "run-evidence" }] };
   const manifest: MomentManifest = {

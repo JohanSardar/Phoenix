@@ -279,7 +279,7 @@
       "description": "Which copy of the project's files the box used.",
       "required": ["source", "taken_at"],
       "properties": {
-        "source": { "enum": ["git", "today"], "description": "git: as committed at the moment's time. today: as the files were when the moment was made." },
+        "source": { "enum": ["git", "today", "mark"], "description": "git: as committed at the moment's time. today: as the files were when the moment was made. mark: as saved at the mark." },
         "commit": { "type": "string" },
         "taken_at": { "type": "string", "format": "date-time" },
         "left_out": { "type": "integer", "minimum": 0, "description": "How many files Phoenix could not read when it made the copy. They are missing inside the box." }

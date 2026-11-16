@@ -425,8 +425,8 @@
               "description": "The project's folder on the machine where the session ran. The copy sits at this path inside the box."
             },
             "source": {
-              "enum": ["git", "today"],
-              "description": "git: the folder's files as committed at the moment's time. today: the folder's files as they were when the moment was made."
+              "enum": ["git", "today", "mark"],
+              "description": "git: the folder's files as committed at the moment's time. today: the folder's files as they were when the moment was made. mark: the folder's files as saved at the mark."
             },
             "commit": {
               "type": "string",
