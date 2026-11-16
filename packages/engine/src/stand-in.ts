@@ -46,6 +46,7 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
   for (const exchange of exchanges) exchange.history = exchanges.filter(w => w.connector === exchange.connector && !w.readOnly && w.completed < exchange.position).map(w => w.key);
   const index: ExchangeIndex = { exchanges, prefetch: [], frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), notifications: new Map(), startTime: clock.now().toISOString(), cutTime: clock.now().toISOString() };
   const ctx = replayCtx(index, options.policy);
+  for (const exchange of index.frozen) if (!exchange.readOnly) ctx.histories = { ...ctx.histories, [exchange.connector]: [...(ctx.histories[exchange.connector] ?? []), exchange.key] };
   let served = 0;
   let stop!: (divergence: Divergence) => void;
   const stopped = new Promise<Divergence>(resolve => { stop = resolve; });

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { startToolStandIn, type ToolStandIn } from "@phoenix/engine";
@@ -38,8 +38,6 @@ export async function resumeAttempt(input: {
   await writeFile(join(box, "moment/cut.jsonl"), session.slice(0, moment.cut_lines).join("\n") + "\n", { mode: 0o600 });
   await writeFile(join(box, "moment/moment.json"), JSON.stringify({ prompt: moment.prompt, model: moment.model }), { mode: 0o600 });
   await writeFile(join(box, "moment/loadout.json"), JSON.stringify(moment.loadout), { mode: 0o600 });
-  const [login, ...loginArgs] = recipe.resume.login;
-  await execute(login!, [...loginArgs, join(box, "agent"), moment.model.provider], { cwd: recipeDirectory });
   const plugins = new Map(plan.runner.plugins.map(plugin => [plugin.descriptor.connector, plugin.descriptor]));
   const standIn: ToolStandIn = await startToolStandIn({
     host: TOOLS_HOST,
@@ -54,6 +52,8 @@ export async function resumeAttempt(input: {
   let process: SandboxProcess | undefined;
   let outcome: Outcome;
   try {
+    const [login, ...loginArgs] = recipe.resume.login;
+    await execute(login!, [...loginArgs, join(box, "agent"), moment.model.provider], { cwd: recipeDirectory });
     await writeClockFile(join(root, "clock"), new Date());
     const running = await sandbox.start({
       image: plan.harness_image, argv: recipe.resume.command, env: { PHOENIX_TOOLS_URL: `http://${TOOLS_HOST}`, TZ: bundle.manifest.clock?.timezone ?? "UTC" },
@@ -88,6 +88,7 @@ export async function resumeAttempt(input: {
   } catch (error) { outcome = { kind: "interrupted", why: error instanceof Error ? error.message : String(error) }; }
   finally {
     await process?.stop().catch(() => {});
+    await rm(join(box, "agent"), { recursive: true, force: true });
     await standIn.close();
   }
   return outcome;
