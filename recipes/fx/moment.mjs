@@ -3,16 +3,17 @@ import { join } from "node:path";
 import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
 
-const { values } = parseArgs({ options: { at: { type: "string" }, files: { type: "string" } } });
-const at = Number(values.at);
+const { values } = parseArgs({ options: { at: { type: "string" }, "from-beginning": { type: "boolean" }, files: { type: "string" } } });
+const fromBeginning = !!values["from-beginning"];
 const lines = (await text(process.stdin)).split("\n");
 if (lines.at(-1) === "") lines.pop();
+const at = fromBeginning ? lines.length : Number(values.at);
 if (!Number.isInteger(at) || at < 1 || at > lines.length) throw new Error(`--at must be a line of the session (1-${lines.length})`);
 const records = lines.map((line, index) => ({ line: index + 1, record: JSON.parse(line) }));
 const created = records[0]?.record;
 if (created?.v !== 1 || created.kind !== "session_created") throw new Error("Only fx native session logs (v1 records) are supported");
-const start = records.slice(0, at).findLast(({ record }) => record.kind === "turn_started");
-if (!start) throw new Error(`No turn starts at or before line ${at}; a moment starts at the turn that holds it`);
+const start = fromBeginning ? records.find(({ record }) => record.kind === "turn_started") : records.slice(0, at).findLast(({ record }) => record.kind === "turn_started");
+if (!start) throw new Error(fromBeginning ? "The session has no turn" : `No turn starts at or before line ${at}; a moment starts at the turn that holds it`);
 const user = records.find(({ record }) => record.kind === "item" && record.type === "user" && record.turn === start.record.turn);
 if (!user) throw new Error("The turn has no user message");
 if (user.record.data.images?.length) throw new Error("The user turn holds images; only text turns can be resumed");
@@ -54,7 +55,7 @@ if (blobs) for (const { line } of before) for (const hash of lines[line - 1].mat
 
 process.stdout.write(JSON.stringify({
   phoenix_session_moment: 1,
-  at, turn: start.line, cut_lines: start.line - 1, prompt: user.record.data.text, time: new Date(start.record.ts).toISOString(), cwd: created.workspace, session: created.id,
+  at: fromBeginning ? user.line : at, turn: start.line, from_beginning: fromBeginning, cut_lines: start.line - 1, prompt: user.record.data.text, time: new Date(start.record.ts).toISOString(), cwd: created.workspace, session: created.id,
   model: { provider: prefs.provider, id: prefs.model, ...(prefs.effort ? { effort: prefs.effort } : {}) },
   loadout: { identities },
   answers,
