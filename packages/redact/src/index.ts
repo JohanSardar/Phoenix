@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
 import { lintSource } from "@secretlint/core";
+import { secretLintProfiler } from "@secretlint/profiler";
 import { creator } from "@secretlint/secretlint-rule-preset-recommend";
 import { LiteOpenRedaction } from "@openredaction/core/lite";
 import type { TraceEvent } from "@phoenix/formats";
@@ -27,6 +28,8 @@ export interface RedactedMessage {
 export interface Detection { start: number; end: number; type: string }
 export interface PersonalDataDetector { detect(text: string): Promise<readonly Detection[]> }
 export interface PackPolicy { hmacKey: Uint8Array; detector?: PersonalDataDetector }
+
+secretLintProfiler.setEnabled(false);
 
 type Span = { start: number; end: number; replacement: string; rule: string };
 const secretName = (name: string) => /^(authorization|proxyauthorization|cookie|setcookie|.*apikey|.*authkey|.*token|.*password|.*passwd|.*secret|.*privatekey|credential|credentials)$/i.test(name.replace(/[^a-z0-9]/gi, ""));
