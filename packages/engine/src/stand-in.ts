@@ -1,0 +1,90 @@
+import { createServer } from "node:http";
+import type { Duplex } from "node:stream";
+import { text } from "node:stream/consumers";
+import { answerCall, replayCtx, toCall, type ConnectorPolicy, type Divergence, type Exchange, type ExchangeIndex } from "@phoenix/answer";
+import type { CaptureMetadata } from "@phoenix/store";
+import { VirtualClock } from "./clock.ts";
+import { SampleTrace, streamName } from "./trace.ts";
+
+export interface RecordedToolAnswer {
+  id: string;
+  connector: string;
+  op: string;
+  args: unknown;
+  result: unknown;
+  observedAt: string;
+  beforeCut: boolean;
+}
+
+export interface ToolStandInOptions {
+  host: string;
+  answers: readonly RecordedToolAnswer[];
+  policy(connector: string): ConnectorPolicy;
+  sample: { root: string; metadata: CaptureMetadata };
+  hmacKey: Uint8Array;
+}
+
+export interface ToolStandIn {
+  accept(connection: { destination: { host: string; port: number }; stream: Duplex }): void;
+  served(): number;
+  note(op: string, value: unknown): Promise<void>;
+  stopped: Promise<Divergence>;
+  close(): Promise<void>;
+}
+
+const rpc = (id: unknown, body: object) => Buffer.from(JSON.stringify({ jsonrpc: "2.0", id, ...body }));
+
+export async function startToolStandIn(options: ToolStandInOptions): Promise<ToolStandIn> {
+  const clock = new VirtualClock(new Date());
+  const trace = await SampleTrace.create(options.sample.root, options.sample.metadata, clock, options.hmacKey);
+  const exchanges: Exchange[] = options.answers.map((answer, position) => {
+    const op = `tools/call:${answer.op}`;
+    const request = { body: rpc(position, { method: "tools/call", params: { name: answer.op, arguments: answer.args } }) };
+    const call = toCall({ surface: "mcp", connector: answer.connector, op, args: answer.args, raw: request }, options.policy(answer.connector));
+    return { ...call, id: answer.id, history: [], frozen: answer.beforeCut, position, completed: position, observedAt: answer.observedAt, provenance: "recorded", request, response: { body: rpc(position, { result: answer.result }) }, during: [], after: [] };
+  });
+  for (const exchange of exchanges) exchange.history = exchanges.filter(w => w.connector === exchange.connector && !w.readOnly && w.completed < exchange.position).map(w => w.key);
+  const index: ExchangeIndex = { exchanges, prefetch: [], frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), notifications: new Map(), startTime: clock.now().toISOString(), cutTime: clock.now().toISOString() };
+  const ctx = replayCtx(index, options.policy);
+  let served = 0;
+  let stop!: (divergence: Divergence) => void;
+  const stopped = new Promise<Divergence>(resolve => { stop = resolve; });
+  const server = createServer((request, response) => {
+    void (async () => {
+      const connector = decodeURIComponent(new URL(request.url ?? "/", "http://x").pathname.slice(1));
+      const body = Buffer.from(await text(request));
+      const message = JSON.parse(body.toString()) as { id: unknown; method: string; params: { name: string; arguments?: unknown } };
+      const stream = streamName("stand-in", connector);
+      const call = toCall({ surface: "mcp", connector, op: `tools/call:${message.params.name}`, args: message.params.arguments ?? {}, raw: { body } }, options.policy(connector));
+      await trace.append(stream, { kind: "call", surface: "mcp", layer: "agent", connector, op: call.op, body });
+      const answered = await answerCall(call, ctx);
+      if ("divergence" in answered) {
+        const { divergence } = answered;
+        await trace.append(stream, { kind: "divergence", connector, op: call.op, body: Buffer.from(JSON.stringify(divergence)) });
+        response.end(rpc(message.id, { error: { code: -32000, message: divergence.detail } }));
+        stop(divergence);
+        return;
+      }
+      const recorded = JSON.parse(Buffer.from(answered.answer.raw.body).toString()) as { result: unknown };
+      const reply = rpc(message.id, { result: recorded.result });
+      served++;
+      await trace.append(stream, { kind: "result", surface: "mcp", layer: "agent", connector, op: call.op, body: reply, provenance: answered.answer.provenance, resolver: answered.answer.resolver });
+      response.setHeader("content-type", "application/json");
+      response.end(reply);
+    })().catch(error => {
+      stop({ trigger: "lifecycle", detail: error instanceof Error ? error.message : String(error) });
+      response.destroy();
+    });
+  });
+  return {
+    accept({ destination, stream }) {
+      if (destination.host === options.host) { server.emit("connection", stream); return; }
+      void trace.append("sandbox", { kind: "meta", op: "refused-connection", body: Buffer.from(JSON.stringify(destination)) });
+      stream.destroy();
+    },
+    served: () => served,
+    async note(op, value) { await trace.append("resume", { kind: "meta", op, body: Buffer.from(typeof value === "string" ? value : JSON.stringify(value)) }); },
+    stopped,
+    async close() { server.close(); await trace.close(); },
+  };
+}

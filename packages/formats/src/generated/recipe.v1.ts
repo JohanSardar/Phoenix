@@ -99,4 +99,40 @@ export interface RecipeDescriptor {
     dont_fake_monotonic?: boolean;
   };
   copy_ignored?: boolean;
+  /**
+   * How to put this harness back in a moment by resuming its own session file.
+   */
+  resume?: {
+    /**
+     * Host command, run in the recipe directory: reads the session file on stdin, takes --at <line>, prints the session moment JSON.
+     *
+     * @minItems 1
+     */
+    moment: string[];
+    /**
+     * Host command, run in the recipe directory: given a box directory and the LLM provider, writes a box-only copy of the harness's own login there.
+     *
+     * @minItems 1
+     */
+    login: string[];
+    /**
+     * Dockerfile, relative to the recipe, for the box image with the harness installed.
+     */
+    image: string;
+    /**
+     * Command run inside the box.
+     *
+     * @minItems 1
+     */
+    command: string[];
+    /**
+     * Per LLM provider, the hosts the box may reach directly. Nothing from Phoenix sits between the harness and these hosts.
+     */
+    llm_hosts: {
+      /**
+       * @minItems 1
+       */
+      [k: string]: string[];
+    };
+  };
 }

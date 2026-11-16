@@ -13,6 +13,7 @@ import { bundleBody, bundleEvidence, canonical, checked, claim, echoDriftPath, e
 import { materialize, treeDigest } from "./materialize.ts";
 import { resolvePlan, type ReplayRequest, type ResolvedPlan } from "./plan.ts";
 import { submitTask } from "./server.ts";
+import { resumeAttempt } from "./resume.ts";
 
 type Sample = ReplayResult["samples"][number];
 type Attempt = Sample["attempts"][number] & { container?: string; recovered?: boolean; fresh_after_drift?: boolean };
@@ -33,7 +34,7 @@ export interface RunnerOptions {
 }
 
 const execute = promisify(execFile);
-function modelHeaders(refs: ReplayRequest["model"]["headers"]): Record<string, string> {
+function modelHeaders(refs: NonNullable<ReplayRequest["model"]>["headers"]): Record<string, string> {
   return Object.fromEntries(Object.entries(refs ?? {}).map(([name, ref]) => {
     const value = process.env[ref.env];
     if (!value) throw new Error(`Missing host model environment variable: ${ref.env}`);
@@ -115,7 +116,7 @@ export class Runner {
       for (const [name, hash] of [["base", plan.base_tree], ["candidate", plan.candidate_tree]] as const) if (await treeDigest(join(directory, "inputs", name)) !== hash) throw new Error("Resolved tree changed");
       for (const [index, plugin] of plan.runner.plugins.entries()) if (await treeDigest(join(directory, "inputs/plugins", String(index))) !== plugin.tree) throw new Error(`Resolved plugin changed: ${plugin.name}`);
       const plugins = plan.runner.plugins.map((plugin, index) => ({ name: plugin.name, version: plugin.version, directory: join(directory, "inputs/plugins", String(index)), image: plugin.image, snapshot: plugin.snapshot, seed: plugin.seed, env: plugin.env }));
-      if (plan.start !== "echo" && bundleEvidence(bundle).length) {
+      if (plan.start !== "echo" && !plan.runner.recipe && bundleEvidence(bundle).length) {
         const echoId = await this.plan({ moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: "echo", samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, ...(plan.login_context ? { loginContext: plan.login_context } : {}), env: plan.runner.env, plugins, simulator: plan.runner.simulator });
         await this.resume(echoId);
         const drift = await optional<{ result: string }>(echoDriftPath(this.#options.root, plan.base_tree, plan.login_context));
@@ -127,7 +128,7 @@ export class Runner {
         const baselineId = digest(canonical(baselinePlan));
         const baselineDirectory = this.directory(baselineId);
         if (!await optional(join(baselineDirectory, "plan.json"))) {
-          const request: ReplayRequest = { moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: plan.start, samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, ...(plan.login_context ? { loginContext: plan.login_context } : {}), env: plan.runner.env, plugins, simulator: plan.runner.simulator };
+          const request: ReplayRequest = { ...(plan.runner.recipe ? { recipe: join(directory, "inputs/recipe", plan.runner.recipe.file) } : {}), moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: plan.start, samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, ...(plan.login_context ? { loginContext: plan.login_context } : {}), env: plan.runner.env, plugins, simulator: plan.runner.simulator };
           const resolved = await this.plan(request);
           if (resolved !== baselineId) throw new Error("Baseline plan differs");
         }
@@ -250,10 +251,16 @@ export class Runner {
     const states = new Map<string, unknown>();
     let outcome: { kind: "finished"; code: number | null } | { kind: "interrupted"; why: string } | { kind: "diverged"; trigger: string; detail: string };
     try {
+      if (plan.runner.recipe) {
+        outcome = await resumeAttempt({ id, directory, root, plan, bundle, sandbox, hmacKey, capture: `${id.slice(7)}-${sample.sample}-${attempt.attempt}`, started: async container => { attempt.container = container; await persist(); } });
+        await save(join(root, "clock-report.json"), { clock: "real", binaries: [] });
+      } else {
+      const endpoints = plan.runner.harness.endpoints, model = plan.runner.model;
+      if (!endpoints || !model) throw new Error("This harness names no model endpoint to replay against");
       const tree = await materialize({ bundle, base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.candidate_tree, directory: join(directory, "inputs/candidate") }, contract: plan.runner.harness, bindings: plan.runner.bindings, directory: root, env: plan.runner.env });
-      const dialect = resolveModelDialect(plan.runner.harness.endpoints.model.dialect);
-      if (!dialect) throw new Error(`Unsupported model dialect: ${plan.runner.harness.endpoints.model.dialect}`);
-      const headers = modelHeaders(plan.start === "echo" ? undefined : plan.runner.model.headers);
+      const dialect = resolveModelDialect(endpoints.model.dialect);
+      if (!dialect) throw new Error(`Unsupported model dialect: ${endpoints.model.dialect}`);
+      const headers = modelHeaders(plan.start === "echo" ? undefined : model.headers);
       const simulation = plan.start !== "echo" && plan.runner.simulator;
       const simulator = simulation ? createSimulator({ moment: plan.bundle, root: join(this.#options.root, "simulator"), configuration: { ...simulation.config, model: simulation.model.id }, headers: modelHeaders(simulation.headers), improverModel: simulation.improverModel, attempts: simulation.config.attempts, outputSchemas: simulation.config.outputSchemas }) : undefined;
       const start = plan.start === "mark" ? { at: bundle.manifest.mark! } : plan.start;
@@ -268,8 +275,8 @@ export class Runner {
       }
       engine = await startEngine({ evidence: { events: evidence, body: event => bundleBody(bundle, event) }, ...(recovering ? { resume: recovery } : {}), emulators, simulator, connectors: bundle.manifest.connectors, start,
         entityMaps: Object.fromEntries(plan.runner.plugins.map(plugin => [plugin.descriptor.connector, plugin.descriptor.entity_map])), volatile: Object.fromEntries(plan.runner.plugins.map(plugin => [plugin.descriptor.connector, plugin.descriptor.volatile ?? []])),
-        clock: { start: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall }, routes: { ...tree.routes, http: { ...Object.fromEntries(plan.runner.plugins.flatMap(plugin => (plugin.descriptor.recognize.hosts ?? []).map(host => [host, plugin.descriptor.connector]))), ...tree.routes.http, "phoenix-model": plan.runner.model.connector, "phoenix-model:8080": plan.runner.model.connector } },
-        model: { connector: plan.runner.model.connector, dialect, selection: plan.model, provider: { url: plan.runner.model.url, headers }, ...(plan.login_context ? { loginContext: plan.login_context } : {}) },
+        clock: { start: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall }, routes: { ...tree.routes, http: { ...Object.fromEntries(plan.runner.plugins.flatMap(plugin => (plugin.descriptor.recognize.hosts ?? []).map(host => [host, plugin.descriptor.connector]))), ...tree.routes.http, "phoenix-model": model.connector, "phoenix-model:8080": model.connector } },
+        model: { connector: model.connector, dialect, selection: plan.model, provider: { url: model.url, headers }, ...(plan.login_context ? { loginContext: plan.login_context } : {}) },
         sample: { root: join(root, "trace"), metadata: { capture: `${id.slice(7)}-${sample.sample}-${attempt.attempt}`, harness: { name: plan.runner.harness.name, tree: plan.candidate_tree }, recipe: { name: "runner", version: "1" }, routes: ["tap"], started_at: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall ?? new Date(0).toISOString(), boot_id: `${id}-${sample.sample}-${attempt.attempt}` } }, hmacKey });
       await writeClockFile(join(root, "clock"), engine.clock.now());
       engine.clock.onAnchor(time => { clockWrites = clockWrites.then(() => writeClockFile(join(root, "clock"), time)); });
@@ -289,6 +296,7 @@ export class Runner {
       if (outcome.kind === "finished" && plan.start === "echo" && !engine.prefixComplete()) outcome = { kind: "diverged", trigger: "prefix-drift", detail: "Harness exited before consuming the complete echo prefix" };
       if (outcome.kind === "finished") for (const plugin of plan.runner.plugins) if (!bundle.manifest.connectors?.[plugin.descriptor.connector]?.skip_resolvers?.includes("emulator")) states.set(plugin.descriptor.connector, await engine.state(plugin.descriptor.connector));
       await save(join(root, "clock-report.json"), process.clock);
+      }
     } catch (error) { outcome = { kind: "interrupted", why: error instanceof Error ? error.message : String(error) }; }
     finally {
       submission.abort();
@@ -301,7 +309,7 @@ export class Runner {
     const capture = `${id.slice(7)}-${sample.sample}-${attempt.attempt}`;
     const contextEvent: TraceEvent = { v: 1, capture, stream: "runner", seq: 0, id: "runner:0", kind: "meta", op: "fidelity.context", ts: { wall: engine?.clock.now().toISOString() ?? new Date().toISOString(), mono: globalThis.process.hrtime.bigint().toString() }, body: { inline: JSON.stringify(context) } };
     const limitations: TraceEvent = { ...contextEvent, seq: 1, id: "runner:1", op: "fidelity.workdir", body: { inline: JSON.stringify({ raw_address_reporting: false, snapshot_unread: bundle.manifest.workdir ? JSON.parse(Buffer.from(bundle.files.get(bundle.manifest.workdir)!).toString()).unread : [] }) } };
-    if (engine) {
+    if (engine || plan.runner.recipe) {
       const writer = createTraceWriter(join(root, "trace"), { capture, stream: "runner" });
       if (writer.append(contextEvent) !== "queued" || writer.append(limitations) !== "queued") throw new Error("Runner trace context was dropped");
       let seq = 2;
@@ -317,7 +325,7 @@ export class Runner {
     const boundary = trace.find(e => e.kind === "meta" && e.op === "start-point");
     const assessed = await evaluateCheck(bundle.check, { trace, blobs: recorded.blobs, ...(boundary ? { startAfter: eventId(boundary) } : {}) }, { expectedStates, custom: customCheckHost({ checksDirectory: join(directory, "inputs/bundle/checks"), workDirectory: root, image: plan.harness_image, sandbox }) });
     const verdict = sampleVerdict({ ...assessed, diverged: outcome.kind === "diverged" });
-    const report = fidelityReport(engine ? trace : [contextEvent, limitations], recorded.blobs);
+    const report = fidelityReport(engine || plan.runner.recipe ? trace : [contextEvent, limitations], recorded.blobs);
     if (outcome.kind === "diverged") {
       if (!report.divergences.length) report.divergences.push({ event: "runner", detail: outcome });
       report.grade = "blocked";

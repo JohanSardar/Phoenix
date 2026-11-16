@@ -382,6 +382,30 @@
           }
         }
       }
+    },
+    "resume": {
+      "type": "object",
+      "required": [
+        "recipe",
+        "session",
+        "moment"
+      ],
+      "description": "Set when the moment resumes the harness's own session file. The recipe cuts the session and resumes it in the box.",
+      "properties": {
+        "recipe": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the recipe that resumes this session."
+        },
+        "session": {
+          "type": "string",
+          "description": "Bundle path of the copied session file."
+        },
+        "moment": {
+          "type": "string",
+          "description": "Bundle path of the recipe's reading of the session at the moment: the cut, the prompt, the LLM, the tool loadout and the recorded tool answers."
+        }
+      }
     }
   },
   "allOf": [

@@ -35,9 +35,9 @@ export async function applyRecipe(options: {
     await writeFile(join(bin, name), `#!${process.execPath}\nimport { main } from ${JSON.stringify(entry)};\nawait main(["cli-shim", ${JSON.stringify(name)}, ${JSON.stringify(real)}, ...process.argv.slice(2)]);\n`, { mode: 0o700 });
   }
   env.PATH = `${bin}${delimiter}${options.env.PATH ?? ""}`;
-  if (options.modelUrl && routes.includes("gateway")) env[contract.endpoints.model.env] = options.modelUrl;
+  if (options.modelUrl && routes.includes("gateway") && contract.endpoints) env[contract.endpoints.model.env] = options.modelUrl;
   let cwd = options.cwd;
-  const mcp = contract.endpoints.mcp ?? recipe.mcp;
+  const mcp = contract.endpoints?.mcp ?? recipe.mcp;
   if (mcp && routes.includes("mcp-proxy")) {
     if (mcp.format !== "mcpServers") throw new Error("Generic recipe needs the mcpServers JSON format");
     const rel = relative(options.cwd, resolve(options.cwd, mcp.file));

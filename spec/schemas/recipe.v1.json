@@ -219,6 +219,58 @@
     },
     "copy_ignored": {
       "type": "boolean"
+    },
+    "resume": {
+      "type": "object",
+      "required": [
+        "moment",
+        "login",
+        "image",
+        "command",
+        "llm_hosts"
+      ],
+      "description": "How to put this harness back in a moment by resuming its own session file.",
+      "properties": {
+        "moment": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Host command, run in the recipe directory: reads the session file on stdin, takes --at <line>, prints the session moment JSON."
+        },
+        "login": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Host command, run in the recipe directory: given a box directory and the LLM provider, writes a box-only copy of the harness's own login there."
+        },
+        "image": {
+          "type": "string",
+          "description": "Dockerfile, relative to the recipe, for the box image with the harness installed."
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Command run inside the box."
+        },
+        "llm_hosts": {
+          "type": "object",
+          "description": "Per LLM provider, the hosts the box may reach directly. Nothing from Phoenix sits between the harness and these hosts.",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          }
+        }
+      }
     }
   }
 }

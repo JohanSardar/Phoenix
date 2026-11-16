@@ -1,6 +1,7 @@
 import { cp, mkdir, mkdtemp, readFile, rename } from "node:fs/promises";
-import { join } from "node:path";
-import type { Bindings, HarnessContract, PluginDescriptor, ReplayPlan } from "@phoenix/formats";
+import { basename, dirname, join } from "node:path";
+import { parse } from "yaml";
+import type { Bindings, HarnessContract, PluginDescriptor, RecipeDescriptor, ReplayPlan } from "@phoenix/formats";
 import { createSimulator, resolveModelDialect, type SimulatorOptions } from "@phoenix/engine";
 import { bundleApproval, digest, readApprovalsLedger, readMomentBundle } from "@phoenix/store";
 import { bundleEvidence, canonical, checked, echoDriftPath, eventId, hydrate, optional, save } from "./files.ts";
@@ -13,7 +14,8 @@ export interface ReplayRequest {
   harness: HarnessContract;
   bindings?: Bindings;
   image: string;
-  model: ReplayPlan["model"] & { connector: string; url: string; headers?: Record<string, { env: string }> };
+  model?: ReplayPlan["model"] & { connector: string; url: string; headers?: Record<string, { env: string }> };
+  recipe?: string;
   start: ReplayPlan["start"];
   samples?: ReplayPlan["samples"];
   runtime?: { cli: string[]; version: string };
@@ -28,15 +30,29 @@ export interface ResolvedPlugin {
   name: string; version: string; tree: string; image: string; descriptor: PluginDescriptor; snapshot?: string; seed?: string; env?: Record<string, string>;
 }
 
+export interface ResolvedRecipe { name: string; file: string; tree: string; resume: NonNullable<RecipeDescriptor["resume"]> }
+
 export type ResolvedPlan = ReplayPlan & {
-  runner: { harness: HarnessContract; bindings?: Bindings; model: ReplayRequest["model"]; env: Record<string, string>; cli: string[]; plugins: ResolvedPlugin[]; simulator?: ReplayRequest["simulator"] };
+  runner: { harness: HarnessContract; bindings?: Bindings; model?: ReplayRequest["model"]; recipe?: ResolvedRecipe; env: Record<string, string>; cli: string[]; plugins: ResolvedPlugin[]; simulator?: ReplayRequest["simulator"] };
 };
 
 export async function resolvePlan(root: string, ledger: string, request: ReplayRequest): Promise<{ id: string; plan: ResolvedPlan }> {
   const bundle = await readMomentBundle(request.moment);
   bundleApproval(bundle, (await readApprovalsLedger(ledger)).entries);
   checked("harness", request.harness);
-  if (!resolveModelDialect(request.harness.endpoints.model.dialect)) throw new Error(`Unsupported model dialect: ${request.harness.endpoints.model.dialect}`);
+  const resume = bundle.manifest.resume;
+  let recipe: ResolvedRecipe | undefined;
+  if (resume) {
+    if (!("resume" in request.harness.run)) throw new Error("This moment resumes its own session; the harness contract must say run: { resume: {} }");
+    if (!request.recipe) throw new Error(`This moment resumes its own session; the replay settings must name the ${resume.recipe} recipe`);
+    const descriptor = checked("recipe", parse(await readFile(request.recipe, "utf8"))) as RecipeDescriptor;
+    if (descriptor.name !== resume.recipe || !descriptor.resume) throw new Error(`The ${resume.recipe} moment needs the ${resume.recipe} recipe with a resume section`);
+    recipe = { name: descriptor.name, file: basename(request.recipe), tree: await treeDigest(dirname(request.recipe)), resume: descriptor.resume };
+  } else {
+    const dialect = request.harness.endpoints?.model.dialect;
+    if (!dialect || !resolveModelDialect(dialect)) throw new Error(`Unsupported model dialect: ${dialect}`);
+    if (!request.model) throw new Error("The replay settings name no model");
+  }
   if (request.bindings) checked("bindings", request.bindings);
   for (const tree of [request.base, request.candidate]) if (await treeDigest(tree.directory) !== tree.digest) throw new Error(`Tree digest mismatch: ${tree.digest}`);
   if (request.start === "echo" && request.base.digest !== request.candidate.digest) throw new Error("Echo replays require the unedited base tree");
@@ -53,9 +69,9 @@ export async function resolvePlan(root: string, ledger: string, request: ReplayR
   for (const rule of request.loginContext ?? []) {
     try { new RegExp(rule.pattern); } catch { throw new Error(`Login context pattern is not a regular expression: ${rule.name}`); }
   }
-  const modelUrl = new URL(request.model.url);
-  if (modelUrl.username || modelUrl.password || modelUrl.search || modelUrl.hash || !["http:", "https:"].includes(modelUrl.protocol)) throw new Error("Model URL must not carry credentials or query parameters");
-  for (const ref of [...Object.values(request.model.headers ?? {}), ...Object.values(request.simulator?.headers ?? {})]) if (!ref || Object.keys(ref).length !== 1 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ref.env)) throw new Error("Model credentials must be host environment references");
+  const modelUrl = request.model && new URL(request.model.url);
+  if (modelUrl && (modelUrl.username || modelUrl.password || modelUrl.search || modelUrl.hash || !["http:", "https:"].includes(modelUrl.protocol))) throw new Error("Model URL must not carry credentials or query parameters");
+  for (const ref of [...Object.values(request.model?.headers ?? {}), ...Object.values(request.simulator?.headers ?? {})]) if (!ref || Object.keys(ref).length !== 1 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ref.env)) throw new Error("Model credentials must be host environment references");
   if (request.simulator) createSimulator({ moment: bundle.lockHash, root: join(root, "simulator"), configuration: { ...request.simulator.config, model: request.simulator.model.id }, headers: {}, improverModel: request.simulator.improverModel, attempts: request.simulator.config.attempts, outputSchemas: request.simulator.config.outputSchemas });
   const plugins: ResolvedPlugin[] = [];
   for (const plugin of request.plugins ?? []) {
@@ -70,11 +86,11 @@ export async function resolvePlan(root: string, ledger: string, request: ReplayR
   }
   const plan: ResolvedPlan = {
     phoenix_plan: 1, bundle: bundle.lockHash, check: bundle.lock.check, base_tree: request.base.digest, candidate_tree: request.candidate.digest,
-    harness_image: request.image, model: { id: request.model.id, ...(request.model.alias !== undefined ? { alias: request.model.alias } : {}), ...(request.model.parameters ? { parameters: request.model.parameters } : {}) },
+    harness_image: request.image, model: request.model ? { id: request.model.id, ...(request.model.alias !== undefined ? { alias: request.model.alias } : {}), ...(request.model.parameters ? { parameters: request.model.parameters } : {}) } : { id: bundle.manifest.model?.id ?? "unknown" },
     start: request.start, samples: request.samples ?? bundle.check.samples ?? { base: 2, tiebreak: 1 }, plugins: Object.fromEntries(plugins.map(p => [p.name, p.version])),
     container_runtime: request.runtime?.version ?? "docker", clock_probe: request.clockProbe ?? ["node", "-e", "console.log(Date.now())"], ...(request.loginContext?.length ? { login_context: request.loginContext } : {}), matching_rules: "2",
     ...(request.simulator ? { simulator: { model: request.simulator.model, config: request.simulator.config } } : {}),
-    runner: { harness: request.harness, ...(request.bindings ? { bindings: request.bindings } : {}), model: request.model, env: request.env ?? {}, cli: request.runtime?.cli ?? ["docker"], plugins, ...(request.simulator ? { simulator: request.simulator } : {}) },
+    runner: { harness: request.harness, ...(request.bindings ? { bindings: request.bindings } : {}), ...(request.model ? { model: request.model } : {}), ...(recipe ? { recipe } : {}), env: request.env ?? {}, cli: request.runtime?.cli ?? ["docker"], plugins, ...(request.simulator ? { simulator: request.simulator } : {}) },
   };
   checked("plan", plan);
   const id = digest(canonical(plan));
@@ -87,6 +103,10 @@ export async function resolvePlan(root: string, ledger: string, request: ReplayR
   await cp(request.moment, join(stage, "inputs/bundle"), { recursive: true, errorOnExist: true, force: false });
   await cp(request.base.directory, join(stage, "inputs/base"), { recursive: true, errorOnExist: true, force: false });
   await cp(request.candidate.directory, join(stage, "inputs/candidate"), { recursive: true, errorOnExist: true, force: false });
+  if (request.recipe && recipe) {
+    await cp(dirname(request.recipe), join(stage, "inputs/recipe"), { recursive: true, errorOnExist: true, force: false });
+    if (await treeDigest(join(stage, "inputs/recipe")) !== recipe.tree) throw new Error("Recipe changed while resolving the plan");
+  }
   for (const [index, plugin] of (request.plugins ?? []).entries()) {
     await cp(plugin.directory, join(stage, "inputs/plugins", String(index)), { recursive: true, errorOnExist: true, force: false });
     if (await treeDigest(join(stage, "inputs/plugins", String(index))) !== plugins[index]!.tree) throw new Error("Plugin changed while resolving the plan");
