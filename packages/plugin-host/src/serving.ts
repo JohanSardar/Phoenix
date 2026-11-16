@@ -19,7 +19,7 @@ export interface PluginCall {
 export type ServingOptions = Omit<PluginStartOptions, "onConnection" | "replay"> & { replay: NonNullable<PluginStartOptions["replay"]> };
 export type ServingReply = { status: "answer"; value: PluginWireMessage } | Exclude<PluginReply, { status: "answer" }>;
 export interface ServingPlugin {
-  call(call: PluginCall, now: string): Promise<ServingReply>;
+  call(call: PluginCall, now: string, recorded?: PluginWireMessage): Promise<ServingReply>;
   state(now: string): Promise<PluginReply>;
   stop(): Promise<void>;
 }
@@ -42,12 +42,13 @@ export async function startServingPlugin(plugin: InstalledPlugin, options: Servi
     return result;
   };
   return {
-    async call(call, time) {
+    async call(call, time, recorded) {
       const level = plugin.descriptor.serve!.level;
       if ((level === "http") !== (call.surface === "http") || !plugin.descriptor.operations.includes(call.op))
         return { status: "unsupported", reason: "Operation or surface is not covered by the plugin" };
       const stdin = call.surface === "cli" && call.stdin ? { stdin: Buffer.from(await call.stdin()).toString("base64") } : {};
-      const reply = await request("call", { surface: call.surface, layer: call.layer, op: call.op, args: call.args, raw: { ...call.raw, body: Buffer.from(call.raw.body).toString("base64"), ...stdin } }, time);
+      const mirrored = recorded ? { recorded: { body: Buffer.from(recorded.body).toString("base64"), ...(recorded.head ? { head: recorded.head } : {}) } } : {};
+      const reply = await request("call", { surface: call.surface, layer: call.layer, op: call.op, args: call.args, raw: { ...call.raw, body: Buffer.from(call.raw.body).toString("base64"), ...stdin }, ...mirrored }, time);
       if (reply.status !== "answer") return reply;
       const value = reply.value as { body?: unknown; head?: PluginWireMessage["head"] } | null;
       if (!value || typeof value.body !== "string" || Buffer.from(value.body, "base64").toString("base64") !== value.body)

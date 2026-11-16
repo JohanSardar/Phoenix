@@ -24,22 +24,64 @@ Opt in only for an MCP adapter configured for **one calendar**, with these tool 
 | `get_event` | `{id: "event-id"}` | One event |
 | `move_event` | `{id: "event-id", start: "…", end: "…"}` | The full updated event |
 
-An event has a string `id`; its other fields are opaque and preserved. Payloads are MCP `structuredContent` or JSON in one text content block. Names alone do not establish compatibility. Do not enable this map for paginated lists, multi-calendar id namespaces, or adapters with different argument/envelope shapes. Raw Google Calendar HTTP routes and other MCP dialects remain generic recorded replay; this package does not claim to implement the Google API.
+An event has a string `id`; its other fields are opaque and preserved. Payloads are MCP `structuredContent` or JSON in one text content block. Names alone do not establish compatibility. Do not enable this map for paginated lists, multi-calendar id namespaces, or adapters with different argument/envelope shapes. The local server's own tools are covered by the working copy below.
 
-## Fidelity and replay
+## Working copy (`serve`)
 
-The descriptor's `stateful` tier is a **ceiling achieved by the entity overlay plus recorded writes**, not an independent Calendar emulator. Supply `descriptor.entity_map` to the engine's `entityMaps.calendar`, and its `read_only` operations to the connector policy with `source: "plugin"`. Discovery alone does not configure replay or authorize capture.
+The plugin has a working copy of Google Calendar for replays. It runs the real `@cocal/google-calendar-mcp` server (version 2.8.1, a dependency of this package) unchanged. Only the Google Calendar API under that server is replaced: `GOOGLE_CALENDAR_API_BASE_URL` points at an in-memory copy of the Calendar REST API (`src/google.mjs`). The server gets a made-up login in a temporary home, so a replay has no real login and no way to reach the real calendar. The sandbox also forwards no outbound connection.
 
-Captured events support derived gets by id. Only an observed, unfiltered, unpaginated list establishes a complete collection from which the overlay can derive new lists. Filtered/date lists contribute events but not collection completeness; their list answers stay recorded. There are no declared list filters because the overlay's equality/range filters do not implement Calendar date-window semantics. Unknown ids in incomplete collections miss.
+The copy answers all 13 tools of the local server: `list-calendars`, `list-events`, `search-events`, `get-event`, `list-colors`, `create-event`, `create-events`, `update-event`, `delete-event`, `get-freebusy`, `get-current-time`, `respond-to-event` and `manage-accounts`. It also answers this package's adapter tools (`list_events`, `get_event`, `move_event`) by running the adapter over the same server, and the nine tools of Google's hosted Calendar MCP server (below).
 
-A recorded `move_event` reply updates the entity, so subsequent overlay reads see the moved times. A move not supported by a recorded answer is a miss, not a fabricated write. Recurrence rules, exception identity, attendee flags, ids and timestamps are retained verbatim, never expanded or regenerated. Recurrence expansion, search, permissions and unsupported operations are misses. The run's actual fidelity follows the resolvers used, not this ceiling. There is deliberately no `serve` command and no dependency on `emulate`.
+What the copy knows comes from the Snapshot given at `initialize`: a JSON file `{ "answers": [{ "op", "args", "result", "observed_at" }], "adapter"?: { "calendarId", "account" } }` holding answers the session saw. The calendar list, each calendar's time zone, the events seen in each listed time window and free/busy all come from those answers. Writes then change the copy, so a read after a write sees it. That covers several calendars, repeating events and single changed occurrences, splitting a series, all-day events, time zones, guests and replies, free/busy, search, and the not-found errors the real service returns.
+
+When the copy does not know enough, it does not guess. It answers `unsupported` with the reason, and the answer chain moves on. Examples: a time window it never saw listed, an event id it never saw that could exist, a calendar whose time zone it does not know, a Google Meet link, or a repeating rule it cannot expand.
+
+The adapter tools only show Google's events, not the calendar list, so a session that used only the adapter does not tell the copy the calendar's time zone. Google writes each event time with the calendar's UTC offset, so the copy keeps every IANA time zone that matches all the offsets it saw. It answers a time only where all of those zones give the same local time, and answers `unsupported` anywhere they differ, for example across a daylight-saving change none of the seen times covers. While the copy serves the calendar, the engine turns off the entity overlay for it, so the copy has to answer the adapter reads the overlay used to answer.
+
+Known differences from the real service, measured side by side against real answers:
+
+- `created` and `updated` come from the replay clock, so they differ from the real ones by up to about one second.
+- Ids that Google makes up (events created without an id) are new ids, not the real ones, except for a recorded write the engine runs against the copy: the engine sends the recorded answer with it, so the event keeps the id the agent was given and later calls by that id reach the copy. This holds for both servers.
+- `get-current-time` follows the replay clock. In the sandbox that clock is the recorded time, so it was 75 ms off.
+- `manage-accounts` reports a login that expires in 2099, so the server never tries to refresh it.
+
+The local server reads times without an offset, such as `originalStartTime`, in its own process's time zone. Set `TZ` in the plugin's environment to the time zone of the machine the session ran on, or those calls miss.
+
+### Google's hosted server (the claude.ai connector)
+
+Claude Code names the claude.ai Google Calendar connector `claude_ai_Google_Calendar` (its tools are `mcp__claude_ai_Google_Calendar__<tool>`), so the descriptor recognizes that name. The copy answers its nine tools from the same in-memory calendar (`src/hosted.mjs`): `list_calendars`, `list_events`, `get_event`, `search_events`, `suggest_time`, `create_event`, `update_event`, `delete_event` and `respond_to_event`. The shapes follow what that server answered in recorded Claude Code sessions:
+
+- Answers are compact JSON with sorted keys, and empty lists are left out, so a search with no match is `{}`.
+- After a write, an event shows its times in UTC, a `calendar.google.com` link, `availability` and `visibility`, and no reminders. `delete_event` answers `{ id, status: "cancelled" }`.
+- When reading, an event shows its times in the calendar's zone (`list_events` uses its `timeZone` argument and adds `&ctz=` to the link), a `www.google.com` link and `useDefaultReminders`. `list_events` wraps the events with the calendar's `accessRole`, `defaultReminders`, `summary`, `timeZone` and `updated`.
+- `suggest_time` answers the free stretches of the window that are at least `durationMinutes` long, in the asked zone.
+- `respond_to_event` on an event without the user as an attendee is the error Google gives: "Cannot respond to event: The current user is not listed as an attendee on this event."
+
+The copy learns from the hosted server's own answers in the snapshot: the calendar list, every event of a `list_events` window (without `fullText` and without a next page), events from reads and writes, deletions, and each search with the events it found. It answers `unsupported` for what it has not seen answered live: a window it never saw listed, a search it never saw (the server searches by meaning, so the copy repeats only a search it saw with less than a full page, and only while no event has changed since), guests, Google Meet, repeating or all-day writes, a time with an offset or without `timeZone`, `suggest_time` for anyone but the user, paging, and a response to an invitation the user is on (see Limits).
+
+Compared call by call with four recorded sessions (each call asked after teaching the copy every real answer before it), every call the copy answered matched, apart from ids Google makes up for events the agent creates live in a replay, the links built from them, and `created` and `updated`, which follow the replay clock and differ by up to a second. The calls it did not answer were ones nothing before them could tell it about, such as a session's first `list_calendars`.
+
+Install for a replay with `npm install --omit=dev` inside the unpacked package, so its `node_modules` sits in the plugin folder. The runner mounts only that folder.
+
+## Entity overlay
+
+Without `serve`, the descriptor's entity map still lets the engine's overlay answer adapter reads. Supply `descriptor.entity_map` to the engine's `entityMaps.calendar`, and its `read_only` operations to the connector policy with `source: "plugin"`. Captured events support gets by id. Only an observed, unfiltered, unpaginated list makes a collection complete. A recorded `move_event` reply updates the entity. A connector served by the working copy has no overlay state.
 
 ## Capture
 
-Explicitly call `capturePlugin` with this installed descriptor and a separately authorized stdio MCP target. The sidecar reads only the supplied connector segments and their referenced blobs. It repeats observed `list_events` calls and fetches ids observed in tool arguments or successful event payloads with `get_event`. Both operations are declared read-only; `move_event` is never planned. The host owns the separate upstream connection, timestamps, redaction, prefetch storage and timeout. The sidecar makes no network calls.
+Explicitly call `capturePlugin` with this installed descriptor and a separately authorized stdio MCP target, or take a mark with `phoenix mark`, which runs the same capture against the session's own calendar server. The sidecar reads only the supplied connector segments and their referenced blobs, and plans read-only calls only. A capture reads more of the real calendar than the agent touched, so the copy can answer calls the session never made:
+
+- Through the local server: the whole calendar list, with each calendar's name and time zone; every event in each time window the session listed or searched; each event named in a call; and the series master of every repeating occurrence those lists returned.
+- Through the adapter: each `list_events` window the session asked for again, and `get_event` for every event id seen. The adapter has no calendar-list tool, so the time zone comes from the offsets as described above.
+
+These answers are real calendar data. A mark keeps them in its `services.json`, and a replay keeps the copy's snapshot under its emulator inputs, all on the machine that took them, in files only the owner can read. `move_event` and other writes are never planned. The host owns the separate upstream connection, timestamps, redaction, prefetch storage and timeout. The sidecar makes no network calls.
 
 Coverage always reports the event collection as incomplete: observed ids and windows do not prove a vendor-wide snapshot, even when the sidecar finishes successfully. Captured error replies remain recorded observations, not empty successful state.
 
-## Proof boundary
+## Limits
 
-The reference harness's calendar tools are the development stand-in, not Google traffic. They provide the three tools above but require a date on lists, so they cannot prove complete-calendar enumeration. The live adapter is a narrow bridge to Google's MCP server, not a Google API emulator. Recurrence expansion and PATCH behavior come from the real upstream; replay supports only recorded writes. The plugin kit's serving interface requires a proof adapter for this no-emulator plugin; such a report measures the recording/overlay chain, not independent vendor fidelity.
+Through the claude.ai connector, the copy does not support a successful `respond_to_event`. If an agent accepts or declines an invitation in a replay, the copy answers `unsupported`. Such an answer could not be recorded from one Google account: the connector drops attendees when it creates an event, so the user can only be invited from a second account. `respond_to_event` on an event the user is not invited to is answered with the "not an attendee" error, as recorded.
+
+For the hosted server, the read view never says whether an event blocks time. `suggest_time` therefore answers only where each event in the window is known: from a write answer, or because a `suggest_time` answer the copy saw fits only one choice for it. Otherwise it is `unsupported`, like a session's first `suggest_time` over a day with other events. Its default `list_events` order is unknown, so the copy answers more than one event only with an `orderBy`. The calendar's `updated` after a write is the write time rounded up to the second, which was up to a second off.
+
+In a replay that starts from the beginning of a recording rather than resuming a session, the copy knows only the snapshot given in the replay settings. Without one it starts empty.

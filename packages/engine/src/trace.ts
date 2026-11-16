@@ -19,6 +19,7 @@ export interface TraceEntry {
   contentType?: string;
   provenance?: TraceEvent["provenance"];
   resolver?: string;
+  afterUntakenWrite?: boolean;
   chunks?: TraceEvent["chunks"];
 }
 
@@ -71,6 +72,7 @@ export class SampleTrace {
       ...(entry.op ? { op: entry.op } : {}),
       ...(entry.provenance ? { provenance: entry.provenance } : {}),
       ...(entry.resolver ? { resolver: entry.resolver } : {}),
+      ...(entry.afterUntakenWrite ? { after_untaken_write: true } : {}),
       ...(entry.chunks ? { chunks: entry.chunks } : {}),
     };
     if (entry.head) {

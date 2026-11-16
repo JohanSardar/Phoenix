@@ -1,0 +1,71 @@
+{
+  "phoenix_plugin": 1,
+  "connector": "supabase",
+  "recognize": {
+    "mcp_servers": [
+      "supabase"
+    ]
+  },
+  "tier": "stateful",
+  "operations": [
+    "tools/call:search_docs",
+    "tools/call:list_tables",
+    "tools/call:list_extensions",
+    "tools/call:list_migrations",
+    "tools/call:apply_migration",
+    "tools/call:execute_sql",
+    "tools/call:query_logs",
+    "tools/call:get_advisors",
+    "tools/call:get_project_url",
+    "tools/call:get_publishable_keys",
+    "tools/call:generate_typescript_types",
+    "tools/call:list_edge_functions",
+    "tools/call:get_edge_function",
+    "tools/call:list_branches",
+    "tools/call:list_notebooks",
+    "tools/call:get_notebook",
+    "tools/call:run_notebook",
+    "tools/call:deploy_edge_function",
+    "tools/call:create_edge_function_secret",
+    "tools/call:create_branch",
+    "tools/call:delete_branch",
+    "tools/call:merge_branch",
+    "tools/call:reset_branch",
+    "tools/call:rebase_branch",
+    "tools/call:create_notebook",
+    "tools/call:delete_notebook",
+    "tools/call:phoenix_database_snapshot"
+  ],
+  "read_only": [
+    "tools/call:search_docs",
+    "tools/call:list_tables",
+    "tools/call:list_extensions",
+    "tools/call:list_migrations",
+    "tools/call:query_logs",
+    "tools/call:get_advisors",
+    "tools/call:get_project_url",
+    "tools/call:get_publishable_keys",
+    "tools/call:generate_typescript_types",
+    "tools/call:list_edge_functions",
+    "tools/call:get_edge_function",
+    "tools/call:list_branches",
+    "tools/call:list_notebooks",
+    "tools/call:get_notebook",
+    "tools/call:phoenix_database_snapshot"
+  ],
+  "capture": {
+    "command": [
+      "node",
+      "src/capture.mjs"
+    ],
+    "protocol": "stdio"
+  },
+  "serve": {
+    "command": [
+      "node",
+      "src/serve.mjs"
+    ],
+    "protocol": "stdio",
+    "level": "tool"
+  }
+}

@@ -1,20 +1,68 @@
 {
   "phoenix_plugin": 1,
   "connector": "calendar",
-  "recognize": { "mcp_servers": ["google-calendar", "calendar"] },
+  "recognize": { "mcp_servers": ["google-calendar", "calendar", "claude_ai_Google_Calendar"] },
   "tier": "stateful",
-  "operations": ["tools/call:list_events", "tools/call:get_event", "tools/call:move_event"],
-  "read_only": ["tools/call:list_events", "tools/call:get_event"],
+  "operations": [
+    "tools/call:list_events",
+    "tools/call:get_event",
+    "tools/call:move_event",
+    "tools/call:list-calendars",
+    "tools/call:list-events",
+    "tools/call:search-events",
+    "tools/call:get-event",
+    "tools/call:list-colors",
+    "tools/call:create-event",
+    "tools/call:create-events",
+    "tools/call:update-event",
+    "tools/call:delete-event",
+    "tools/call:get-freebusy",
+    "tools/call:get-current-time",
+    "tools/call:respond-to-event",
+    "tools/call:manage-accounts",
+    "tools/call:list_calendars",
+    "tools/call:search_events",
+    "tools/call:suggest_time",
+    "tools/call:create_event",
+    "tools/call:update_event",
+    "tools/call:delete_event",
+    "tools/call:respond_to_event"
+  ],
+  "read_only": [
+    "tools/call:list_events",
+    "tools/call:get_event",
+    "tools/call:list-calendars",
+    "tools/call:list-events",
+    "tools/call:search-events",
+    "tools/call:get-event",
+    "tools/call:list-colors",
+    "tools/call:get-freebusy",
+    "tools/call:get-current-time",
+    "tools/call:list_calendars",
+    "tools/call:search_events",
+    "tools/call:suggest_time"
+  ],
   "entity_map": {
     "tools/call:list_events": {
-      "kind": "list", "entity": "event", "id_path": "/id", "items_path": "", "complete": "unpaginated"
+      "kind": "list",
+      "entity": "event",
+      "id_path": "/id",
+      "items_path": "",
+      "complete": "unpaginated"
     },
     "tools/call:get_event": {
-      "kind": "get", "entity": "event", "id_path": "/id", "items_path": ""
+      "kind": "get",
+      "entity": "event",
+      "id_path": "/id",
+      "items_path": ""
     },
     "tools/call:move_event": {
-      "kind": "update", "entity": "event", "id_path": "/id", "items_path": ""
+      "kind": "update",
+      "entity": "event",
+      "id_path": "/id",
+      "items_path": ""
     }
   },
-  "capture": { "command": ["node", "src/capture.mjs"], "protocol": "stdio" }
+  "capture": { "command": ["node", "src/capture.mjs"], "protocol": "stdio" },
+  "serve": { "command": ["node", "src/serve.mjs"], "protocol": "stdio", "level": "tool" }
 }

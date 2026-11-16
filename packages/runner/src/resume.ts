@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { startToolStandIn, type SimulatorOptions, type ToolStandIn, type ToolStandInOptions } from "@phoenix/engine";
+import { readsOnly, startToolStandIn, type SimulatorOptions, type ToolStandIn, type ToolStandInOptions } from "@phoenix/engine";
 import { parse } from "yaml";
 import type { RecipeDescriptor } from "@phoenix/formats";
 import { writeClockFile, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
@@ -21,6 +21,8 @@ interface SessionMoment {
   loadout: unknown;
   box?: unknown;
   in_box?: Record<string, string[]>;
+  shell?: Record<string, Record<string, { command: string; cwd?: string }>>;
+  cwd?: string;
   answers: { id: string; connector: string; op: string; args: unknown; result: unknown; observed_at: string; before_cut: boolean; world?: "exact" | "any-args" }[];
 }
 
@@ -111,7 +113,14 @@ export async function resumeAttempt(input: {
     emulators,
     host: TOOLS_HOST,
     answers: moment.answers.map(a => ({ id: a.id, connector: a.connector, op: a.op, args: a.args, result: a.result, observedAt: a.observed_at, beforeCut: a.before_cut, ...(a.world ? { world: a.world } : {}) })),
-    inBox: (connector, op) => !!project && (moment.in_box?.[connector] ?? []).includes(op),
+    inBox: (connector, op, args) => {
+      if (!project) return false;
+      if ((moment.in_box?.[connector] ?? []).includes(op)) return true;
+      const shell = moment.shell?.[connector]?.[op];
+      const given = args as Record<string, unknown>;
+      const command = shell && given[shell.command], cwd = (shell?.cwd ? given[shell.cwd] : undefined) ?? moment.cwd;
+      return typeof command === "string" && readsOnly(command, project.root, typeof cwd === "string" ? cwd : undefined, join(box, "project"));
+    },
     ...(input.simulator ? { simulator: input.simulator } : {}),
     cutTime: bundle.manifest.clock?.time ?? new Date().toISOString(),
     policy: connector => {

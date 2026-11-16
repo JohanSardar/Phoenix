@@ -85,6 +85,13 @@ export interface ReplayResult {
         connector: string;
         op: string;
       }[];
+      /**
+       * Answers that came after a write to the same service that its working copy could not take, so the write got a made-up answer. Neither the session nor the copy knows what the service would say then.
+       */
+      after_untaken_write_calls?: {
+        connector: string;
+        op: string;
+      }[];
     };
     attempts: {
       attempt: number;

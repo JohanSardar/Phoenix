@@ -10,6 +10,7 @@ export class HttpModelProvider implements ModelProvider {
   readonly #headers: Readonly<Record<string, string>>;
 
   constructor(configuration: ModelConfiguration, headers: Readonly<Record<string, string>>) {
+    if (!configuration.endpoint || !configuration.dialect) throw new Error("Model endpoint and dialect are required");
     const endpoint = new URL(configuration.endpoint);
     if (!["https:", "http:"].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash)
       throw new Error("Model endpoint must be an HTTP URL without credentials, query or fragment");
@@ -27,7 +28,7 @@ export class HttpModelProvider implements ModelProvider {
     else if (c.dialect === "chat-completions") body = { ...common, model: c.model, messages: [{ role: "system", content: request.system }, { role: "user", content: request.prompt }], max_completion_tokens: c.maxOutputTokens, stream: false };
     else if (c.dialect === "messages") body = { ...common, model: c.model, system: request.system, messages: [{ role: "user", content: request.prompt }], max_tokens: c.maxOutputTokens, stream: false };
     else body = { systemInstruction: { parts: [{ text: request.system }] }, contents: [{ role: "user", parts: [{ text: request.prompt }] }], generationConfig: { ...common, maxOutputTokens: c.maxOutputTokens } };
-    const response = await fetch(c.endpoint, {
+    const response = await fetch(c.endpoint!, {
       method: "POST", headers: { ...this.#headers, "content-type": "application/json" }, body: JSON.stringify(body),
       signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
       redirect: "error",

@@ -21,7 +21,7 @@ export interface ToolStandInOptions {
   host: string;
   answers: readonly RecordedToolAnswer[];
   policy(connector: string): ConnectorPolicy;
-  inBox?(connector: string, op: string): boolean;
+  inBox?(connector: string, op: string, args: unknown): boolean;
   simulator?: Omit<SimulatorOptions, "clock">;
   emulators?: readonly EmulatorConfig[];
   cutTime?: string;
@@ -74,7 +74,7 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
       }
       const call = toCall({ surface: "mcp", connector, op: `tools/call:${message.params.name}`, args: message.params.arguments ?? {}, raw: { body } }, policy(connector));
       await trace.append(stream, { kind: "call", surface: "mcp", layer: "agent", connector, op: call.op, body });
-      const inBox = options.inBox?.(connector, message.params.name) ?? false;
+      const inBox = options.inBox?.(connector, message.params.name, message.params.arguments ?? {}) ?? false;
       const answered = await answerCall(call, ctx, inBox ? ["simulator"] : []);
       if ("divergence" in answered && inBox) {
         const reply = rpc(message.id, { run_in_box: true });
@@ -94,7 +94,7 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
       const recorded = JSON.parse(Buffer.from(answered.answer.raw.body).toString()) as { result: unknown };
       const reply = rpc(message.id, { result: recorded.result });
       served++;
-      await trace.append(stream, { kind: "result", surface: "mcp", layer: "agent", connector, op: call.op, body: reply, provenance: answered.answer.provenance, resolver: answered.answer.resolver });
+      await trace.append(stream, { kind: "result", surface: "mcp", layer: "agent", connector, op: call.op, body: reply, provenance: answered.answer.provenance, resolver: answered.answer.resolver, afterUntakenWrite: answered.answer.afterUntakenWrite });
       response.end(reply);
     })().catch(error => {
       stop({ trigger: "lifecycle", detail: error instanceof Error ? error.message : String(error) });

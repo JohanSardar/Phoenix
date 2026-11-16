@@ -1,12 +1,12 @@
 {
   "name": "@phoenix/plugin-google-calendar",
   "version": "0.0.0",
-  "description": "Google Calendar MCP capture and entity-overlay descriptor for Phoenix",
+  "description": "Google Calendar MCP capture, entity overlay and working copy for Phoenix",
   "type": "module",
   "engines": { "node": ">=24" },
-  "files": ["phoenix-plugin.json", "src/capture.mjs", "src/mcp.mjs", "README.md"],
+  "files": ["phoenix-plugin.json", "src/capture.mjs", "src/mcp.mjs", "src/serve.mjs", "src/google.mjs", "src/seed.mjs", "src/hosted.mjs", "src/time.mjs", "README.md"],
   "bin": { "phoenix-google-calendar-mcp": "src/mcp.mjs" },
-  "dependencies": { "@modelcontextprotocol/sdk": "^1.32.2" },
+  "dependencies": { "@cocal/google-calendar-mcp": "2.8.1", "@modelcontextprotocol/sdk": "^1.32.2" },
   "exports": { "./phoenix-plugin.json": "./phoenix-plugin.json" },
   "license": "MIT"
 }
