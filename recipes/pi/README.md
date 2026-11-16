@@ -114,7 +114,7 @@ it did. CLI output does not recreate file writes.
 
 `phoenix moment create --session <copy of a pi session file> --recipe recipes/pi/recipe.yaml --at <line>` cuts the session before the user turn that holds that line. In the box, `resume.mjs` resumes pi from the cut with `pi --fork`. Phoenix answers every tool call.
 
-- pi-mcp-adapter hides MCP tools behind its `mcp` tool and, after a connect, behind `mcp__<server>`. `adapter.mjs` turns each such call back into the server and tool it reaches, so a calendar call through the adapter is answered as the calendar's own call. The adapter's own questions (status, list, search, describe, connect) are answered from the session.
+- pi-mcp-adapter hides MCP tools behind its `mcp` tool and, after a connect, behind `mcp__<server>`. `adapter.mjs` turns each such call back into the server and tool it reaches, so a calendar call through the adapter is answered as the calendar's own call. The adapter's own questions (status, list, search, describe, connect) are answered from the session. A question the session never asked has no answer, and the replay stops there.
 - The box's clock is the moment's time. `clock.mjs` moves only the clock pi's JavaScript sees. The TLS library keeps the real clock, so the LLM's certificate still checks out for an older moment.
 - The harness is `APPEND_SYSTEM.md` plus any pi extension in the harness's `extensions/` folder. Both load in the box.
 - The box has no network of its own. pi reaches only the LLM hosts in `resume.llm_hosts`, on port 443. Phoenix checks the server name in each TLS hello and passes the encrypted bytes on unchanged.

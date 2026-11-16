@@ -24,7 +24,7 @@ export function adapterCall(proxyName, params, adapter) {
     try { args = JSON.parse(args); } catch { return { connector: ADAPTER, op: "call", args: params }; }
   }
   const known = adapter.tools[params.tool];
-  const server = known?.server ?? serverOf(proxyName, adapter.servers) ?? adapter.servers.filter(s => params.tool.startsWith(`${s}_`)).sort((a, b) => b.length - a.length)[0];
+  const server = serverOf(proxyName, adapter.servers) ?? known?.server ?? adapter.servers.filter(s => params.tool.startsWith(`${s}_`)).sort((a, b) => b.length - a.length)[0];
   if (!server) return { connector: ADAPTER, op: "call", args: params };
-  return { connector: server, op: known?.tool ?? (params.tool.startsWith(`${server}_`) ? params.tool.slice(server.length + 1) : params.tool), args };
+  return { connector: server, op: known?.server === server ? known.tool : params.tool.startsWith(`${server}_`) ? params.tool.slice(server.length + 1) : params.tool, args };
 }

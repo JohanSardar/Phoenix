@@ -29,11 +29,12 @@ export default function standIn(pi) {
       },
     });
   }
-  const names = loadout.tools.map(tool => tool.name);
-  pi.on("session_start", () => pi.setActiveTools(names));
+  const recorded = loadout.tools.map(tool => tool.name);
+  const names = () => [...recorded, ...pi.getAllTools().filter(tool => tool.sourceInfo?.path?.startsWith(`${process.cwd()}/extensions/`) && !recorded.includes(tool.name)).map(tool => tool.name)];
+  pi.on("session_start", () => pi.setActiveTools(names()));
   pi.on("before_agent_start", event => {
     const options = event.systemPromptOptions;
-    options.selectedTools = names;
+    options.selectedTools = names();
     const { preamble, ...sections } = loadout.sections;
     if (preamble !== undefined && !event.systemPrompt.startsWith(preamble)) options.customPrompt = preamble;
     for (const [name, text] of Object.entries(sections)) if (!loadout.harness_sections.includes(name)) options.sections[name] = unwrap(name, text);
