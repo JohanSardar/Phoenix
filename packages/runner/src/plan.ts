@@ -1,5 +1,5 @@
 import { cp, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rename } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { parse } from "yaml";
 import type { Bindings, HarnessContract, PluginDescriptor, RecipeDescriptor, ReplayPlan } from "@phoenix/formats";
 import { createSimulator, resolveModelDialect, type SimulatorOptions } from "@phoenix/engine";
@@ -86,8 +86,9 @@ export async function resolvePlan(root: string, ledger: string, request: ReplayR
     for (const entry of await readdir(plugin.directory, { recursive: true, withFileTypes: true })) {
       if (!entry.isSymbolicLink()) continue;
       const link = join(entry.parentPath, entry.name), target = await readlink(link);
-      const real = await realpath(link).catch(() => undefined);
-      if (isAbsolute(target) || outside(resolve(await realpath(entry.parentPath), target)) || (real && outside(real)))
+      let at = await realpath(entry.parentPath);
+      for (const part of target.split(sep)) at = part === ".." ? dirname(at) : !part || part === "." ? at : await realpath(join(at, part)).catch(() => join(at, part));
+      if (isAbsolute(target) || outside(at))
         throw new Error(`Plugin ${plugin.name} links ${relative(plugin.directory, link)} to ${target}, outside its folder. A replay mounts only the plugin folder, so the link would be broken there. Install the packed plugin instead: pack it, unpack it, and install its dependencies inside the unpacked folder.`);
     }
     const { directory: _, ...settings } = plugin;

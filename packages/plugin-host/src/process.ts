@@ -92,7 +92,7 @@ export async function startPlugin(plugin: InstalledPlugin, mode: "capture" | "se
         if (options.onConnection) options.onConnection(connection);
         else connection.stream.destroy();
       }
-    } catch (error) { fail(new PluginProcessError(String(error))); }
+    } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
   })();
   let said = "";
   stderr.on("data", (data: Buffer) => { said = (said + data.toString("utf8")).slice(-2000); options.onStderr?.(data); });
