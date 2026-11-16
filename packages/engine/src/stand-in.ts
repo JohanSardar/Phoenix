@@ -23,7 +23,7 @@ export interface ToolStandInOptions {
   answers: readonly RecordedToolAnswer[];
   policy(connector: string): ConnectorPolicy;
   inBox?(connector: string, op: string, args: unknown): boolean;
-  pluginCommand?(connector: string, op: string, args: unknown): { calls: { connector: string; argv: string[]; cwd: string; stdin?: string }[]; around: string } | undefined;
+  pluginCommand?(connector: string, op: string, args: unknown): { calls: { connector: string; argv: string[]; env: Record<string, string>; cwd: string; stdin?: string }[]; around: string } | undefined;
   simulator?: Omit<SimulatorOptions, "clock">;
   emulators?: readonly EmulatorConfig[];
   cutTime?: string;
@@ -83,8 +83,8 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
       if ("divergence" in answered && routed) {
         const outputs: { stdout: string; stderr: string; exit_code: number }[] = [];
         let miss: string | undefined;
-        for (const { connector: plugin, argv, cwd, stdin } of routed.calls) {
-          const invocation = { argv, cwd, env: {}, terminals: { stdin: null, stdout: null, stderr: null } };
+        for (const { connector: plugin, argv, env, cwd, stdin } of routed.calls) {
+          const invocation = { argv, cwd, env, terminals: { stdin: null, stdout: null, stderr: null } };
           const cliBody = Buffer.from(JSON.stringify(invocation));
           const cliStream = streamName("stand-in", plugin);
           const cli = { ...toCall({ surface: "cli", layer: "under", connector: plugin, ...cliShape(invocation), raw: { body: cliBody } }, policy(plugin)), stdin: async () => Buffer.from(stdin ?? "") };
