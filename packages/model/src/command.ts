@@ -19,7 +19,7 @@ export class CommandModelProvider implements ModelProvider {
     child.stdin.on("error", () => {});
     child.stdin.end(`${request.system}\n\n${request.prompt}`);
     const code = await new Promise<number | null>((resolve, reject) => { child.on("error", reject); child.on("close", resolve); });
-    if (code !== 0) throw new Error(`Model command failed (exit ${code}): ${Buffer.concat(err).toString("utf8").trim().slice(-300)}`);
+    if (code !== 0) throw new Error(`Model command failed (exit ${code}): ${(Buffer.concat(err).toString("utf8").trim() || Buffer.concat(out).toString("utf8").trim()).slice(-300)}`);
     const text = Buffer.concat(out).toString("utf8");
     if (!text.trim()) throw new ModelOutputError("Model command printed no text");
     return { text };
