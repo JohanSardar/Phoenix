@@ -18,6 +18,7 @@ interface SessionMoment {
   prompt: string;
   model: { provider: string; id: string; thinking?: string };
   loadout: unknown;
+  box?: unknown;
   answers: { id: string; connector: string; op: string; args: unknown; result: unknown; observed_at: string; before_cut: boolean }[];
 }
 
