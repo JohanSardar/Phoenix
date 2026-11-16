@@ -236,7 +236,10 @@ export async function stripSecrets(msg: WireMessage, policy: SecretPolicy): Prom
   checkKey(policy.hmacKey);
   const changes: Change[] = [], unscanned: string[] = [];
   const next: WireMessage = { ...msg };
-  const scan = async (text: string, at: string) => {
+  const scan = async (text: string, at: string): Promise<string> => {
+    if (/^\s*[[{]/.test(text)) {
+      try { JSON.parse(text); return await transformJson(text, scan, policy, changes); } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+    }
     const result = await scanSecrets(text, policy);
     changes.push(...result.used.map((s) => ({ at: `${at}:${s.start}`, rule: s.rule })));
     return result.text;
@@ -279,8 +282,10 @@ export async function stripSecrets(msg: WireMessage, policy: SecretPolicy): Prom
   return { msg: next, changes, unscanned, ...(originalEncoding ? { originalEncoding } : {}) };
 }
 
+const PERSONAL_PATTERNS = ["EMAIL", "PHONE_US", "PHONE_UK", "PHONE_UK_MOBILE", "PHONE_INTERNATIONAL", "CREDIT_CARD", "IBAN", "SSN", "PASSPORT_US", "PASSPORT_UK", "NATIONAL_INSURANCE_UK", "NHS_NUMBER", "IPV4", "IPV6", "DATE_OF_BIRTH"];
+
 export function openRedactionDetector(): PersonalDataDetector {
-  const detector = new LiteOpenRedaction({ enableCache: false, debug: false, enableAuditLog: false, enableMetrics: false, enableContextAnalysis: false, enableFalsePositiveFilter: false, confidenceThreshold: 0 });
+  const detector = new LiteOpenRedaction({ patterns: PERSONAL_PATTERNS, enableCache: false, debug: false, enableAuditLog: false, enableMetrics: false, enableContextAnalysis: false, enableFalsePositiveFilter: false, confidenceThreshold: 0 });
   return { async detect(text) {
     const result = await detector.detect(text);
     return result.detections.map((d) => ({ start: d.position[0], end: d.position[1], type: d.type }));
@@ -291,7 +296,10 @@ export async function scrubPersonalData(msg: WireMessage, policy: PackPolicy): P
   checkKey(policy.hmacKey);
   const detector = policy.detector ?? openRedactionDetector();
   const changes: Change[] = [], next: WireMessage = { ...msg };
-  const scan = async (text: string, at: string) => {
+  const scan = async (text: string, at: string): Promise<string> => {
+    if (/^\s*[[{]/.test(text)) {
+      try { JSON.parse(text); return await transformJson(text, scan); } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+    }
     const spans = (await detector.detect(text)).map((d) => ({ start: d.start, end: d.end, replacement: placeholder(text.slice(d.start, d.end), "personal", policy.hmacKey), rule: d.type }));
     const result = applySpans(text, spans);
     changes.push(...result.used.map((s) => ({ at: `${at}:${s.start}`, rule: s.rule })));

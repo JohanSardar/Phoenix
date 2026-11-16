@@ -24,6 +24,15 @@ export function deriveMcpResult(text: string, location: FillLocation, isError?: 
   }, location);
 }
 
+export function deriveSerializedMcpResult(text: string, location: FillLocation): FillDerivation {
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { return { ok: false, why: "Result text is not JSON" }; }
+  const content = object(value).content;
+  if (!Array.isArray(content) || !content.every(block => typeof object(block).type === "string") || JSON.stringify(value) !== text)
+    return { ok: false, why: "Result text is not a serialized MCP result" };
+  return fill("mcp.tools/call.result", "mcp-result-from-serialized-result", value as Fill["value"], location);
+}
+
 export function deriveToolList(request: unknown, dialect: ModelDialectName, location: FillLocation): FillDerivation {
   const definitions = object(request).tools;
   if (!Array.isArray(definitions)) return { ok: false, why: "No recorded tool definitions" };

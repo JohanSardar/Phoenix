@@ -58,7 +58,22 @@ export interface SnapshotMomentOptions {
   timezone?: string;
 }
 
+export interface PreparedMoment {
+  manifest: MomentManifest;
+  files: Map<string, string | Uint8Array>;
+  blobs: Map<string, string>;
+  events: TraceEvent[];
+  workdir?: WorkdirSnapshot;
+  store: BlobStore;
+}
+
 export async function createSnapshotMoment(o: SnapshotMomentOptions): Promise<MomentManifest> {
+  const { manifest, files, blobs } = await prepareSnapshotMoment(o);
+  await writeMomentBundle(o.out, { manifest, files, blobs });
+  return manifest;
+}
+
+export async function prepareSnapshotMoment(o: Omit<SnapshotMomentOptions, "out">): Promise<PreparedMoment> {
   const view = await readCapture(o.capture);
   const run = { capture: view.metadata.capture, task: o.task ?? "" };
   if (!view.runs().some((r) => r.task === run.task)) throw new Error(`No run with task key "${run.task}" in capture ${run.capture}`);
@@ -98,14 +113,15 @@ export async function createSnapshotMoment(o: SnapshotMomentOptions): Promise<Mo
     };
   }
 
-  const files = new Map<string, string>([["data/run.jsonl", events.map((e) => JSON.stringify(e) + "\n").join("")], ["check.draft.yaml", check]]);
+  const files = new Map<string, string | Uint8Array>([["data/run.jsonl", events.map((e) => JSON.stringify(e) + "\n").join("")], ["check.draft.yaml", check]]);
   const hashes = new Set(events.flatMap((e) => e.body && "blob" in e.body ? [e.body.blob] : []));
   const snapshot = chosenWorkdir(view.snapshots, o.workdir, run.task);
   let workdir: Pick<MomentManifest, "workdir" | "include_ignored"> = {};
+  let selected: WorkdirSnapshot | undefined;
   if (snapshot) {
     if (o.includeIgnored && !snapshot.ignored_copied) throw new Error("The capture did not copy ignored files, so the moment cannot include them");
     const include = o.includeIgnored ?? snapshot.ignored_copied;
-    const selected = withIgnoredChoice(snapshot, include);
+    selected = withIgnoredChoice(snapshot, include);
     files.set("data/workdir/run.json", JSON.stringify(selected, null, 2) + "\n");
     for (const entry of selected.entries) if (entry.blob) hashes.add(entry.blob);
     workdir = { workdir: "data/workdir/run.json", include_ignored: include };
@@ -122,8 +138,7 @@ export async function createSnapshotMoment(o: SnapshotMomentOptions): Promise<Mo
     connectors,
   };
   const store = new BlobStore(o.capture);
-  await writeMomentBundle(o.out, { manifest, files, blobs: new Map([...hashes].map((hash) => [hash, store.path(hash)])) });
-  return manifest;
+  return { manifest, files, blobs: new Map([...hashes].map((hash) => [hash, store.path(hash)])), events, store, ...(selected ? { workdir: selected } : {}) };
 }
 
 async function seedFiles(root: string, prefix: string): Promise<string[]> {
