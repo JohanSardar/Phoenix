@@ -135,7 +135,8 @@ export const modelDialects: Readonly<Record<ModelDialectName, ModelDialect>> = {
 };
 
 export function completeModelStream(name: ModelDialectName, bytes: Uint8Array, headers: Headers): Uint8Array | undefined {
-  if (!header(headers, "content-type")?.toLowerCase().includes("text/event-stream")) return undefined;
+  const contentType = header(headers, "content-type");
+  if (contentType && !contentType.toLowerCase().includes("text/event-stream")) return undefined;
   const body = decodeHttpBody(bytes, headers, true);
   if (!body.ok) return undefined;
   const sse = decodeSse(body.value);
