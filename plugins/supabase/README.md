@@ -65,6 +65,6 @@ Side by side with the real Supabase (48 calls on a real project), the copy's ans
 
 - Creating an extension the project has not installed: the copy runs the agent's SQL as Supabase's own non-superuser roles, without Supabase's extension helper, so an extension such as `dblink` is refused with "Must be superuser".
 
-Merged with a gap (JOH-62 stays open): a session recorded through Johan's launcher itself was never seen. Its token is rejected and its project is paused. The moment used in the proofs was recorded through a direct start of the same server version (0.17.0) with `--read-only`. A replay never starts the server, and it matches the copy by the server name `supabase`, the same name as the launcher entry.
+Merged with a gap: a session recorded through Johan's launcher itself was never seen, and Supabase work has stopped, so it never will be. Its token is rejected and its project is paused. The moment used in the proofs was recorded through a direct start of the same server version (0.17.0) with `--read-only`. A replay never starts the server, and it matches the copy by the server name `supabase`, the same name as the launcher entry.
 
 Not compared with the real thing: a write on the real Supabase. Nothing was ever written to a real project. The write answers were compared with a real Supabase Postgres 17.6 instead. The read-write mode was only seen on a moment whose read-only setting was changed by hand. Johan's own settings run Supabase read-only.
