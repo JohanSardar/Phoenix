@@ -118,3 +118,29 @@ test("S4: logs from an unrelated time window must miss", async () => {
   const answer = await copy.handle("GET", requested, "api.supabase.com");
   assert.equal(answer.status, 501, `An unseen window returned unrelated recorded logs: ${answer.body}`);
 });
+
+test("S5: a truncated parent must not cause a false foreign-key error on a fully held child", async () => {
+  const admin = await client();
+  try {
+    await admin.query("CREATE DATABASE source_fk");
+    await admin.query("CREATE DATABASE copy_fk");
+  } finally { await admin.end(); }
+  const real = await client("source_fk");
+  try {
+    await real.query("CREATE TABLE parents (id int PRIMARY KEY); INSERT INTO parents VALUES (1), (2), (3), (4); " +
+      "CREATE TABLE children (parent_id int REFERENCES parents); INSERT INTO children VALUES (4)");
+    const snapshot = await takeSnapshot(async query => (await real.query(query)).rows, { tables: ["children"] });
+    const target = await client("copy_fk");
+    let seeded;
+    try { seeded = await seed(target, snapshot); }
+    finally { await target.end(); }
+    const query = "INSERT INTO children VALUES (4)";
+    assert.equal((await real.query(query)).rowCount, 1);
+    const copy = createCopy({ snapshot, replies: [], socket: root, database: "copy_fk" });
+    await copy.ready();
+    copy.begin();
+    const answer = await sql(copy, query);
+    assert.ok(answer.status === 201 || answer.status === 501,
+      `The real database accepts this write; the copy must accept it or miss, not return ${answer.status}: ${answer.body}; seed: ${JSON.stringify(seeded)}`);
+  } finally { await real.end(); }
+});

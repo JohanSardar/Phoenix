@@ -14,10 +14,9 @@ The copy is the real thing where it can be. It runs Supabase's own MCP server, `
 Anything else is a miss, never a guess. The serve command answers `unsupported`, and the answer chain goes on. These are misses:
 
 - an API request the snapshot does not hold, such as creating a branch or deploying an edge function;
-- SQL that touches a table whose rows the snapshot does not fully hold. The copy asks Postgres which tables a statement touches with `EXPLAIN`, and reads the table names in the SQL. A table counts as fully held only when the snapshot read all its rows. Row statistics never count as proof that a table is empty;
-- SQL that calls a function, or writes a table with a trigger, whose body reads a table the snapshot does not fully hold;
-- a migration that names such a table or calls such a function;
-- logs after the replay wrote something, and logs for a time window that does not start and end within 2 minutes of a window the snapshot holds.
+- SQL or a migration that reads or writes a table whose rows the snapshot does not fully hold. A table counts as fully held only when the snapshot read all its rows. The copy runs the statement in a transaction and asks Postgres which tables it read or wrote (`pg_stat_xact_all_tables`). That covers views, functions, triggers and foreign key checks. If a partly held table is among them, the copy rolls the statement back and misses;
+- SQL with its own transaction control (`begin`, `commit` and the like) while some table is partly held;
+- logs after the replay wrote something, and logs for any time window other than the exact one the snapshot holds.
 
 The server's own settings come from the moment. If the session's server ran with `--read-only`, as Johan's launcher entry does, the copy runs read-only too, and refuses writes with the same error Supabase gives.
 
@@ -54,6 +53,6 @@ The serve command refuses a snapshot from another Postgres major version. The im
 Side by side with the real Supabase (48 calls on a real project), the copy's answers differ in these ways:
 
 - `list_tables`: the order of the tables and of the foreign keys can differ. Postgres returns them in the order they sit on disk, and the copy creates them in a different order. The content is the same.
-- `query_logs`: the copy answers only for the recorded time window, with the logs as they were when the snapshot was taken. A replay at another time gets a miss.
+- `query_logs`: the copy answers only for the exact recorded time window. In the 48-call comparison the window had moved, so the copy missed.
 
 Not compared with the real thing: a write on the real Supabase. Nothing was ever written to a real project. The write answers were compared with a real Supabase Postgres 17.6 instead. The read-write mode was only seen on a moment whose read-only setting was changed by hand. Johan's own settings run Supabase read-only.

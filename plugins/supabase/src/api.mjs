@@ -2,7 +2,6 @@
 // real /database/query endpoint runs it. Other requests are answered from the API replies in the snapshot.
 // A request the copy cannot answer the way Supabase would is a miss, never a guess.
 import pg from "pg";
-import { tablesIn } from "./dump.mjs";
 
 const RAW = value => value;
 const TEXT_ARRAY = pg.types.getTypeParser(1009);
@@ -51,13 +50,11 @@ function replyKey(method, url, body) {
 
 export function createCopy({ snapshot, replies, socket, database }) {
   const recorded = new Map();
-  const logs = [];
   for (const reply of replies) {
     if (!reply.method || !reply.url) continue;
     const url = new URL(reply.url);
     const answer = { status: reply.status, headers: reply.headers ?? [], body: reply.body_base64 !== undefined ? Buffer.from(reply.body_base64, "base64") : Buffer.from(reply.body ?? "") };
     recorded.set(replyKey(reply.method, url, reply.request), answer);
-    if (/\/analytics\/endpoints\/logs$/.test(url.pathname)) logs.push({ url, answer });
   }
   const migrations = [];
   const statements = [];
@@ -86,50 +83,37 @@ export function createCopy({ snapshot, replies, socket, database }) {
     if (rows && rows.length < (snapshot.row_limits?.[name] ?? 0)) continue;
     unknown.set(name, rows ? "holds only the first " + rows.length + " rows of " + name : "holds none of the rows of " + name);
   }
-  const named = text => tablesIn(text.replace(/\$(\w*)\$/g, " ")).map(name => (name.includes(".") ? name : "public." + name));
-  const calls = (text, fn) => new RegExp("(^|[^\\w$])" + fn.split(".")[1].replace(/[$]/g, "\\$&") + "\"?\\s*\\(", "i").test(text);
-  const tainted = new Set();
-  for (let changed = true; changed;) {
-    changed = false;
-    for (const fn of snapshot?.functions ?? []) {
-      const name = fn.schema + "." + fn.name;
-      if (tainted.has(name) || !fn.def) continue;
-      if (named(fn.def).some(rel => unknown.has(rel)) || [...tainted].some(other => calls(fn.def, other))) { tainted.add(name); changed = true; }
+  let watched = new Map();
+  async function run(c, text, parameters) {
+    if (!watched.size) {
+      try { return { result: await c.query(parameters?.length ? { text, values: parameters } : text), partial: [] }; }
+      catch (error) { if (!error.code) throw error; return { error, partial: [] }; }
     }
+    if (/(^|;)\s*(begin|commit|rollback|end|abort|start|savepoint|release|prepare)\b/i.test(text)) return { partial: ["any table"] };
+    let result, error;
+    await c.query("BEGIN");
+    await c.query("SAVEPOINT phoenix_statement");
+    try { result = await c.query(parameters?.length ? { text, values: parameters } : text); await c.query("RELEASE SAVEPOINT phoenix_statement"); }
+    catch (thrown) { if (!thrown.code) throw thrown; error = thrown; await c.query("ROLLBACK TO SAVEPOINT phoenix_statement"); }
+    const partial = (await c.query({ text: "select relid::int as oid from pg_stat_xact_all_tables where relid = any($1::oid[]) and seq_scan + coalesce(idx_scan, 0) + n_tup_ins + n_tup_upd + n_tup_del > 0", values: [[...watched.keys()]] })).rows.map(row => watched.get(row.oid));
+    await c.query(partial.length || error ? "ROLLBACK" : "COMMIT");
+    return { result, error, partial };
   }
-  const triggers = new Map();
-  for (const t of snapshot?.triggers ?? []) for (const fn of tainted) if (calls(t.def, fn)) triggers.set(t.relation.replaceAll('"', ""), fn);
-  async function unanswerable(c, text, parameters) {
-    if (!unknown.size) return [];
-    const found = new Set(named(text));
-    let plan = "";
-    if (c) try {
-      const [row] = (await c.query({ text: "EXPLAIN (VERBOSE, FORMAT JSON) " + text, values: parameters ?? [] })).rows;
-      plan = JSON.stringify(row["QUERY PLAN"]);
-      const walk = node => { if (!node || typeof node !== "object") return; if (node["Relation Name"]) found.add(node.Schema + "." + node["Relation Name"]); for (const value of Object.values(node)) walk(value); };
-      walk(row["QUERY PLAN"]);
-    } catch {}
-    const reasons = [...found].filter(rel => unknown.has(rel)).map(rel => unknown.get(rel));
-    for (const fn of tainted) if (calls(text, fn) || calls(plan, fn)) reasons.push("cannot run " + fn + " fully, because it reads a table the snapshot does not fully hold");
-    for (const rel of found) if (triggers.has(rel)) reasons.push("cannot run the trigger function " + triggers.get(rel) + " on " + rel + " fully");
-    return reasons;
-  }
+  const partialMiss = (partial, what) => missed("the snapshot " + partial.map(rel => unknown.get(rel) ?? "cannot tell which tables a statement with its own transaction control reads").join(" and ") + ", so " + what + " could differ from Supabase's");
   const recordedRows = new Map((snapshot?.relations ?? []).filter(r => r.live_rows !== null && r.live_rows !== undefined).map(r => [r.schema + "." + r.name, Number(r.live_rows)]));
 
   async function query(body) {
     if (!snapshot) return missed("the snapshot holds no database");
     const { query: text, parameters, read_only } = JSON.parse(body);
     const c = await client(read_only ? "supabase_read_only_user" : "postgres");
-    const reasons = await unanswerable(c, text, parameters);
-    if (reasons.length) { await c.end(); return missed("the snapshot " + reasons.join(" and ") + ", so the answer could differ from Supabase's"); }
-    let result;
-    try { result = await c.query(parameters?.length ? { text, values: parameters } : text); }
-    catch (error) {
-      if (!error.code) throw error;
+    let ran;
+    try { ran = await run(c, text, parameters); } finally { await c.end(); }
+    const { result, error, partial } = ran;
+    if (partial.length) return partialMiss(partial, "the answer");
+    if (error) {
       if (!read_only) wrote = true;
       return json(400, { message: "Failed to run sql query: " + formatError(error, text) });
     }
-    finally { await c.end(); }
     if (!read_only) { wrote = true; statements.push(text); }
     let rows = (Array.isArray(result) ? result.at(-1) : result).rows;
     if (text.includes("pg_stat_get_live_tuples(c.oid) AS live_rows_estimate")) {
@@ -155,18 +139,18 @@ export function createCopy({ snapshot, replies, socket, database }) {
   async function applyMigration(body) {
     if (!snapshot) return missed("the snapshot holds no database");
     const { name, query: text } = JSON.parse(body);
-    const reasons = await unanswerable(undefined, text);
-    if (reasons.length) return missed("the snapshot " + reasons.join(" and ") + ", so the migration could end differently than on Supabase");
     const c = await client("postgres");
+    let ran;
     try {
-      await c.query("BEGIN");
-      await c.query(text);
-      await c.query("COMMIT");
-    } catch (error) {
-      await c.query("ROLLBACK").catch(() => {});
-      if (!error.code) throw error;
-      return json(400, { message: "Failed to run sql query: " + formatError(error, text) });
+      if (watched.size) ran = await run(c, text);
+      else {
+        await c.query("BEGIN");
+        try { await c.query(text); await c.query("COMMIT"); ran = { partial: [] }; }
+        catch (error) { await c.query("ROLLBACK").catch(() => {}); if (!error.code) throw error; ran = { error, partial: [] }; }
+      }
     } finally { await c.end(); }
+    if (ran.partial.length) return partialMiss(ran.partial, "the migration");
+    if (ran.error) return json(400, { message: "Failed to run sql query: " + formatError(ran.error, text) });
     wrote = true;
     statements.push(text);
     const at = new Date();
@@ -189,6 +173,7 @@ export function createCopy({ snapshot, replies, socket, database }) {
       await admin("select pg_stat_force_next_flush()");
       liveBaseline = await liveRows();
       extensionsBaseline = await installed();
+      if (unknown.size) watched = new Map((await admin("select c.oid::int as oid, n.nspname || '.' || c.relname as rel from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r', 'p')")).filter(row => unknown.has(row.rel)).map(row => [row.oid, row.rel]));
     },
     begin() { misses = []; },
     end() { const out = misses; misses = []; return out; },
@@ -202,6 +187,7 @@ export function createCopy({ snapshot, replies, socket, database }) {
         if (!reply) return missed("the snapshot holds no migration list");
         return { ...reply, body: Buffer.from(JSON.stringify([...JSON.parse(reply.body.toString("utf8")), ...migrations])) };
       }
+      if (wrote && /\/analytics\/endpoints\/logs$/.test(url.pathname)) return missed("the replay wrote to the database, so the recorded logs may no longer be complete");
       if (reply) return reply;
       const one = method === "GET" && (/^(\/v1\/projects\/[^/]+\/functions)\/([^/]+)$/.exec(url.pathname) ?? /^(\/v2\/projects\/[^/]+\/notebooks)\/([^/]+)$/.exec(url.pathname));
       if (one) {
@@ -211,12 +197,6 @@ export function createCopy({ snapshot, replies, socket, database }) {
           const value = one[1].endsWith("/functions") ? { message: "Function not found" } : { error: { code: "notebook_not_found", description: "Notebook " + name + " not found", message: "Notebook not found" } };
           return { status: 404, headers: [["content-type", "application/json; charset=utf-8"]], body: Buffer.from(JSON.stringify(value)) };
         }
-      }
-      if (method === "GET" && /\/analytics\/endpoints\/logs$/.test(url.pathname)) {
-        const near = (a, b, key) => Math.abs(Date.parse(a.searchParams.get(key)) - Date.parse(b.searchParams.get(key))) < 120000;
-        const rest = u => { const p = new URLSearchParams(u.searchParams); p.delete("iso_timestamp_start"); p.delete("iso_timestamp_end"); p.sort(); return p.toString(); };
-        const match = logs.find(log => rest(log.url) === rest(url) && near(log.url, url, "iso_timestamp_start") && near(log.url, url, "iso_timestamp_end"));
-        if (match && !wrote) return match.answer;
       }
       return missed("the snapshot holds no answer for " + method + " " + url.pathname);
     },
