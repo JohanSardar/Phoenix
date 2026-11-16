@@ -296,9 +296,15 @@ export class Connector {
     this.box.messages.set(theirs, m);
   }
 
+  // Moves one message to another thread. Thread counts (drafts not counted) follow that message only.
   rethread(m, threadId) {
     if (!threadId || m.threadId === threadId) return;
-    if (this.box.threadCounts.has(m.threadId)) { this.box.threadCounts.set(threadId, this.box.threadCounts.get(m.threadId)); this.box.threadCounts.delete(m.threadId); }
+    const counts = this.box.threadCounts, from = m.threadId, weight = m.labelIds.includes("DRAFT") ? 0 : 1;
+    const alone = !this.box.thread(from).some(o => o !== m);
+    if (counts.has(threadId)) counts.set(threadId, counts.get(threadId) + weight);
+    else if (alone && counts.has(from) && !this.box.thread(threadId).length) counts.set(threadId, counts.get(from));
+    if (alone) counts.delete(from);
+    else if (counts.has(from)) counts.set(from, counts.get(from) - weight);
     m.threadId = threadId;
   }
 
@@ -312,8 +318,8 @@ export class Connector {
       this.rethread(m, real.threadId);
       return this.link(m, made.labelIds ? { labelIds: m.labelIds } : {});
     }
-    if ((tool === "create_draft" || tool === "update_draft") && real.messageId && made.messageId && (real.messageId === made.messageId || !this.box.messages.has(real.messageId))) {
-      const draftId = tool === "create_draft" && real.id ? real.id : made.id;
+    const draftId = tool === "create_draft" && real.id ? real.id : made.id;
+    if ((tool === "create_draft" || tool === "update_draft") && real.messageId && made.messageId && (real.messageId === made.messageId || !this.box.messages.has(real.messageId)) && (draftId === made.id || !this.box.drafts.has(draftId))) {
       const m = this.box.messages.get(made.messageId);
       this.box.drafts.delete(made.id);
       this.adopt(made.messageId, real.messageId);

@@ -47,7 +47,7 @@ test("connector: a mirrored send, draft and label keep their recorded ids", asyn
 });
 
 test("himalaya: a mirrored envelope list gives the copy's messages the recorded ids", async t => {
-  const env = (id, subject) => ({ id, flags: [], subject, from: { name: "Test Person", addr: me }, to: { name: null, addr: me }, date: "2026-11-16 20:33+00:00", has_attachment: false });
+  const env = (id, subject, to = me) => ({ id, flags: [], subject, from: { name: "Test Person", addr: me }, to: { name: null, addr: to }, date: "2026-11-16 20:33+00:00", has_attachment: false });
   const sent = ["himalaya", "envelope", "list", "-f", "[Gmail]/Sent Mail", "-o", "json", "subject", "t57"];
   const events = [
     { kind: "call", op: "himalaya", body: { inline: JSON.stringify({ argv: sent, cwd: "/", env: {}, terminals: { stdin: null, stdout: null, stderr: null } }) } },
@@ -64,7 +64,72 @@ test("himalaya: a mirrored envelope list gives the copy's messages the recorded 
   const raw = ["From: Test Person <" + me + ">", "To: ana@example.com", "Subject: [phoenix-test] t57 Paid", "Date: Mon, 16 Nov 2026 20:33:50 +0000", "Message-ID: <t57-paid@example.com>", "Content-Type: text/plain; charset=utf-8", "", "Paid.", ""].join("\r\n");
   await cli(["himalaya", "message", "send"], raw, "Message successfully sent!\n");
   const ids = stdout => JSON.parse(stdout).map(e => e.id);
-  assert.deepEqual(ids(await cli(sent, "", JSON.stringify([env("429", "[phoenix-test] t57 Paid"), env("427", "[phoenix-test] t57 Lunch")]))), ["428", "427"]);
+  assert.deepEqual(ids(await cli(sent, "", JSON.stringify([env("429", "[phoenix-test] t57 Paid", "ana@example.com"), env("427", "[phoenix-test] t57 Lunch")]))), ["428", "427"]);
   assert.deepEqual(ids(await cli(sent)), ["429", "427"]);
   assert.match(await cli(["himalaya", "message", "read", "--preview", "-f", "[Gmail]/Sent Mail", "429"]), /Subject: \[phoenix-test\] t57 Paid/);
+});
+
+async function mcp(request, name, args, recorded) {
+  const rpc = { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name, arguments: args } };
+  const params = { surface: "mcp", layer: "agent", op: "tools/call:" + name, args, now, raw: { body: b64(rpc) } };
+  if (recorded) params.recorded = { body: b64({ jsonrpc: "2.0", id: 7, result: { structuredContent: recorded } }) };
+  const result = JSON.parse(Buffer.from((await request("call", params)).body, "base64").toString()).result;
+  assert.ok(!result.isError, JSON.stringify(result));
+  return result.structuredContent;
+}
+
+async function listing(request, argv, recorded) {
+  const args = { argv, cwd: "/synthetic", env: {}, terminals: { stdin: null, stdout: null, stderr: null } };
+  const params = { surface: "cli", layer: "agent", op: "himalaya", args, now, raw: { body: b64(args), stdin: "" } };
+  if (recorded) params.recorded = { body: b64([{ dir: "back", stream: 1, bytes: b64(recorded), last: true }]) };
+  const frames = JSON.parse(Buffer.from((await request("call", params)).body, "base64").toString());
+  const text = stream => frames.filter(f => f.stream === stream).map(f => Buffer.from(f.bytes, "base64").toString()).join("");
+  assert.equal(JSON.parse(text(3)).code, 0, text(2));
+  return JSON.parse(text(1));
+}
+
+test("S18: adopting a recorded draft id must not overwrite another draft", async t => {
+  const request = await serve(t, "snapshot.json", JSON.stringify({ account: { email: me }, labels: [] }));
+  const old = await mcp(request, "create_draft", { subject: "[phoenix-test] original draft", body: "Original" });
+  await mcp(request, "create_draft", { subject: "[phoenix-test] new draft", body: "New" }, {
+    id: old.id, messageId: "1a1e6171bb000002", threadId: "1a1e6171bb000002",
+  });
+  assert.equal((await mcp(request, "get_draft", { draftId: old.id })).subject, "[phoenix-test] original draft");
+});
+
+test("S19: adopting a new forward thread preserves the original complete thread", async t => {
+  const request = await serve(t, "snapshot.json", JSON.stringify({ account: { email: me }, labels: [] }));
+  const old = await mcp(request, "send_message", { to: ["ana@example.com"], subject: "[phoenix-test] original", body: "Original" });
+  assert.equal((await mcp(request, "get_thread", { threadId: old.threadId })).messageCount, 1);
+  await mcp(request, "forward", { messageId: old.id, to: ["ben@example.com"], forwardText: "Forward" }, {
+    id: "1a1e6171bb000002", threadId: "1a1e6171bb000002",
+  });
+  assert.equal((await mcp(request, "get_thread", { threadId: old.threadId })).messageCount, 1);
+});
+
+test("S20: matching subjects alone must not bind a different sender's recorded UID", async t => {
+  const snapshot = (sender, uid) => JSON.stringify({ account: { email: me }, messages: [{
+    id: "1a1e6171bb000" + String(uid).padStart(3, "0"), threadId: "1a1e6171bb000" + String(uid).padStart(3, "0"), labelIds: ["INBOX"],
+    internalDate: String(Date.parse(now)), sender, subject: "[phoenix-test] repeated subject", plaintextBody: "Synthetic body from " + sender,
+    uids: { INBOX: uid },
+  }] });
+  const argv = ["himalaya", "envelope", "list", "-o", "json"];
+  const source = await serve(t, "source.json", snapshot("ben@example.com", 999));
+  const request = await serve(t, "snapshot.json", snapshot("ana@example.com", 1));
+  const real = await listing(source, argv);
+  assert.equal(real[0].from.addr, "ben@example.com");
+  assert.equal((await listing(request, argv))[0].from.addr, "ana@example.com");
+  await listing(request, argv, real);
+  assert.equal((await listing(request, argv))[0].id, "1");
+});
+
+test("S21: an adopted UID stays reserved when its message is temporarily hidden", async t => {
+  const request = await serve(t, "snapshot.json", JSON.stringify({ account: { email: me }, labels: [] }));
+  const old = await mcp(request, "send_message", { to: ["ana@example.com"], subject: "[phoenix-test] old", body: "Old" });
+  const argv = ["himalaya", "envelope", "list", "-f", "[Gmail]/Sent Mail", "-o", "json"];
+  const first = await listing(request, argv);
+  await listing(request, argv, first.map(e => ({ ...e, id: "2" })));
+  await mcp(request, "trash_message", { messageId: old.id });
+  await mcp(request, "send_message", { to: ["ana@example.com"], subject: "[phoenix-test] new", body: "New" });
+  assert.notEqual((await listing(request, argv))[0].id, "2");
 });

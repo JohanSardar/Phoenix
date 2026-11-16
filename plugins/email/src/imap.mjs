@@ -55,7 +55,9 @@ export class Folders {
       const known = [...this.box.messages.values()].map(m => m.uids[name]).filter(u => u !== undefined);
       this.state.set(name, { uidvalidity: this.box.folderInfo?.[name]?.uidvalidity ?? 1, uidnext: Math.max(this.box.folderInfo?.[name]?.uidnext ?? 1, ...known.map(u => u + 1)) });
     }
-    return this.state.get(name);
+    const state = this.state.get(name);
+    state.uidnext = Math.max(state.uidnext, this.box.folderInfo?.[name]?.uidnext ?? 1);
+    return state;
   }
 
   flags(m, name) {

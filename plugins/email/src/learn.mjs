@@ -118,11 +118,15 @@ export function takeUids(box, argv, ours, theirs, aliases = {}) {
   let copy, real;
   try { copy = JSON.parse(ours); real = JSON.parse(theirs); } catch { return; }
   if (!Array.isArray(copy) || !Array.isArray(real) || copy.length !== real.length) return;
-  const pairs = copy.map((e, i) => [byUid(box, folder, Number(e?.id)), Number(real[i]?.id), e?.subject === real[i]?.subject]);
+  const identity = e => JSON.stringify([e?.subject, e?.from?.addr, e?.from?.name, e?.to?.addr, e?.date, e?.has_attachment]);
+  if (new Set(copy.map(identity)).size !== copy.length) return;
+  const pairs = copy.map((e, i) => [byUid(box, folder, Number(e?.id)), Number(real[i]?.id), identity(e) === identity(real[i])]);
   if (pairs.some(([m, uid, same]) => !m || !Number.isInteger(uid) || !same)) return;
   const moving = new Set(pairs.map(([m]) => m));
   if (pairs.some(([, uid]) => { const holder = byUid(box, folder, uid); return holder && !moving.has(holder); })) return;
   for (const [m, uid] of pairs) m.uids[folder] = uid;
+  const info = box.folderInfo?.[folder];
+  box.folderInfo = { ...box.folderInfo, [folder]: { uidvalidity: info?.uidvalidity ?? 1, uidnext: Math.max(info?.uidnext ?? 1, ...pairs.map(([, uid]) => uid + 1)) } };
 }
 
 export function learnHimalaya(box, observations, aliases = {}) {
