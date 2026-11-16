@@ -26,7 +26,7 @@ export const PhoenixStandIn = async () => {
       const reply = await response.json();
       if (reply.error) throw new Error("Phoenix stopped this replay: " + reply.error.message);
       if (reply.result.isError) throw new Error(reply.result.error);
-      return { output: reply.result.output, title: reply.result.title ?? "", metadata: reply.result.metadata ?? {} };
+      return { output: reply.result.output, title: reply.result.title ?? "", metadata: reply.result.metadata ?? {}, ...(reply.result.attachments ? { attachments: reply.result.attachments } : {}) };
     },
   };
   return {

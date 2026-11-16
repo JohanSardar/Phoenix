@@ -35,6 +35,9 @@ if (existsSync(patch)) {
 const run = (args, options = {}) => spawnSync(opencode[0], [...opencode.slice(1), ...args], { cwd, env, encoding: "utf8", maxBuffer: 1 << 30, ...options });
 
 const lines = readFileSync("/phoenix/moment/cut.jsonl", "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+for (const message of lines.slice(1)) for (const part of message.parts ?? []) {
+  if (part.state?.time?.compacted > box.cut_time) delete part.state.time.compacted;
+}
 writeFileSync(join(home, "cut.json"), JSON.stringify({ info: lines[0].info, messages: lines.slice(1) }));
 const imported = run(["import", join(home, "cut.json")]);
 if (imported.status !== 0) { process.stderr.write(imported.stdout + imported.stderr); process.exit(1); }
