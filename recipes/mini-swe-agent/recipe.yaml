@@ -1,0 +1,27 @@
+phoenix_recipe: 1
+name: mini-swe-agent
+harness_versions: ["2.4.6"]
+login_modes: [api-key]
+routes:
+  - versions: "2.4.6"
+    login_mode: api-key
+    surfaces: {model: [transcript], cli: [transcript]}
+transcript_reader:
+  command: [node, read-transcript.mjs]
+  harness_versions: ["2.4.6"]
+task_keys: []
+copy_ignored: false
+resume:
+  from_beginning_only: true
+  moment: [node, moment.mjs]
+  compose: [node, compose.mjs]
+  login: [node, login.mjs]
+  image: resume.Dockerfile
+  command: [python3, /phoenix/recipe/resume.py]
+  llm_hosts:
+    opencode-go: [opencode.ai]
+limitations:
+  - "mini-swe-agent has no resume, so every replay starts at the first message with the moment's prompt."
+  - "Its one tool is bash. Phoenix answers every command, except mini-swe-agent's own finish command, which runs in the box."
+  - "The LLM must speak the OpenAI chat API; only OpenCode Go (opencode.ai) is wired up."
+  - "There is no live session file to cut: moments for it are made up."

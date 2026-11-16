@@ -31,6 +31,9 @@ phoenix moment create --session session.jsonl --recipe recipes/opencode/recipe.y
 - An LLM step (an assistant message): OpenCode resumes in the middle of the
   turn, just before that step, and the LLM takes the step again.
 
+Use `--from-beginning` in place of `--at` to start at the session's first message,
+with its original prompt.
+
 Tool calls are named `opencode.<tool>` in checks, for example `opencode.bash`.
 
 ## What happens in a replay
