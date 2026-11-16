@@ -21,8 +21,13 @@ export function matchFrozen(call: Call, ctx: ReplayCtx): Exchange | Divergence {
   return exchange;
 }
 
-export async function answerCall(call: Call, ctx: ReplayCtx): Promise<{ answer: Answer } | { divergence: Divergence }> {
-  const skip = new Set(ctx.policy(call.connector).skip_resolvers ?? []);
+export function answeredOutside(call: Call, answer: Answer, ctx: ReplayCtx): void {
+  for (const observer of resolvers) observer.observe?.(call, answer, ctx);
+  served(call, ctx);
+}
+
+export async function answerCall(call: Call, ctx: ReplayCtx, without: readonly string[] = []): Promise<{ answer: Answer } | { divergence: Divergence }> {
+  const skip = new Set([...ctx.policy(call.connector).skip_resolvers ?? [], ...without]);
   const misses: { resolver: string; why: string }[] = [];
   for (const resolver of resolvers) {
     if (skip.has(resolver.name)) { misses.push({ resolver: resolver.name, why: "removed for this connector by the manifest" }); continue; }

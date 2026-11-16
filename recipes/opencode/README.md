@@ -88,8 +88,12 @@ Put the image ID and the path to `recipe.yaml` in the Workbench settings.
 - Phoenix stands in only for OpenCode's built-in tools. A session that used
   MCP or plugin tools can't be cut yet: OpenCode doesn't save their
   descriptions.
-- A tool call the session never made stops the replay, unless a plugin answers
-  it.
+- A `read`, `glob`, `grep`, `edit`, `write` or `apply_patch` call runs for real
+  in the box, on the copy of the project's files, and the session's own answer
+  replaces its output when the session made the same call. If the real tool
+  fails on a call the session made, OpenCode shows that failure, not the
+  session's answer. Any other new call gets a made-up answer, labeled in the
+  result.
 - Permission rules on command patterns are not applied to stand-in tools.
 - Subagents started by `task` are answered from the session, not run again.
 - The resumed run uses the real clock.

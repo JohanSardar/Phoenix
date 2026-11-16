@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { startToolStandIn, type ToolStandIn } from "@phoenix/engine";
+import { startToolStandIn, type SimulatorOptions, type ToolStandIn } from "@phoenix/engine";
 import { parse } from "yaml";
 import type { RecipeDescriptor } from "@phoenix/formats";
 import { writeClockFile, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
@@ -19,13 +20,37 @@ interface SessionMoment {
   model: { provider: string; id: string; thinking?: string };
   loadout: unknown;
   box?: unknown;
+  in_box?: Record<string, string[]>;
   answers: { id: string; connector: string; op: string; args: unknown; result: unknown; observed_at: string; before_cut: boolean }[];
+}
+
+async function fileHashes(root: string): Promise<Map<string, string>> {
+  const hashes = new Map<string, string>();
+  const walk = async (folder: string): Promise<void> => {
+    for (const entry of await readdir(join(root, folder), { withFileTypes: true })) {
+      const path = folder ? `${folder}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) await walk(path);
+      else if (entry.isSymbolicLink()) hashes.set(path, `link:${await readlink(join(root, path))}`);
+      else if (entry.isFile()) hashes.set(path, createHash("sha256").update(await readFile(join(root, path))).digest("hex"));
+    }
+  };
+  await walk("");
+  return hashes;
+}
+
+function changedFiles(before: Map<string, string>, after: Map<string, string>): { changed: string[]; added: string[]; removed: string[] } {
+  return {
+    changed: [...after].filter(([path, hash]) => before.has(path) && before.get(path) !== hash).map(([path]) => path).sort(),
+    added: [...after.keys()].filter(path => !before.has(path)).sort(),
+    removed: [...before.keys()].filter(path => !after.has(path)).sort(),
+  };
 }
 
 export type Outcome = { kind: "finished"; code: number | null } | { kind: "interrupted"; why: string } | { kind: "diverged"; trigger: string; detail: string };
 
 export async function resumeAttempt(input: {
   id: string; directory: string; root: string; plan: ResolvedPlan; bundle: MomentBundle; sandbox: Sandbox; hmacKey: Uint8Array; capture: string;
+  simulator?: Omit<SimulatorOptions, "clock">;
   started(container: string): Promise<void>;
 }): Promise<Outcome> {
   const { directory, root, plan, bundle, sandbox } = input;
@@ -38,6 +63,15 @@ export async function resumeAttempt(input: {
   if (!hosts) throw new Error(`The ${recipe.name} recipe names no LLM host for provider ${moment.model.provider}`);
   const box = join(root, "box");
   for (const part of ["moment", "agent", "out"]) await mkdir(join(box, part), { recursive: true, mode: 0o700 });
+  const project = resume.project;
+  let copied: Map<string, string> | undefined;
+  if (project) {
+    await mkdir(join(box, "project"), { recursive: true, mode: 0o700 });
+    await writeFile(join(box, "project.tar"), bundle.files.get(project.tar)!, { mode: 0o600 });
+    await execute("tar", ["-xf", join(box, "project.tar"), "-C", join(box, "project")]);
+    await rm(join(box, "project.tar"));
+    copied = await fileHashes(join(box, "project"));
+  }
   await writeFile(join(box, "moment/cut.jsonl"), session.slice(0, moment.cut_lines).join("\n") + "\n", { mode: 0o600 });
   const { answers: _answers, loadout, ...reading } = moment;
   await writeFile(join(box, "moment/moment.json"), JSON.stringify(reading), { mode: 0o600 });
@@ -52,6 +86,9 @@ export async function resumeAttempt(input: {
   const standIn: ToolStandIn = await startToolStandIn({
     host: TOOLS_HOST,
     answers: moment.answers.map(a => ({ id: a.id, connector: a.connector, op: a.op, args: a.args, result: a.result, observedAt: a.observed_at, beforeCut: a.before_cut })),
+    inBox: (connector, op) => !!project && (moment.in_box?.[connector] ?? []).includes(op),
+    ...(input.simulator ? { simulator: input.simulator } : {}),
+    cutTime: bundle.manifest.clock?.time ?? new Date().toISOString(),
     policy: connector => {
       const plugin = plugins.get(connector);
       return { ...bundle.manifest.connectors?.[connector], ...(plugin ? { entity_map: plugin.entity_map, read_only: (plugin.read_only ?? []).map(op => ({ op, source: "plugin" as const })), volatile: plugin.volatile ?? [] } : {}) };
@@ -68,13 +105,14 @@ export async function resumeAttempt(input: {
     await writeClockFile(join(root, "clock"), time);
     const { clock } = parse(await readFile(join(recipeDirectory, recipe.file), "utf8")) as RecipeDescriptor;
     const running = await sandbox.start({
-      image: plan.harness_image, argv: recipe.resume.command, env: { PHOENIX_TOOLS_URL: `http://${TOOLS_HOST}`, TZ: bundle.manifest.clock?.timezone ?? "UTC" },
+      image: plan.harness_image, argv: recipe.resume.command, env: { PHOENIX_TOOLS_URL: `http://${TOOLS_HOST}`, TZ: bundle.manifest.clock?.timezone ?? "UTC", ...(project ? { PHOENIX_PROJECT: project.root } : {}) },
       mounts: [
         { source: recipeDirectory, target: "/phoenix/recipe", readOnly: true },
         { source: join(box, "moment"), target: "/phoenix/moment", readOnly: true },
         { source: join(box, "agent"), target: "/phoenix/agent" },
         { source: join(box, "out"), target: "/phoenix/out" },
         { source: join(directory, "inputs/candidate"), target: "/worktree", readOnly: true },
+        ...(project ? [{ source: join(box, "project"), target: project.root }] : []),
       ],
       clockFile: join(root, "clock"), virtualTime: time, ...(clock ? { clockProbe: clock.probe } : {}), workdir: "/worktree", dontFakeMonotonic: true, directHosts: hosts,
     });
@@ -96,6 +134,7 @@ export async function resumeAttempt(input: {
     await standIn.note("sandbox.egress", { llm_hosts: hosts, direct_rules: egress?.stdout ?? null, tool_answers_from_phoenix: standIn.served() });
     const result = await optional<{ session: string | null; final_text: string }>(join(box, "out/result.json"));
     if (stderr) await standIn.note("harness.stderr", stderr);
+    if (project && copied) await standIn.note("files.copy", { root: project.root, source: project.source, ...(project.commit ? { commit: project.commit } : {}), taken_at: project.taken_at, ...changedFiles(copied, await fileHashes(join(box, "project"))) });
     if (result?.final_text) await standIn.note("final_text", result.final_text);
     if (result?.session) {
       const entries = (await readFile(join(box, "out", result.session), "utf8")).split("\n").filter(Boolean);
@@ -105,6 +144,7 @@ export async function resumeAttempt(input: {
   finally {
     await process?.stop().catch(() => {});
     await rm(join(box, "agent"), { recursive: true, force: true });
+    await rm(join(box, "project"), { recursive: true, force: true });
     await standIn.close();
   }
   return outcome;

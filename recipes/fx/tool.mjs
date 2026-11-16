@@ -15,7 +15,8 @@ try {
     body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "tools/call", params: { name: op, arguments: args } }),
   });
   const reply = await response.json();
-  if (reply.error) process.stdout.write(`1Phoenix stopped this replay: ${reply.error.message}`);
+  if (reply.run_in_box) process.stdout.write("2");
+  else if (reply.error) process.stdout.write(`1Phoenix stopped this replay: ${reply.error.message}`);
   else process.stdout.write((reply.result.isError ? "1" : "0") + reply.result.content.map(block => block.text ?? "").join("\n"));
 } catch (error) {
   process.stdout.write(`1Phoenix stopped this replay: ${error.message}`);

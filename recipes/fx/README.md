@@ -4,7 +4,7 @@ This recipe covers the native `vercel-labs/fx` ACP agent, not the JSON viewer of
 
 ## Put fx back in a moment
 
-This works on any saved fx session, with nothing from Phoenix attached when it was recorded. Phoenix copies the session, cuts it just before a user turn, and resumes fx from the cut inside the sealed box. fx talks straight to its own LLM. Phoenix answers every tool call, from the session's own tool results first, and stops the replay on a call it can't answer.
+This works on any saved fx session, with nothing from Phoenix attached when it was recorded. Phoenix copies the session, cuts it just before a user turn, and resumes fx from the cut inside the sealed box. fx talks straight to its own LLM. Phoenix answers every tool call, from the session's own tool results first. A `read_file`, `write_file`, `edit_file`, `grep_files` or `glob_files` call the session never made runs for real in the box, on the copy of the project's files. Any other new call gets a made-up answer, labeled in the result.
 
 Build the box image once and put its id in the Workbench settings as `image`, with this recipe as `recipe`:
 
@@ -22,7 +22,7 @@ phoenix moment create --session ~/.fx/sessions/v2/SESSION_ID/log.jsonl \
   --recipe recipes/fx/recipe.yaml --at LINE --id ID --check check.yaml OUT
 ```
 
-Phoenix also copies the session's `blobs/` folder, which holds the full tool outputs, with secrets stripped. Blobs it can't scan, such as fx's binary command replays, are left out. A tool call whose full output was left out gets no answer, so a replay that makes that call again stops there. The original session is never changed.
+Phoenix also copies the session's `blobs/` folder, which holds the full tool outputs, with secrets stripped. Blobs it can't scan, such as fx's binary command replays, are left out. A tool call whose full output was left out has no session answer, so a replay that makes that call again gets it answered like a new call. The original session is never changed.
 
 The harness is a folder with `run: { resume: {} }` in its `phoenix.harness.yaml`. Three files in it change how fx acts:
 

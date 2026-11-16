@@ -185,5 +185,30 @@ export type MomentManifest = {
      * Bundle folder holding the copied files beside the session that the cut needs.
      */
     files?: string;
+    /**
+     * A copy of the project's files, laid out at the same folder inside the box. File reads and writes the session never made run for real on this copy.
+     */
+    project?: {
+      /**
+       * Bundle path of the copy, as a tar file.
+       */
+      tar: string;
+      /**
+       * The project's folder on the machine where the session ran. The copy sits at this path inside the box.
+       */
+      root: string;
+      /**
+       * git: the folder's files as committed at the moment's time. today: the folder's files as they were when the moment was made.
+       */
+      source: "git" | "today";
+      /**
+       * The commit the copy came from, when source is git.
+       */
+      commit?: string;
+      /**
+       * When the files in the copy were current.
+       */
+      taken_at: string;
+    };
   };
 };

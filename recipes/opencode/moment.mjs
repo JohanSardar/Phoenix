@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 
 const STANDS_IN = ["bash", "read", "glob", "grep", "edit", "write", "apply_patch", "webfetch", "websearch", "skill", "task", "question"];
 const NATIVE = ["todowrite", "invalid"];
+const IN_BOX = ["read", "glob", "grep", "edit", "write", "apply_patch"];
 const { values } = parseArgs({ options: { at: { type: "string" } } });
 const at = Number(values.at);
 const lines = (await text(process.stdin)).split("\n");
@@ -42,7 +43,8 @@ process.stdout.write(JSON.stringify({
   at, turn: turn.line, cut_lines: at_message.line - 1, prompt, time: new Date(at_message.info.time.created).toISOString(), cwd: header.info.directory,
   model: { provider: model.provider, id: model.id },
   box: { session: header.info.id, directory: header.info.directory, cut_time: at_message.info.time.created, agent: turn.info.agent ?? "build", ...(variant ? { variant } : {}), continue: midTurn },
-  loadout: { tools: STANDS_IN },
+  loadout: { tools: STANDS_IN, in_box: IN_BOX },
   answers,
   read_only: { opencode: ["read", "glob", "grep", "webfetch", "websearch", "skill"] },
+  in_box: { opencode: IN_BOX },
 }) + "\n");

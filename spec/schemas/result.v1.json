@@ -169,6 +169,29 @@
           "discounted": {
             "type": "boolean"
           },
+          "leaned_on_made_up": {
+            "type": "boolean",
+            "description": "True when this sample's pass or fail rests on a made-up tool answer: every expectation that decided it came after one."
+          },
+          "answers": {
+            "type": "object",
+            "description": "Where each tool answer in the sample's last attempt came from.",
+            "required": ["session", "files_copy", "working_copy", "made_up", "made_up_calls"],
+            "properties": {
+              "session": { "type": "integer", "minimum": 0, "description": "Answered from the session's own recorded results." },
+              "files_copy": { "type": "integer", "minimum": 0, "description": "Run for real inside the box, on the copy of the project's files." },
+              "working_copy": { "type": "integer", "minimum": 0, "description": "Answered by a service's working copy, such as the calendar plugin." },
+              "made_up": { "type": "integer", "minimum": 0, "description": "Made up by the simulator LLM. Never real." },
+              "made_up_calls": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["connector", "op"],
+                  "properties": { "connector": { "type": "string" }, "op": { "type": "string" } }
+                }
+              }
+            }
+          },
           "attempts": {
             "type": "array",
             "items": {
@@ -246,6 +269,20 @@
     },
     "tiebreak_ran": {
       "type": "boolean"
+    },
+    "leaned_on_made_up": {
+      "type": "boolean",
+      "description": "True when a sample that counts toward the verdict passed or failed on a made-up tool answer."
+    },
+    "files_copy": {
+      "type": "object",
+      "description": "Which copy of the project's files the box used.",
+      "required": ["source", "taken_at"],
+      "properties": {
+        "source": { "enum": ["git", "today"], "description": "git: as committed at the moment's time. today: as the files were when the moment was made." },
+        "commit": { "type": "string" },
+        "taken_at": { "type": "string", "format": "date-time" }
+      }
     },
     "baseline": {
       "type": "object",

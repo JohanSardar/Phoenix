@@ -69,6 +69,8 @@ In order:
 5. From a **simulator model** that writes a response in the tool's real format. The response is checked against the tool's schema, saved so repeat calls match, and tagged as synthesized. Writes are no-ops. Synthesized answers are kept out of the pass/fail decision where possible.
 6. If none of these applies, the run stops and reports a **divergence**. It never invents data silently.
 
+When a replay resumes the harness's own session, a call the session never made is answered in this order. A file read or write runs for real inside the box, on a copy of the project's files. The copy comes from git at the moment's time when the folder is in git, and from the folder as it is today otherwise; the result says which. A service with a working copy, like the calendar, answers from the copy. Anything else gets a made-up answer from the simulator LLM. The result counts the answers from the session, from the files copy, from a working copy and made up, and says when a pass or fail leaned on a made-up answer. The real project folder is never mounted in the box.
+
 The most faithful setup runs the real MCP server and redirects only the API underneath it to the replay layer or an emulator. That way tool names, defaults, formatting and error text match production exactly, which is what lets a fix carry over to live. Vendor-hosted MCP servers can't be redirected, so they stay at recorded fidelity.
 
 A virtual clock makes "now" match the captured moment, both for the harness and for the connector fakes.
