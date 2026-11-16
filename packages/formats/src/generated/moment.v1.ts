@@ -214,10 +214,22 @@ export type MomentManifest = {
        */
       more?: string[];
       /**
-       * Files Phoenix could not read when it made the copy. They are missing inside the box.
+       * Files left out of the copy: files Phoenix could not read, and, in a folder outside git, dot-files, dot-folders such as .ssh, and node_modules. They are missing inside the box.
        */
       left_out?: string[];
+      /**
+       * Size of the copy's tar files in the bundle, in bytes.
+       */
+      bytes?: number;
+      /**
+       * Number of files in the copy.
+       */
+      files?: number;
     };
+    /**
+     * Why the project's files were not copied, such as a session that ran in the home folder or a folder over the size cap. New file calls then get the next answer instead.
+     */
+    files_not_copied?: string;
     /**
      * The replay starts at the session's first message, with its original prompt.
      */
