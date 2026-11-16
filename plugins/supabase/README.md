@@ -44,6 +44,14 @@ docker build --build-arg PG_IMAGE=supabase/postgres:17.6.1.166 -t phoenix-supaba
 
 The serve command refuses a snapshot from another Postgres major version. The image runs as the `postgres` user, because Postgres will not start as root.
 
+## Tests
+
+The tests in `test/` start Supabase's own Postgres, so they run only inside the plugin image. On a plain checkout they are skipped, and the run prints why. Build the image as above, then run them in it with the plugin folder mounted:
+
+```sh
+docker run --rm -v "$PWD/plugins/supabase:/plugin" -w /plugin phoenix-supabase:17 node --test test/
+```
+
 ## Read-only tools
 
 `phoenix-plugin.json` lists the tools the server shows for one project, in read-only and read-write mode. It marks the 14 tools that only read as read-only. `execute_sql`, `apply_migration`, `run_notebook` and the branch, edge function and notebook tools that change something are not read-only.
