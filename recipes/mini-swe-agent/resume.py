@@ -17,15 +17,15 @@ phoenix = {
         "model_class": "litellm",
         "model_name": f"openai/{model}",
         "cost_tracking": "ignore_errors",
-        "model_kwargs": {"api_base": BASES[provider], "api_key": login["key"], "extra_headers": {"x-opencode-session": str(uuid.uuid4())}, "drop_params": True},
+        "model_kwargs": {"api_base": BASES[provider], "extra_headers": {"x-opencode-session": str(uuid.uuid4())}, "drop_params": True},
     },
 }
-with open("/phoenix/out/phoenix.yaml", "w") as file:
+with open("/tmp/phoenix.yaml", "w") as file:
     json.dump(phoenix, file)
 config = os.path.join(os.getcwd(), "mini.yaml")
-args = ["mini", "-c", config if os.path.exists(config) else "mini.yaml", "-c", "/phoenix/out/phoenix.yaml", "-t", moment["prompt"], "-y", "--exit-immediately", "-o", "/phoenix/out/trajectory.json"]
+args = ["mini", "-c", config if os.path.exists(config) else "mini.yaml", "-c", "/tmp/phoenix.yaml", "-t", moment["prompt"], "-y", "--exit-immediately", "-o", "/phoenix/out/trajectory.json"]
 env = dict(os.environ) | {
-    "PYTHONPATH": "/phoenix/recipe", "MSWEA_CONFIGURED": "true", "MSWEA_SILENT_STARTUP": "1", "MSWEA_GLOBAL_CONFIG_DIR": "/phoenix/agent/mini",
+    "OPENAI_API_KEY": login["key"], "PYTHONPATH": "/phoenix/recipe", "MSWEA_CONFIGURED": "true", "MSWEA_SILENT_STARTUP": "1", "MSWEA_GLOBAL_CONFIG_DIR": "/phoenix/agent/mini",
 }
 code = subprocess.run(args, env=env, stdin=subprocess.DEVNULL).returncode
 messages = []
