@@ -83,20 +83,36 @@ export function createCopy({ snapshot, replies, socket, database }) {
   for (const rel of snapshot?.relations ?? []) {
     if (rel.kind !== "r" && rel.kind !== "p") continue;
     const name = rel.schema + "." + rel.name, rows = snapshot.rows?.[name];
-    if (rows && !(snapshot.row_limit > 0 && rows.length >= snapshot.row_limit)) continue;
-    if (!rows && Number(rel.live_rows) === 0 && rel.live_rows !== null) continue;
+    if (rows && rows.length < (snapshot.row_limits?.[name] ?? 0)) continue;
     unknown.set(name, rows ? "holds only the first " + rows.length + " rows of " + name : "holds none of the rows of " + name);
   }
-  async function touched(c, text, parameters) {
-    try {
+  const named = text => tablesIn(text.replace(/\$(\w*)\$/g, " ")).map(name => (name.includes(".") ? name : "public." + name));
+  const calls = (text, fn) => new RegExp("(^|[^\\w$])" + fn.split(".")[1].replace(/[$]/g, "\\$&") + "\"?\\s*\\(", "i").test(text);
+  const tainted = new Set();
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const fn of snapshot?.functions ?? []) {
+      const name = fn.schema + "." + fn.name;
+      if (tainted.has(name) || !fn.def) continue;
+      if (named(fn.def).some(rel => unknown.has(rel)) || [...tainted].some(other => calls(fn.def, other))) { tainted.add(name); changed = true; }
+    }
+  }
+  const triggers = new Map();
+  for (const t of snapshot?.triggers ?? []) for (const fn of tainted) if (calls(t.def, fn)) triggers.set(t.relation.replaceAll('"', ""), fn);
+  async function unanswerable(c, text, parameters) {
+    if (!unknown.size) return [];
+    const found = new Set(named(text));
+    let plan = "";
+    if (c) try {
       const [row] = (await c.query({ text: "EXPLAIN (VERBOSE, FORMAT JSON) " + text, values: parameters ?? [] })).rows;
-      const found = new Set();
+      plan = JSON.stringify(row["QUERY PLAN"]);
       const walk = node => { if (!node || typeof node !== "object") return; if (node["Relation Name"]) found.add(node.Schema + "." + node["Relation Name"]); for (const value of Object.values(node)) walk(value); };
       walk(row["QUERY PLAN"]);
-      return [...found];
-    } catch {
-      return tablesIn(text).map(name => (name.includes(".") ? name : "public." + name));
-    }
+    } catch {}
+    const reasons = [...found].filter(rel => unknown.has(rel)).map(rel => unknown.get(rel));
+    for (const fn of tainted) if (calls(text, fn) || calls(plan, fn)) reasons.push("cannot run " + fn + " fully, because it reads a table the snapshot does not fully hold");
+    for (const rel of found) if (triggers.has(rel)) reasons.push("cannot run the trigger function " + triggers.get(rel) + " on " + rel + " fully");
+    return reasons;
   }
   const recordedRows = new Map((snapshot?.relations ?? []).filter(r => r.live_rows !== null && r.live_rows !== undefined).map(r => [r.schema + "." + r.name, Number(r.live_rows)]));
 
@@ -104,10 +120,8 @@ export function createCopy({ snapshot, replies, socket, database }) {
     if (!snapshot) return missed("the snapshot holds no database");
     const { query: text, parameters, read_only } = JSON.parse(body);
     const c = await client(read_only ? "supabase_read_only_user" : "postgres");
-    if (unknown.size) {
-      const partial = (await touched(c, text, parameters)).filter(rel => unknown.has(rel));
-      if (partial.length) { await c.end(); return missed("the snapshot " + partial.map(rel => unknown.get(rel)).join(" and ") + ", so the answer could differ from Supabase's"); }
-    }
+    const reasons = await unanswerable(c, text, parameters);
+    if (reasons.length) { await c.end(); return missed("the snapshot " + reasons.join(" and ") + ", so the answer could differ from Supabase's"); }
     let result;
     try { result = await c.query(parameters?.length ? { text, values: parameters } : text); }
     catch (error) {
@@ -141,6 +155,8 @@ export function createCopy({ snapshot, replies, socket, database }) {
   async function applyMigration(body) {
     if (!snapshot) return missed("the snapshot holds no database");
     const { name, query: text } = JSON.parse(body);
+    const reasons = await unanswerable(undefined, text);
+    if (reasons.length) return missed("the snapshot " + reasons.join(" and ") + ", so the migration could end differently than on Supabase");
     const c = await client("postgres");
     try {
       await c.query("BEGIN");
@@ -197,9 +213,9 @@ export function createCopy({ snapshot, replies, socket, database }) {
         }
       }
       if (method === "GET" && /\/analytics\/endpoints\/logs$/.test(url.pathname)) {
-        const window = u => Date.parse(u.searchParams.get("iso_timestamp_end")) - Date.parse(u.searchParams.get("iso_timestamp_start"));
+        const near = (a, b, key) => Math.abs(Date.parse(a.searchParams.get(key)) - Date.parse(b.searchParams.get(key))) < 120000;
         const rest = u => { const p = new URLSearchParams(u.searchParams); p.delete("iso_timestamp_start"); p.delete("iso_timestamp_end"); p.sort(); return p.toString(); };
-        const match = logs.find(log => rest(log.url) === rest(url) && Math.abs(window(log.url) - window(url)) < 1000);
+        const match = logs.find(log => rest(log.url) === rest(url) && near(log.url, url, "iso_timestamp_start") && near(log.url, url, "iso_timestamp_end"));
         if (match && !wrote) return match.answer;
       }
       return missed("the snapshot holds no answer for " + method + " " + url.pathname);

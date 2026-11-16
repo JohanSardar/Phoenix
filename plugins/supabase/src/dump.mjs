@@ -9,6 +9,8 @@ export function scopeFilter(schemas) {
   return schemas.length ? "in (" + schemas.map(lit).join(", ") + ")" : "not in " + SYSTEM + " and n.nspname !~ '^pg_(toast_)?temp_'";
 }
 
+const BOOKKEEPING = new Set(["storage.migrations", "realtime.schema_migrations", "supabase_migrations.schema_migrations", "supabase_functions.migrations"]);
+
 export async function takeSnapshot(run, { schemas = [], tables = [], rowLimit = 1000 }) {
   const scope = "n.nspname " + scopeFilter(schemas);
   const [meta] = await run(
@@ -72,7 +74,7 @@ export async function takeSnapshot(run, { schemas = [], tables = [], rowLimit = 
     "from pg_policy p join pg_class r on r.oid = p.polrelid join pg_namespace n on n.oid = r.relnamespace where " + scope + " order by p.oid");
   const defaults = await run(
     "select pg_get_userbyid(d.defaclrole) as role, n.nspname as schema, d.defaclobjtype::text as type, d.defaclacl::text[] as acl from pg_default_acl d left join pg_namespace n on n.oid = d.defaclnamespace order by d.oid");
-  const rows = {};
+  const rows = {}, row_limits = {};
   const wanted = tables.filter(name => typeof name === "string" && name).slice(0, 200);
   if (wanted.length && rowLimit > 0) {
     const names = "array[" + wanted.map(lit).join(", ") + "]::text[]";
@@ -85,11 +87,14 @@ export async function takeSnapshot(run, { schemas = [], tables = [], rowLimit = 
       "union select h.inhrelid from pg_inherits h where h.inhparent = reach.oid) x where reach.depth < 8) " +
       "select distinct n.nspname as schema, c.relname as name, " + qualified("n.nspname", "c.relname") + " as relation from reach join pg_class c on c.oid = reach.oid join pg_namespace n on n.oid = c.relnamespace where c.relkind = 'r' and " + scope + " limit 50");
     for (const { schema, name, relation } of picked) {
-      const [result] = await run("select coalesce(json_agg(t), '[]'::json) as rows from (select * from " + relation + " limit " + Math.floor(rowLimit) + ") t");
+      if (schema === "auth") continue;
+      const limit = Math.floor(BOOKKEEPING.has(schema + "." + name) ? Math.min(rowLimit, 1000) : Math.min(rowLimit, 3));
+      const [result] = await run("select coalesce(json_agg(t), '[]'::json) as rows from (select * from " + relation + " limit " + limit + ") t");
       rows[schema + "." + name] = result.rows;
+      row_limits[schema + "." + name] = limit;
     }
   }
-  return { phoenix_supabase_snapshot: 1, meta, roles, namespaces, extensions, types, functions, relations, constraints, indexes, triggers, policies, defaults, rows, row_limit: rowLimit };
+  return { phoenix_supabase_snapshot: 1, meta, roles, namespaces, extensions, types, functions, relations, constraints, indexes, triggers, policies, defaults, rows, row_limits };
 }
 
 const IDENTIFIER = '(?:"(?:[^"]|"")+"|[A-Za-z_][\\w$]*)';
