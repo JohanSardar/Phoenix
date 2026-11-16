@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { resumeAttempt } from '../packages/runner/src/resume.ts';
+import { readCapture } from '../packages/store/src/index.ts';
 
 async function run(command, args, options, input = '') {
   const child = spawn(command, args, { ...options, stdio: 'pipe' });
@@ -17,7 +18,7 @@ async function run(command, args, options, input = '') {
   return { code, stdout, stderr };
 }
 
-export async function shellCase(t, command) {
+export async function shellCase(t, command, { unsupportedRead = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'phoenix-plugin-round2-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const directory = join(root, 'run'), sample = join(root, 'sample');
@@ -34,6 +35,10 @@ export async function shellCase(t, command) {
       let value = null;
       if (request.method === 'call') {
         const args = request.params.args.argv.slice(1);
+        if (${unsupportedRead} && args[0] === 'message' && args[1] === 'read') {
+          console.log(JSON.stringify({ phoenix_plugin: 1, id: request.id, status: 'unsupported', reason: 'The copy has not observed this message body' }));
+          continue;
+        }
         let stdout = '', stderr = '', code = 0;
         if (args[0] === 'message' && args[1] === 'read') { stderr = 'Message not found\n'; code = 1; }
         if (args[0] === 'message' && args[1] === 'delete') messages = 0;
@@ -115,5 +120,7 @@ export async function shellCase(t, command) {
     },
   });
   if (failed) throw failed;
-  return { outcome, observed };
+  const trace = await readCapture(join(sample, 'trace'));
+  const copyCalls = trace.allEvents.filter(e => e.kind === 'call' && e.surface === 'cli').length;
+  return { outcome, observed, copyCalls };
 }

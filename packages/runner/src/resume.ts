@@ -129,7 +129,7 @@ export async function resumeAttempt(input: {
       const given = args as Record<string, unknown>;
       const command = shell && given[shell.command], givenCwd = (shell?.cwd ? given[shell.cwd] : undefined) ?? moment.cwd;
       const found = typeof command === "string" ? recognizeCommand(command, commandPlugins) : undefined;
-      if (!found || found.calls.some(c => c.conditional && !c.readOnly)) return undefined;
+      if (!found || found.calls.some(c => c.conditional)) return undefined;
       const cwd = typeof givenCwd === "string" ? givenCwd : undefined;
       const rest = found.around.replace(/\u0000\d+\u0000/g, "true");
       const guarded = project ? readsOnly(rest, project.root, cwd, join(box, "project")) : /^true(?: [12]>& '[12]'| (?:[12]?>>?|&>) '\/dev\/null')*$/.test(rest);
