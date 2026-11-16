@@ -22,7 +22,7 @@ export const OPERATIONS: Record<string, Operation> = {
   },
   listEditable: { description: "List the harness contract's editable globs and the files that match them.", input: object({}), run: api => api.listEditable() },
   readFile: { description: "Read a file in the workspace's harness tree.", input: object({ path: { type: "string" } }, ["path"]), run: (api, a: { path: string }) => api.readFile(a.path) },
-  editFile: { description: "Write a whole file in the harness tree. Only editable paths are accepted; returns once the file is on disk.", input: object({ path: { type: "string" }, content: { type: "string" } }, ["path", "content"]), run: (api, a: { path: string; content: string }) => api.editFile(a.path, a.content) },
+  editFile: { description: "Replace a whole file in the harness tree with content, or create it. content becomes the entire file: any text not in it is deleted. To change part of a file, readFile it first and send the full new text. Only editable paths are accepted; returns once the file is on disk.", input: object({ path: { type: "string" }, content: { type: "string", description: "The complete new text of the file, not a diff or an addition" } }, ["path", "content"]), run: (api, a: { path: string; content: string }) => api.editFile(a.path, a.content) },
   startReplay: {
     description: "Freeze the current edits as a candidate and replay it on the target moments (default: the whole set) against the base harness. Returns at once; poll getReplay.",
     input: object({ moments: { type: "array", items: { type: "string" } }, start, samples: object({ base: { type: "integer", minimum: 1 }, tiebreak: { type: "integer", minimum: 0 } }, ["base", "tiebreak"]) }),
