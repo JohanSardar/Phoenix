@@ -1,0 +1,32 @@
+phoenix_recipe: 1
+name: opencode
+harness_versions: ["1.19.5"]
+login_modes: [api-key, oauth]
+routes:
+  - versions: "1.19.5"
+    login_mode: api-key
+    surfaces: {model: [transcript], mcp: [transcript], cli: [transcript]}
+  - versions: "1.19.5"
+    login_mode: oauth
+    surfaces: {model: [transcript], mcp: [transcript], cli: [transcript]}
+transcript_reader:
+  command: [node, read-transcript.mjs]
+  harness_versions: ["1.19.5"]
+task_keys: []
+copy_ignored: false
+resume:
+  moment: [node, moment.mjs]
+  login: [node, login.mjs]
+  image: resume.Dockerfile
+  command: [node, /phoenix/recipe/resume.mjs]
+  llm_hosts:
+    opencode: [opencode.ai]
+    opencode-go: [opencode.ai]
+    deepseek: [api.deepseek.com, opencode.ai]
+    anthropic: [api.anthropic.com, opencode.ai]
+limitations:
+  - "Records nothing live: OpenCode keeps its sessions in its own database, and export.mjs exports one from a copy of it."
+  - "Phoenix stands in only for OpenCode's built-in tools. A session that used MCP or plugin tools cannot be cut yet."
+  - "todowrite runs inside OpenCode in the box; it changes only OpenCode's own to-do list."
+  - "Permission rules on command patterns are not applied to stand-in tools."
+  - "The resumed run uses the real clock. The box reaches only the moment's LLM host and OpenCode Zen/Go (opencode.ai), so a harness can swap the LLM only within those."

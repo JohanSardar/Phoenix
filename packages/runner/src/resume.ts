@@ -18,6 +18,7 @@ interface SessionMoment {
   prompt: string;
   model: { provider: string; id: string; thinking?: string };
   loadout: unknown;
+  box?: unknown;
   answers: { id: string; connector: string; op: string; args: unknown; result: unknown; observed_at: string; before_cut: boolean }[];
 }
 
@@ -38,7 +39,7 @@ export async function resumeAttempt(input: {
   const box = join(root, "box");
   for (const part of ["moment", "agent", "out"]) await mkdir(join(box, part), { recursive: true, mode: 0o700 });
   await writeFile(join(box, "moment/cut.jsonl"), session.slice(0, moment.cut_lines).join("\n") + "\n", { mode: 0o600 });
-  await writeFile(join(box, "moment/moment.json"), JSON.stringify({ prompt: moment.prompt, model: moment.model }), { mode: 0o600 });
+  await writeFile(join(box, "moment/moment.json"), JSON.stringify({ prompt: moment.prompt, model: moment.model, ...(moment.box ? { box: moment.box } : {}) }), { mode: 0o600 });
   await writeFile(join(box, "moment/loadout.json"), JSON.stringify(moment.loadout), { mode: 0o600 });
   const plugins = new Map(plan.runner.plugins.map(plugin => [plugin.descriptor.connector, plugin.descriptor]));
   const standIn: ToolStandIn = await startToolStandIn({
