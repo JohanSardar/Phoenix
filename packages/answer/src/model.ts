@@ -3,7 +3,9 @@ import { canonicalJson, decodeHttpBody, decodeJson, modelDialects, object, type 
 import type { Divergence } from "./divergence.ts";
 import type { CallMessage } from "./types.ts";
 
-export type PrefixComparison = { ok: true; edits: string[] } | { ok: false; field: string; why: string };
+export type PrefixComparison = { ok: true; edits: string[]; uncompared: LoginContextDifference[] } | { ok: false; field: string; why: string };
+export interface LoginContext { name: string; pattern: string }
+export interface LoginContextDifference { name: string; recorded: number; candidate: number }
 
 export const isModelDialect = (value: string): value is ModelDialectName => Object.hasOwn(modelDialects, value);
 export function resolveModelDialect(value: string): ModelDialectName | undefined {
@@ -60,18 +62,35 @@ function toolDefinitions(configuration: Record<string, unknown>): Map<string, un
   return tools;
 }
 
-export function comparePrefixRequest(dialectName: ModelDialectName, recorded: Uint8Array | CallMessage, candidate: Uint8Array | CallMessage): PrefixComparison {
+function withoutLoginContext(history: unknown, rules: { name: string; pattern: RegExp }[], found: string[][]): unknown {
+  if (!rules.length || !Array.isArray(history)) return history;
+  return history.map(turn => {
+    const entry = object(turn);
+    const key = Array.isArray(entry.content) ? "content" : Array.isArray(entry.parts) ? "parts" : undefined;
+    if (!key) return turn;
+    return { ...entry, [key]: (entry[key] as unknown[]).filter(block => {
+      const text = object(block).text;
+      const rule = typeof text === "string" && ["text", "input_text", undefined].includes(object(block).type as string | undefined) ? rules.findIndex(r => r.pattern.test(text)) : -1;
+      if (rule < 0) return true;
+      found[rule]!.push(text as string);
+      return false;
+    }) };
+  });
+}
+
+export function comparePrefixRequest(dialectName: ModelDialectName, recorded: Uint8Array | CallMessage, candidate: Uint8Array | CallMessage, loginContext: readonly LoginContext[] = []): PrefixComparison {
   const dialect = modelDialects[dialectName];
-  const decode = (message: Uint8Array | CallMessage) => {
-    const decoded = message instanceof Uint8Array ? { ok: true as const, value: message } : decodeHttpBody(message.body, message.contentEncoding ? [] : message.head?.headers ?? []);
-    return decoded.ok ? decodeJson(decoded.value) : decoded;
-  };
-  const was = decode(recorded), now = decode(candidate);
-  if (!was.ok) return { ok: false, field: "body", why: "the recorded model request is not JSON, so it cannot be compared" };
+  const bytes = (message: Uint8Array | CallMessage) => message instanceof Uint8Array ? { ok: true as const, value: message } : decodeHttpBody(message.body, message.contentEncoding ? [] : message.head?.headers ?? []);
+  const recordedBytes = bytes(recorded), candidateBytes = bytes(candidate);
+  const was = recordedBytes.ok ? decodeJson(recordedBytes.value) : recordedBytes, now = candidateBytes.ok ? decodeJson(candidateBytes.value) : candidateBytes;
+  if (!was.ok) return recordedBytes.ok && candidateBytes.ok && Buffer.from(recordedBytes.value).equals(Buffer.from(candidateBytes.value)) ? { ok: true, edits: [], uncompared: [] } : { ok: false, field: "body", why: "the recorded model request is not JSON and the request's bytes differ from it" };
   if (!now.ok) return { ok: false, field: "body", why: "the model request is not JSON" };
   const before = dialect.split(object(was.value)), after = dialect.split(object(now.value));
-  const changed = firstDifference(before.history, after.history, "history");
-  if (changed) return { ok: false, field: changed, why: "the history differs from the recorded history" };
+  const rules = loginContext.map(r => ({ name: r.name, pattern: new RegExp(`^(?:${r.pattern})$`) }));
+  const recordedContext = rules.map((): string[] => []), candidateContext = rules.map((): string[] => []);
+  const changed = firstDifference(withoutLoginContext(before.history, rules, recordedContext), withoutLoginContext(after.history, rules, candidateContext), "history");
+  if (changed) return { ok: false, field: changed, why: rules.length ? "the history, without declared login context, differs from the recorded history" : "the history differs from the recorded history" };
+  const uncompared = rules.flatMap((rule, i) => canonicalJson(recordedContext[i]) === canonicalJson(candidateContext[i]) ? [] : [{ name: rule.name, recorded: recordedContext[i]!.length, candidate: candidateContext[i]!.length }]);
   const ajv = new Ajv2020({ strict: false, allErrors: false });
   const defined = toolDefinitions(after.configuration);
   for (const use of dialect.toolUses(before.history)) {
@@ -86,7 +105,7 @@ export function comparePrefixRequest(dialectName: ModelDialectName, recorded: Ui
     const a = before.configuration[key], b = after.configuration[key];
     return a === undefined || b === undefined ? a !== b : canonicalJson(a) !== canonicalJson(b);
   });
-  return { ok: true, edits };
+  return { ok: true, edits, uncompared };
 }
 
 export function checkModelRequest(dialectName: ModelDialectName, method: string, path: string, body: Uint8Array): Divergence | undefined {

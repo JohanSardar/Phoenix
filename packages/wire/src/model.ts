@@ -102,15 +102,36 @@ function externalAccess(request: Record<string, unknown>): string[] {
   return [...new Set(paths)];
 }
 
-function dialect(name: ModelDialectName, inferenceOperations: InferenceOperation[], historyKey: string, systemRoles: boolean): ModelDialect {
+function withoutCacheControl(history: unknown, found: { at: string; cache_control: unknown }[]): unknown {
+  if (!Array.isArray(history)) return history;
+  return history.map((turn, i) => {
+    const content = object(turn).content;
+    if (!Array.isArray(content)) return turn;
+    return { ...object(turn), content: content.map((block, j) => {
+      if (!block || typeof block !== "object" || Array.isArray(block)) return block;
+      const { cache_control: cacheControl, ...rest } = object(block);
+      if (cacheControl === undefined) return block;
+      found.push({ at: `history/${i}/content/${j}`, cache_control: cacheControl });
+      return rest;
+    }) };
+  });
+}
+
+function dialect(name: ModelDialectName, inferenceOperations: InferenceOperation[], historyKey: string, systemKey?: string, cacheControl = false): ModelDialect {
   return {
     name, inferenceOperations,
     isInference: (method, path) => inferenceOperations.some(op => op.method === method.toUpperCase() && new RegExp("^" + op.path.split("{model}").map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^/]+") + "$").test(path.split("?")[0]!)),
     split(request) {
-      const { [historyKey]: history, ...configuration } = request;
-      if (!systemRoles || !Array.isArray(history)) return { history, configuration };
-      const system = history.filter(item => ["system", "developer"].includes(object(item).role as string));
-      return { history: history.filter(item => !["system", "developer"].includes(object(item).role as string)), configuration: { ...configuration, ...(system.length ? { system } : {}) } };
+      let { [historyKey]: history, ...configuration } = request;
+      if (systemKey && Array.isArray(history)) {
+        const system = history.filter(item => ["system", "developer"].includes(object(item).role as string));
+        history = history.filter(item => !["system", "developer"].includes(object(item).role as string));
+        if (system.length) configuration = { ...configuration, [systemKey]: system };
+      }
+      if (!cacheControl) return { history, configuration };
+      const found: { at: string; cache_control: unknown }[] = [];
+      history = withoutCacheControl(history, found);
+      return { history, configuration: found.length ? { ...configuration, history_cache_control: found } : configuration };
     },
     toolUses,
     providerState: request => ["previous_response_id", "conversation", "cachedContent"].filter(key => request[key] !== undefined && request[key] !== null),
@@ -128,10 +149,10 @@ function dialect(name: ModelDialectName, inferenceOperations: InferenceOperation
 }
 
 export const modelDialects: Readonly<Record<ModelDialectName, ModelDialect>> = {
-  messages: dialect("messages", [{ method: "POST", path: "/v1/messages" }], "messages", false),
-  "chat-completions": dialect("chat-completions", [{ method: "POST", path: "/v1/chat/completions" }], "messages", true),
-  responses: dialect("responses", [{ method: "POST", path: "/v1/responses" }], "input", true),
-  "generate-content": dialect("generate-content", [{ method: "POST", path: "/v1beta/models/{model}:generateContent" }, { method: "POST", path: "/v1beta/models/{model}:streamGenerateContent" }], "contents", false),
+  messages: dialect("messages", [{ method: "POST", path: "/v1/messages" }], "messages", "system_messages", true),
+  "chat-completions": dialect("chat-completions", [{ method: "POST", path: "/v1/chat/completions" }], "messages", "system"),
+  responses: dialect("responses", [{ method: "POST", path: "/v1/responses" }], "input", "system"),
+  "generate-content": dialect("generate-content", [{ method: "POST", path: "/v1beta/models/{model}:generateContent" }, { method: "POST", path: "/v1beta/models/{model}:streamGenerateContent" }], "contents"),
 };
 
 export function completeModelStream(name: ModelDialectName, bytes: Uint8Array, headers: Headers): Uint8Array | undefined {
