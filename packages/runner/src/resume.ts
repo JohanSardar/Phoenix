@@ -10,6 +10,7 @@ import { writeClockFile, type Sandbox, type SandboxProcess } from "@phoenix/sand
 import type { MomentBundle } from "@phoenix/store";
 import type { ResolvedPlan } from "./plan.ts";
 import { optional, save } from "./files.ts";
+import { pastCommand, type ShellTool } from "./past-commands.ts";
 
 const execute = promisify(execFile);
 const TOOLS_HOST = "phoenix-tools";
@@ -21,7 +22,7 @@ interface SessionMoment {
   loadout: unknown;
   box?: unknown;
   in_box?: Record<string, string[]>;
-  shell?: Record<string, Record<string, { command: string; cwd?: string }>>;
+  shell?: Record<string, Record<string, ShellTool>>;
   cwd?: string;
   answers: { id: string; connector: string; op: string; args: unknown; result: unknown; observed_at: string; before_cut: boolean; world?: "exact" | "any-args" }[];
 }
@@ -103,10 +104,12 @@ export async function resumeAttempt(input: {
     const all = moment.answers.filter(a => a.connector === name);
     const firstWrite = all.findIndex(a => !a.before_cut && !plugin.descriptor.read_only?.includes(`tools/call:${a.op}`));
     const own = all.filter((a, at) => a.before_cut || firstWrite < 0 || at < firstWrite || (a.world && plugin.descriptor.read_only?.includes(`tools/call:${a.op}`)));
-    const snapshot = own.flatMap((a, seq) => [
-      { v: 1, capture: input.capture, stream: "session", seq: seq * 2, ts: { wall: a.observed_at }, kind: "call", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: seq, method: "tools/call", params: { name: a.op, arguments: a.args } }) } },
-      { v: 1, capture: input.capture, stream: "session", seq: seq * 2 + 1, ts: { wall: a.observed_at }, kind: "result", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: seq, result: a.result }) } },
-    ].map(event => JSON.stringify(event) + "\n")).join("");
+    const mine = new Set(own);
+    const commander = plugin.descriptor.recognize.commands?.length ? { ...plugin.descriptor, connector: name } : undefined;
+    const snapshot = moment.answers.flatMap((a, at) => mine.has(a) ? [
+      { v: 1, capture: input.capture, stream: "session", seq: at * 2, ts: { wall: a.observed_at }, kind: "call", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: at, method: "tools/call", params: { name: a.op, arguments: a.args } }) } },
+      { v: 1, capture: input.capture, stream: "session", seq: at * 2 + 1, ts: { wall: a.observed_at }, kind: "result", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: at, result: a.result }) } },
+    ] : commander ? pastCommand(a, moment.shell?.[a.connector]?.[a.op], commander, moment.cwd, { capture: input.capture, stream: `session-cli-${at}`, connector: plugin.descriptor.connector }) : []).map(event => JSON.stringify(event) + "\n").join("");
     await writeFile(join(pluginRoot, "inputs/snapshot"), plugin.snapshot ? bundle.files.get(plugin.snapshot)! : snapshot, { mode: 0o600 });
     await writeFile(join(pluginRoot, "inputs/seed"), plugin.seed ? bundle.files.get(plugin.seed)! : JSON.stringify({ seed: `sha256:${createHash("sha256").update(`${input.id}:${input.capture}`).digest("hex")}` }), { mode: 0o600 });
     await writeClockFile(join(pluginRoot, "clock"), time);
