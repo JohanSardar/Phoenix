@@ -62,7 +62,8 @@ export async function startPlugin(plugin: InstalledPlugin, mode: "capture" | "se
     output = process.stdin;
     stderr = process.stderr;
     stop = () => started.process.stop();
-    exited = Promise.race([process.exited, process.interrupted]);
+    exited = process.exited;
+    void process.interrupted.then(error => fail(error));
   } else {
     const child = spawn(command.command[0]!, command.command.slice(1), {
       cwd: plugin.directory, env: { PATH: globalThis.process.env.PATH, ...options.env }, stdio: "pipe",
@@ -91,9 +92,10 @@ export async function startPlugin(plugin: InstalledPlugin, mode: "capture" | "se
         if (options.onConnection) options.onConnection(connection);
         else connection.stream.destroy();
       }
-    } catch (error) { fail(new PluginProcessError(String(error))); }
+    } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
   })();
-  stderr.on("data", (data: Buffer) => options.onStderr?.(data));
+  let said = "";
+  stderr.on("data", (data: Buffer) => { said = (said + data.toString("utf8")).slice(-2000); options.onStderr?.(data); });
   input.on("error", fail);
   output.on("error", fail);
   exited.then(() => fail(new PluginProcessError("Plugin process stopped")));
@@ -167,5 +169,8 @@ export async function startPlugin(plugin: InstalledPlugin, mode: "capture" | "se
     const initialized = await session.request("initialize", { ...options.context, read_only: plugin.descriptor.read_only ?? [] });
     if (initialized.status !== "answer") throw new PluginProcessError(`Plugin initialization failed: ${JSON.stringify(initialized)}`);
     return session;
-  } catch (error) { await session.stop(); throw error; }
+  } catch (error) {
+    await session.stop();
+    throw error instanceof PluginProcessError && said.trim() ? new PluginProcessError(`${error.message}; the plugin said: ${said.trim()}`) : error;
+  }
 }

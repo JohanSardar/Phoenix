@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { createSimulator, startEngine, type Engine, type EngineOptions } from "@phoenix/engine";
+import { createSimulator, EmulatorStartError, startEngine, type Engine, type EngineOptions } from "@phoenix/engine";
 import { ContainerSandbox, writeClockFile, type ClockReport, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
 import { compareBaseline, customCheckHost, evaluateCheck, momentVerdict, sampleVerdict } from "@phoenix/checks";
 import { fidelityReport, weakestTier, type FidelityContext, type FidelityReport } from "@phoenix/fidelity";
@@ -298,7 +298,7 @@ export class Runner {
       if (outcome.kind === "finished") for (const plugin of plan.runner.plugins) if (!bundle.manifest.connectors?.[plugin.descriptor.connector]?.skip_resolvers?.includes("emulator")) states.set(plugin.descriptor.connector, await engine.state(plugin.descriptor.connector));
       await save(join(root, "clock-report.json"), process.clock);
       }
-    } catch (error) { outcome = { kind: "interrupted", why: error instanceof Error ? error.message : String(error) }; }
+    } catch (error) { outcome = { kind: error instanceof EmulatorStartError ? "not-run" : "interrupted", why: error instanceof Error ? error.message : String(error) }; }
     finally {
       submission.abort();
       await process?.stop().catch(() => {});
