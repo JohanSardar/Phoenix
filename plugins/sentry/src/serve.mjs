@@ -10,11 +10,20 @@ import { startSentryServer } from "./server.mjs";
 let copy;
 let server;
 
+function results(text) {
+  try {
+    const data = JSON.parse(text);
+    const answers = Array.isArray(data) ? data : data?.answers;
+    if (!Array.isArray(answers)) throw new Error("The snapshot must be a list of tool answers, or a session moment with answers");
+    return answers.map(answer => answer?.result);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+  }
+  return text.split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(event => event.kind === "result" && typeof event.body?.inline === "string").map(event => JSON.parse(event.body.inline).result);
+}
+
 function snapshotLines(path) {
-  const data = JSON.parse(readFileSync(path, "utf8"));
-  const answers = Array.isArray(data) ? data : data?.answers;
-  if (!Array.isArray(answers)) throw new Error("The snapshot must be a list of tool answers, or a session moment with answers");
-  const lines = answers.flatMap(answer => answer?.result?._meta?.["phoenix/sentry-api"] ?? []);
+  const lines = results(readFileSync(path, "utf8")).flatMap(result => result?._meta?.["phoenix/sentry-api"] ?? []);
   if (!lines.length) throw new Error("The snapshot holds no Sentry API replies; take it with phoenix-sentry-snapshot");
   return lines;
 }

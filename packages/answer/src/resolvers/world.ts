@@ -4,6 +4,7 @@ import type { Resolver } from "../types.ts";
 export const world: Resolver = {
   name: "world",
   async resolve(call, ctx) {
+    if (ctx.emulators?.has(call.connector)) return { miss: true, why: "a working copy owns this connector, so its seeded answers are the copy's to serve" };
     const written = ctx.index.exchanges.filter(e => e.provenance === "seeded" && e.connector === call.connector && e.op === call.op);
     const exact = written.find(e => !e.anyArgs && canonicalJson(e.args) === canonicalJson(call.args));
     const answer = exact ?? written.find(e => e.anyArgs);
