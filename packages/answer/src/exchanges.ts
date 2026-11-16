@@ -69,7 +69,8 @@ async function pairHttp(list: readonly TraceEvent[], body: (e: TraceEvent) => Pr
   if (!call || !result || !requestMeta || !responseMeta || call.partial) return [];
   const head = decodeJson(await body(requestMeta));
   if (!head.ok) return [];
-  const request = { body: await body(call), head: (framed ? (head.value as { meta: { request: HttpRequest } }).meta.request : head.value) as HttpRequest };
+  const request = { body: await body(call), head: (framed ? (head.value as { meta: { request: HttpRequest } }).meta.request : head.value) as HttpRequest,
+    ...(call.body?.content_encoding ? { contentEncoding: call.body.content_encoding } : {}) };
   const shape = surface === "mcp" ? mcpHttpShape(request.head, request.body) : httpShape(request.head, request.body);
   const encoding = result.body?.content_encoding;
   const response = { body: await body(result), head: decodeHttpHead(await body(responseMeta)), ...(encoding ? { contentEncoding: encoding } : {}) };

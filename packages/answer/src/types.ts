@@ -21,6 +21,7 @@ export interface WireMessage {
 export interface CallMessage {
   body: Uint8Array;
   head?: HttpRequest;
+  contentEncoding?: string;
 }
 
 export interface Call {

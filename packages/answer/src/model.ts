@@ -1,6 +1,7 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { canonicalJson, decodeJson, modelDialects, object, type ModelDialectName } from "@phoenix/wire";
+import { canonicalJson, decodeHttpBody, decodeJson, modelDialects, object, type ModelDialectName } from "@phoenix/wire";
 import type { Divergence } from "./divergence.ts";
+import type { CallMessage } from "./types.ts";
 
 export type PrefixComparison = { ok: true; edits: string[] } | { ok: false; field: string; why: string };
 
@@ -59,9 +60,13 @@ function toolDefinitions(configuration: Record<string, unknown>): Map<string, un
   return tools;
 }
 
-export function comparePrefixRequest(dialectName: ModelDialectName, recorded: Uint8Array, candidate: Uint8Array): PrefixComparison {
+export function comparePrefixRequest(dialectName: ModelDialectName, recorded: Uint8Array | CallMessage, candidate: Uint8Array | CallMessage): PrefixComparison {
   const dialect = modelDialects[dialectName];
-  const was = decodeJson(recorded), now = decodeJson(candidate);
+  const decode = (message: Uint8Array | CallMessage) => {
+    const decoded = message instanceof Uint8Array ? { ok: true as const, value: message } : decodeHttpBody(message.body, message.contentEncoding ? [] : message.head?.headers ?? []);
+    return decoded.ok ? decodeJson(decoded.value) : decoded;
+  };
+  const was = decode(recorded), now = decode(candidate);
   if (!was.ok) return { ok: false, field: "body", why: "the recorded model request is not JSON, so it cannot be compared" };
   if (!now.ok) return { ok: false, field: "body", why: "the model request is not JSON" };
   const before = dialect.split(object(was.value)), after = dialect.split(object(now.value));
