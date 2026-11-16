@@ -76,7 +76,9 @@ export async function resumeAttempt(input: {
     process = running.process;
     await input.started(process.id);
     process.stdin.end();
-    process.stdout.resume(); process.stderr.resume();
+    process.stdout.resume();
+    let stderr = "";
+    process.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-4096); });
     const connections = (async () => { for await (const connection of running.channel) standIn.accept(connection); })().then(() => ({ kind: "interrupted" as const, why: "engine channel closed" }), () => ({ kind: "interrupted" as const, why: "engine channel closed" }));
     outcome = await Promise.race([
       process.exited.then(({ code }) => ({ kind: "finished" as const, code })),
@@ -87,6 +89,7 @@ export async function resumeAttempt(input: {
     const egress = await process.egress?.();
     await standIn.note("sandbox.egress", { llm_hosts: hosts, direct_rules: egress?.stdout ?? null, tool_answers_from_phoenix: standIn.served() });
     const result = await optional<{ session: string | null; final_text: string }>(join(box, "out/result.json"));
+    if (stderr) await standIn.note("harness.stderr", stderr);
     if (result?.final_text) await standIn.note("final_text", result.final_text);
     if (result?.session) {
       const entries = (await readFile(join(box, "out", result.session), "utf8")).split("\n").filter(Boolean);

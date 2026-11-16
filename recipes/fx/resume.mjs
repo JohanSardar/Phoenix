@@ -44,6 +44,7 @@ if (existsSync("/worktree/fx.patch") && statSync("/worktree/fx.patch").size > 0)
   execFileSync("git", ["apply", "/worktree/fx.patch"], build);
   execFileSync("zig", ["build", "-Doptimize=ReleaseSafe"], build);
   fx = "/tmp/fx-src/zig-out/bin/fx";
+  process.stderr.write(`fx built from source with fx.patch ${createHash("sha256").update(readFileSync("/worktree/fx.patch")).digest("hex").slice(0, 12)}\n`);
 }
 mkdirSync("/tmp/phoenix-calls", { recursive: true, mode: 0o700 });
 const child = spawn(fx, ["acp", ...(settings.model ? ["--model", settings.model] : [])], {
