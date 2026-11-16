@@ -2,7 +2,7 @@
 // command-line capture read. Envelopes keep their real ids (UIDs per folder), folder and flags; a
 // message whose body was read gets that body. A body never read stays unknown, so reading it falls
 // through. Plain-text output is not parsed.
-import { addresses, buildMessage, decodeWords, rfc2822 } from "./mime.mjs";
+import { addresses, buildMessage, decodeWords, header, rfc2822, splitHead } from "./mime.mjs";
 import { snippetOf } from "./mailbox.mjs";
 
 const SYSTEM = { INBOX: "INBOX", "[Gmail]/Drafts": "DRAFT", "[Gmail]/Important": "IMPORTANT", "[Gmail]/Sent Mail": "SENT", "[Gmail]/Spam": "SPAM", "[Gmail]/Starred": "STARRED", "[Gmail]/Trash": "TRASH", "[Gmail]/All Mail": null };
@@ -35,6 +35,28 @@ function folderLabel(box, folder) {
   return user ? { known: true, label: user.labelId } : { known: false };
 }
 
+// Whether a himalaya call is a read, by the plugin's read_only entries: their words lead the command
+// and their options are present.
+export function reads(argv, entries) {
+  const { words } = command(argv);
+  return entries.some(entry => {
+    const tokens = entry.split(" ").slice(1);
+    return tokens.filter(t => !t.startsWith("-")).every((t, i) => words[i] === t) && tokens.filter(t => t.startsWith("-")).every(t => argv.includes(t));
+  });
+}
+
+// A UID the real service printed. The copy gives its own UIDs to mail it made, such as a replayed send,
+// and a later real listing replaces them.
+function realUid(box, m, folder, uid) {
+  m.uids[folder] = uid;
+  (m.realUids ??= new Set()).add(folder);
+  const info = box.folderInfo?.[folder];
+  box.folderInfo = { ...box.folderInfo, [folder]: { uidvalidity: info?.uidvalidity ?? 1, uidnext: Math.max(info?.uidnext ?? 1, uid + 1) } };
+}
+
+// The minutes a listed date can show for a message: its own Date header's, or when it arrived.
+const minutes = m => new Set([Number(m.internalDate), m.raw ? Date.parse(header(splitHead(m.raw).headers, "date") ?? "") : NaN].filter(Number.isFinite).map(ms => Math.floor(ms / 60000)));
+
 const byUid = (box, folder, uid) => [...box.messages.values()].find(m => m.uids[folder] === uid);
 const dateMs = text => { const ms = Date.parse(String(text ?? "").replace(" ", "T")); return Number.isFinite(ms) ? ms : undefined; };
 const offsetOf = text => { const found = /([+-]\d{2}):?(\d{2})$/.exec(String(text ?? "")); return found ? found[1] + found[2] : undefined; };
@@ -53,14 +75,15 @@ function envelopes(box, folder, list, newestFirst) {
     const minute = newestFirst && dateMs(e.date) !== undefined ? list.filter(o => o?.date === e.date).length : 0;
     const later = minute ? list.slice(i + 1).filter(o => o?.date === e.date).length : 0;
     const ms = dateMs(e.date) === undefined ? box.nowMs ?? 0 : dateMs(e.date) + Math.min(later, 59) * 1000;
-    let m = byUid(box, folder, uid) ?? [...box.messages.values()].find(o => o.uids[folder] === undefined && o.fields.subject === e.subject && o.fields.sender === e.from?.addr && Math.floor(Number(o.internalDate) / 60000) === Math.floor(ms / 60000));
+    let m = byUid(box, folder, uid) ?? [...box.messages.values()].find(o => !o.realUids?.has(folder) && o.fields.subject === e.subject && (o.fields.sender ?? addresses(header(splitHead(o.raw ?? Buffer.alloc(0)).headers, "from") ?? "")[0]?.email) === e.from?.addr && minutes(o).has(Math.floor(ms / 60000)));
     if (m) {
-      m.uids[folder] = uid;
+      realUid(box, m, folder, uid);
       if (m.minute !== undefined && minute >= m.minute && Math.floor(Number(m.internalDate) / 60000) === Math.floor(ms / 60000)) Object.assign(m, { internalDate: String(ms), minute });
     } else {
       const id = box.newId(ms);
-      m = { id, threadId: id, labelIds: [], internalDate: String(ms), fields: {}, know: new Set(["metadata"]), observedAt: -1, uids: { [folder]: uid }, minute };
+      m = { id, threadId: id, labelIds: [], internalDate: String(ms), fields: {}, know: new Set(["metadata"]), observedAt: -1, uids: {}, minute };
       box.add(m);
+      realUid(box, m, folder, uid);
     }
     const others = m.labelIds.filter(l => !["UNREAD", "STARRED", place.label].includes(l));
     box.relabel(m, [...others, ...labels], m.labelIds.filter(l => !others.includes(l) && !labels.includes(l)));
@@ -89,8 +112,9 @@ function read(box, folder, uid, text) {
   if (!m) {
     if (!folderLabel(box, folder).known) return;
     const id = box.newId(ms ?? box.nowMs ?? 0);
-    m = { id, threadId: id, labelIds: [], internalDate: String(ms ?? box.nowMs ?? 0), fields: {}, know: new Set(), observedAt: -1, uids: { [folder]: uid } };
+    m = { id, threadId: id, labelIds: [], internalDate: String(ms ?? box.nowMs ?? 0), fields: {}, know: new Set(), observedAt: -1, uids: {} };
     box.add(m);
+    realUid(box, m, folder, uid);
     const place = folderLabel(box, folder).label;
     if (place) box.relabel(m, [place], []);
   }
@@ -124,9 +148,7 @@ export function takeUids(box, argv, ours, theirs, aliases = {}) {
   if (pairs.some(([m, uid, same]) => !m || !Number.isInteger(uid) || !same)) return;
   const moving = new Set(pairs.map(([m]) => m));
   if (pairs.some(([, uid]) => { const holder = byUid(box, folder, uid); return holder && !moving.has(holder); })) return;
-  for (const [m, uid] of pairs) m.uids[folder] = uid;
-  const info = box.folderInfo?.[folder];
-  box.folderInfo = { ...box.folderInfo, [folder]: { uidvalidity: info?.uidvalidity ?? 1, uidnext: Math.max(info?.uidnext ?? 1, ...pairs.map(([, uid]) => uid + 1)) } };
+  for (const [m, uid] of pairs) realUid(box, m, folder, uid);
 }
 
 export function learnHimalaya(box, observations, aliases = {}) {

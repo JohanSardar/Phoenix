@@ -21,8 +21,9 @@ const session = [
 async function copyOf(t, observations = session) {
   const root = await mkdtemp(join(import.meta.dirname, ".gmail-session-"));
   const path = join(root, "snapshot.jsonl");
-  const events = observations.flatMap(([argv, out], n) => [
+  const events = observations.flatMap(([argv, out, stdin], n) => [
     { kind: "call", op: "himalaya", body: { inline: JSON.stringify({ argv, cwd: "/", env: {}, terminals: { stdin: null, stdout: null, stderr: null } }) } },
+    ...(stdin ? [{ kind: "call", op: "frame:out:0", body: { inline: stdin } }] : []),
     { kind: "result", op: "frame:back:1", body: { inline: JSON.stringify(out) + "\n" } },
     { kind: "result", op: "frame:back:3", body: { inline: JSON.stringify({ type: "exit", code: 0, signal: null }) } },
   ].map((e, seq) => ({ v: 1, capture: "gmail-session", stream: "cli-" + n, seq, connector: "email", surface: "cli", ts: { wall: "2026-11-16T20:33:4" + n + "Z" }, ...e })));
@@ -113,4 +114,20 @@ test("S17: an order-by clause after a condition-word search value remains a sort
   assert.equal(envelopes.length, 2);
   const copy = await copyOf(t, [[query, envelopes]]);
   assert.deepEqual(JSON.parse(await copy(query)).map(e => e.id), envelopes.map(e => e.id));
+});
+
+
+test("a snapshot cut just after himalaya writes holds them", async t => {
+  const raw = ["From: Test Person <" + me + ">", "To: " + me, "Subject: [phoenix-test] t57 Paid", "Date: Mon, 16 Nov 2026 20:34:00 +0000", "Message-ID: <t57-paid@example.com>", "Content-Type: text/plain; charset=utf-8", "", "Paid.", ""].join("\r\n");
+  const copy = await copyOf(t, [
+    session[0],
+    [["himalaya", "message", "send"], "Message successfully sent!", raw],
+    [list("[Gmail]/Sent Mail"), [{ ...envelope("429", "[phoenix-test] t57 Paid"), date: "2026-11-16 20:34+00:00" }]],
+    [["himalaya", "message", "move", "[Gmail]/All Mail", "68497"], "moved"],
+    [["himalaya", "message", "delete", "68496"], "removed"],
+  ]);
+  assert.deepEqual(brief(await copy(list())).map(([id, subject]) => [id, subject]), [["68498", "Paid"]]);
+  assert.deepEqual(brief(await copy(list("[Gmail]/Sent Mail"))).map(([id, subject]) => [id, subject]), [["429", "Paid"]]);
+  assert.deepEqual(brief(await copy(list("[Gmail]/Trash"))).map(([, subject]) => subject), ["Invoice"]);
+  assert.match(await copy(["himalaya", "message", "read", "--preview", "-f", "[Gmail]/Sent Mail", "429"]), /\n\nPaid\.\n/);
 });

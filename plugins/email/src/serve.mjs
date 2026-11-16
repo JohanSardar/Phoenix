@@ -5,9 +5,11 @@ import { createInterface } from "node:readline";
 import { Mailbox } from "./mailbox.mjs";
 import { Connector, TOOLS, ToolError, Unsupported } from "./connector.mjs";
 import { Himalaya, folderAliases } from "./himalaya.mjs";
-import { learnHimalaya, takeUids } from "./learn.mjs";
+import { learnHimalaya, reads, takeUids } from "./learn.mjs";
+import { addresses } from "./mime.mjs";
 
 let box, connector, himalaya, aliases;
+const READ_ONLY = JSON.parse(await readFile(new URL("../phoenix-plugin.json", import.meta.url), "utf8")).read_only.filter(entry => entry.startsWith("himalaya "));
 
 const stdoutOf = frames => Buffer.concat(frames.filter(f => f.dir === "back" && f.stream === 1).map(f => Buffer.from(f.bytes, "base64"))).toString("utf8");
 
@@ -41,8 +43,10 @@ function readSnapshot(text) {
       } else if ((event.kind === "call" || (event.kind === "meta" && event.op === "open")) && !/^(frame|fragment):/.test(event.op ?? "")) {
         const value = JSON.parse(event.body.inline);
         const argv = event.op === "open" ? value.meta?.argv : value.argv;
-        if (Array.isArray(argv)) { const run = { argv, stdout: "", at: event.ts?.wall }; runs.set(event.stream, run); output.push(run); }
-      } else if (event.kind === "result" && frame && runs.has(event.stream)) runs.get(event.stream).stdout += event.body.inline;
+        if (Array.isArray(argv)) { const run = { argv, stdin: "", stdout: "", at: event.ts?.wall }; runs.set(event.stream, run); output.push(run); }
+      } else if (/^(frame|fragment):out:0$/.test(event.op ?? "") && runs.has(event.stream)) runs.get(event.stream).stdin += event.body.inline;
+      else if (event.kind === "result" && event.op === "frame:back:3" && runs.has(event.stream)) runs.get(event.stream).code = JSON.parse(event.body.inline).code;
+      else if (event.kind === "result" && frame && runs.has(event.stream)) runs.get(event.stream).stdout += event.body.inline;
       continue;
     }
     const body = JSON.parse(event.body.inline);
@@ -64,7 +68,7 @@ async function initialize(params) {
   connector = new Connector(box);
   for (const m of snapshot.messages ?? []) {
     const message = box.upsert(m, { at: 0, know: m.raw ? [] : ["body"] });
-    if (m.uids) message.uids = { ...m.uids };
+    if (m.uids) { message.uids = { ...m.uids }; message.realUids = new Set(Object.keys(m.uids)); }
     box.fromRaw(message);
     if (m.threadCount !== undefined) box.threadCounts.set(message.threadId, m.threadCount);
   }
@@ -78,11 +82,20 @@ async function initialize(params) {
     connector.ingest(tool, answer.args, valueOf(answer.result), at, answer.before_cut !== false && at <= cut);
   }
   aliases = folderAliases(snapshot.himalaya);
-  learnHimalaya(box, (snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)).sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0)), aliases);
-  for (const m of box.messages.values()) box.fromRaw(m);
-  box.changes = [];
   himalaya = new Himalaya(box, snapshot.himalaya);
   await himalaya.start();
+  // A past himalaya write runs again in the copy, in time order with what himalaya calls printed.
+  for (const o of (snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)).sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0))) {
+    if (reads(o.argv, READ_ONLY)) learnHimalaya(box, [o], aliases);
+    else if ((o.code ?? 0) === 0) {
+      const from = /^from:\s*(.*)$/im.exec(String(o.stdin ?? "").split(/\r?\n\r?\n/)[0] ?? "")?.[1];
+      if (!box.account.email && o.argv.includes("send") && from) box.account.email = addresses(from)[0]?.email ?? "";
+      await himalaya.run(o.argv.slice(1), Buffer.from(o.stdin ?? ""), Date.parse(o.at) || box.nowMs || 0);
+    }
+  }
+  box.missed = undefined;
+  for (const m of box.messages.values()) box.fromRaw(m);
+  box.changes = [];
 }
 
 const rpc = (request, body) => ({ body: Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: request.id, ...body })).toString("base64") });

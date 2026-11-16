@@ -1,7 +1,8 @@
 // Runs the real himalaya command against the copy's IMAP and SMTP servers. Only the account's
 // connection settings are replaced; every other setting comes from the person's own config.
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startImap, startSmtp } from "./imap.mjs";
@@ -27,6 +28,13 @@ export class Himalaya {
     this.imap = await startImap(this.box, { log });
     this.smtp = await startSmtp(this.box, { log });
     this.home = await mkdtemp(join(tmpdir(), "phoenix-email-"));
+    this.config = join(this.home, "config.toml");
+    this.configure();
+  }
+
+  // The account's address can be learned after the copy starts, so the config follows it.
+  configure() {
+    this.email = this.box.account.email;
     const accounts = this.settings.accounts ?? [{ name: "gmail", lines: GMAIL_FOLDERS, default: true }];
     const body = accounts.map(account => [
       `[accounts.${account.name}]`,
@@ -39,8 +47,7 @@ export class Himalaya {
       `message.send.backend.login = ${tomlString(this.box.account.email)}`, 'message.send.backend.auth.type = "password"', 'message.send.backend.auth.raw = "phoenix-copy"',
       "",
     ].join("\n")).join("\n");
-    this.config = join(this.home, "config.toml");
-    await writeFile(this.config, [...(this.settings.top ?? []), "", body].join("\n"), { mode: 0o600 });
+    writeFileSync(this.config, [...(this.settings.top ?? []), "", body].join("\n"), { mode: 0o600 });
   }
 
   // The person's own -c paths point at files outside the copy, so they are dropped.
@@ -57,6 +64,7 @@ export class Himalaya {
 
   run(argv, stdin, nowMs) {
     this.box.nowMs = nowMs;
+    if (this.box.account.email !== this.email) this.configure();
     return new Promise(resolve => {
       const child = spawn(process.env.PHOENIX_HIMALAYA ?? "himalaya", ["-c", this.config, ...this.argv(argv)], {
         cwd: this.home, env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k === "LD_PRELOAD" || k.startsWith("FAKETIME"))), PATH: process.env.PATH, HOME: this.home, TZ: this.box.timezone, LANG: process.env.LANG ?? "C.UTF-8" },
