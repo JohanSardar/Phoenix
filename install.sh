@@ -72,19 +72,14 @@ tar -xzf "$tmp/$asset" -C "$tmp/unpacked"
 
 mkdir -p "$install_dir/versions" "$install_dir/bin"
 target="$install_dir/versions/$version"
-rm -rf "$target"
-mv "$tmp/unpacked/phoenix" "$target"
+[ -d "$target" ] || mv "$tmp/unpacked/phoenix" "$target"
 
 cat > "$tmp/phoenix" <<EOF
 #!/bin/sh
-exec "$target/node/bin/node" "$target/app/packages/cli/src/phoenix.ts" "\$@"
+PATH="\$PATH:$target/node/bin" exec "$target/node/bin/node" "$target/app/packages/cli/src/phoenix.ts" "\$@"
 EOF
 chmod 755 "$tmp/phoenix"
 mv -f "$tmp/phoenix" "$install_dir/bin/phoenix"
-
-for old in "$install_dir/versions"/*; do
-  [ "$old" = "$target" ] || rm -rf "$old"
-done
 
 "$install_dir/bin/phoenix" --help >/dev/null || fail "the installed phoenix does not start"
 printf 'Installed Phoenix %s to %s/bin/phoenix\n' "$version" "$install_dir"
@@ -100,4 +95,4 @@ case ":$PATH:" in
     printf '\nAdd Phoenix to your PATH, for example in ~/.zshrc or ~/.bashrc:\n  export PATH="%s/bin:$PATH"\n' "$install_dir"
     ;;
 esac
-printf '\nRun this installer again to upgrade. To uninstall, delete %s.\n' "$install_dir"
+printf '\nRun this installer again to upgrade; older versions stay in %s/versions for captures still running on them. To uninstall, delete %s.\n' "$install_dir" "$install_dir"
