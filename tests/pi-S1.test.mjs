@@ -38,6 +38,20 @@ test('S1: capture preserves the native Pi session directory and --continue', asy
     assert.equal(wrapped.status, 0, wrapped.stderr);
     assert.equal(state(wrapped.stdout).sessionFile, sessionFile,
       'The recipe must continue the same existing session as native Pi, not create a new flat-directory session');
+    if (overlay) await rm(overlay, { recursive: true, force: true });
+    overlay = undefined;
+    await mkdir(join(cwd, '.pi'));
+    await writeFile(join(cwd, '.pi', 'mcp.json'), JSON.stringify({ mcpServers: {
+      controlled: { command: process.execPath, args: ['--version'], enabled: false },
+    } }));
+    await writeFile(join(capture, 'capture.json'), JSON.stringify({ routes: ['mcp-proxy', 'cli-proxy'] }));
+    const withProject = spawnSync(process.execPath, [resolve('recipes/pi/run.mjs'), ...args], {
+      ...options, env: { ...env, PHOENIX_CAPTURE: capture, PHOENIX_CWD: cwd },
+    });
+    overlay = /Pi private config overlay: (.+)/.exec(withProject.stderr)?.[1];
+    assert.equal(withProject.status, 0, withProject.stderr);
+    assert.equal(state(withProject.stdout).sessionFile, sessionFile,
+      'The project MCP working-directory overlay must not make --continue forget the original project session');
   } finally {
     if (overlay) await rm(overlay, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });

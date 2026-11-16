@@ -70,6 +70,15 @@ overlay**, as `coverage.jsonl` states. Relative paths use that working directory
 Project trust is still Pi's decision; pass `--approve` only for a project you
 already trust.
 
+Session selectors (`--continue`/`-c`, `--resume`/`-r`, `--session`, and
+`--session-id`) keep the original working directory instead of creating that
+mirror. Pi filters continued sessions by cwd and explicit session selection
+can restore the session's cwd, so a mirror would either forget the session or
+bypass the project proxy. These launches leave project MCP config untouched
+and report its transcript fallback in `coverage.jsonl`; global stdio servers
+that project config does not replace still use the proxy. Do not switch
+sessions during a mirrored launch; start a separate capture with a selector.
+
 `pi-mcp-adapter` replaces built-in MCP when installed. Pass its explicit
 `--mcp-config /path/to/config.json`; the wrapper proxies that file into a private
 copy. Expand adapter imports and disable other config discovery yourself first,
