@@ -203,6 +203,7 @@ export class Copy {
       cal.windows.push(...old.windows); cal.busy.push(...old.busy);
       for (const [k, v] of old.offsets) cal.offsets.set(k, v);
       cal.entry ??= old.entry;
+      cal.hosted ??= old.hosted;
     }
   }
   putEntry(entry) {

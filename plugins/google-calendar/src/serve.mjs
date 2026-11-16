@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { Copy } from "./google.mjs";
+import { Hosted } from "./hosted.mjs";
+import { Unknown } from "./time.mjs";
 import { dialect, payload, seedAll } from "./seed.mjs";
 
 // The working copy. The real Google Calendar MCP server (@cocal/google-calendar-mcp) runs unchanged; only the
@@ -56,6 +58,7 @@ class StdioServer {
 }
 
 const copy = new Copy();
+copy.hosted = new Hosted(copy);
 let cocal, adapter, home, base;
 const answer = (id, value) => console.log(JSON.stringify({ phoenix_plugin: 1, id, status: "answer", value }));
 const reply = (id, status, reason) => console.log(JSON.stringify({ phoenix_plugin: 1, id, status, reason }));
@@ -125,8 +128,16 @@ async function call(params) {
   const args = request.params?.arguments ?? params.args ?? {};
   const kind = dialect(op, args);
   if (!kind) return { status: "unsupported", reason: `${op} is not a Google Calendar tool the copy knows` };
-  if (kind === "google") return { status: "unsupported", reason: `${op} is a tool of Google's hosted Calendar MCP server; the copy has no real answers from that server yet` };
   copy.takeGaps();
+  if (kind === "google") {
+    let value;
+    try { value = copy.hosted.call(op, args); } catch (error) {
+      if (!(error instanceof Unknown)) throw error;
+      return { status: "unsupported", reason: `The calendar copy does not know enough to answer: ${[...new Set(copy.takeGaps())].join("; ") || error.message}` };
+    }
+    const result = value.error ? { content: [{ type: "text", text: value.error }], isError: true } : { content: [{ type: "text", text: JSON.stringify(value) }], isError: false };
+    return { status: "answer", value: { body: Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\n").toString("base64") } };
+  }
   const server = kind === "cocal" ? cocal : await viaAdapter();
   const { id: _id, jsonrpc, ...rest } = await server.request("tools/call", { name: op, arguments: args });
   const response = { jsonrpc, id: request.id, ...rest };

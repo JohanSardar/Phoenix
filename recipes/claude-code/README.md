@@ -25,7 +25,18 @@ and passes a private generated config through `--mcp-config` and
 excluded: export their desired `mcpServers` entries into input files first.
 No original file is edited. With no `--mcp`, no local MCP servers are enabled.
 Plugin-provided and claude.ai/cloud connectors are outside that override and
-must be assessed separately. The script does not claim to capture them.
+must be assessed separately. The script does not claim to capture them live.
+
+`--claudeai-connectors` turns the person's claude.ai connectors on for this run
+only, through the launcher's own `--settings`, even when their settings turn
+them off (`ENABLE_CLAUDEAI_MCP_SERVERS=false`). No settings file is changed.
+Claude Code drops claude.ai connectors under `--strict-mcp-config`, so with this
+option the launcher leaves that flag off, and MCP servers from the person's other
+scopes load as well. All of them stay direct; their calls are recorded through
+the session's transcript only, and `recipe-coverage.json` says so. A replay
+turns them off again in the box (`ENABLE_CLAUDEAI_MCP_SERVERS=false`) and
+replaces each one with a stand-in named as Claude Code named it, for example
+`claude_ai_Google_Calendar`.
 
 The defaults are `gateway,mcp-proxy,cli-proxy,transcript`, except for the
 fallback modes below, which omit `gateway`. `--routes transcript` puts nothing
