@@ -116,18 +116,25 @@ export function readsOnly(command: string, root: string, cwd: string = root, cop
   const tokens = lex(command);
   const last = tokens?.at(-1);
   if (!tokens?.some(token => "text" in token) || (last && "op" in last && last.op !== ";")) return false;
-  const lexically = (path: string) => { const rest = relative(root, path); return rest === "" || (!rest.startsWith("..") && !isAbsolute(rest)); };
-  const base = existsSync(copy) ? realpathSync(copy) : undefined;
-  const inside = (path: string) => {
-    if (path === "/dev/null") return true;
-    if (!lexically(path)) return false;
-    if (!base) return true;
-    let existing = join(copy, relative(root, path)), rest = "";
-    while (!existsSync(existing)) { rest = join(existing.slice(dirname(existing).length + 1), rest); existing = dirname(existing); }
-    const real = relative(base, join(realpathSync(existing), rest));
-    return real === "" || (!real.startsWith("..") && !isAbsolute(real));
+  const top = existsSync(copy) ? realpathSync(copy) : copy;
+  const real = (path: string) => existsSync(path) ? realpathSync(path) : path;
+  const under = (path: string) => { const rest = relative(top, path); return rest === "" || (!rest.startsWith("..") && !isAbsolute(rest)); };
+  const locate = (from: string, path: string): string | undefined => {
+    let at = from, rest = path;
+    if (isAbsolute(path)) {
+      if (path !== root && !path.startsWith(root.endsWith("/") ? root : root + "/")) return undefined;
+      at = top;
+      rest = path.slice(root.length);
+    }
+    for (const part of rest.split("/")) {
+      if (!part || part === ".") continue;
+      at = part === ".." ? dirname(at) : real(join(at, part));
+      if (!under(at)) return undefined;
+    }
+    return at;
   };
-  if (!lexically(cwd)) return false;
+  let here = locate(top, resolve(root, cwd));
+  if (!here) return false;
   const commands: { words: string[]; before?: string; after?: string }[] = [{ words: [] }];
   for (let at = 0; at < tokens.length; at++) {
     const token = tokens[at]!;
@@ -147,8 +154,8 @@ export function readsOnly(command: string, root: string, cwd: string = root, cop
   const changesDirectory = commands.some(({ words }) => words[0] === "cd");
   if (changesDirectory && tokens.some(token => "op" in token && (token.op === "||" || token.op === ";"))) return false;
   for (const { words: [name, ...args], before, after } of commands) {
-    const spec = SPECS[name!];
-    if (!spec) return false;
+    if (!Object.hasOwn(SPECS, name!)) return false;
+    const spec = SPECS[name!]!;
     const parsed = parse(spec, name === "find" ? [] : args);
     if (!parsed) return false;
     let { operands } = parsed;
@@ -174,8 +181,8 @@ export function readsOnly(command: string, root: string, cwd: string = root, cop
       paths.push(operands[0]!);
     }
     if (spec.max !== undefined && operands.length > spec.max) return false;
-    if (!paths.every(path => inside(resolve(cwd, path)))) return false;
-    if (name === "cd") cwd = resolve(cwd, operands[0]!);
+    if (!paths.every(path => path === "/dev/null" || locate(here!, path))) return false;
+    if (name === "cd") here = locate(here, operands[0]!)!;
   }
   return true;
 }
