@@ -89,7 +89,7 @@ process.stdout.write(JSON.stringify({
   at, turn: turn.line, cut_lines: message.line - 1, prompt, time: turn.row.timestamp, cwd: context.cwd,
   model: { provider: "chatgpt", id: context.model, ...(context.effort ? { thinking: context.effort } : {}) },
   loadout: {
-    session: meta.id, started: meta.timestamp, cwd: context.cwd, shell: world.environments?.environments?.local?.shell ?? null, timezone: world.environments?.timezone ?? null,
+    session: meta.id, started: meta.timestamp, cwd: context.cwd, directories: [...new Set(answers.filter(answer => answer.connector === "codex-shell").map(answer => answer.args.cwd).filter(cwd => typeof cwd === "string"))], shell: world.environments?.environments?.local?.shell ?? null, timezone: world.environments?.timezone ?? null,
     agents: { global: split < 0 ? agents : agents.slice(0, split), project: split < 0 ? "" : agents.slice(split + SEPARATOR.length), directory: world.agents_md?.directory ?? null },
     settings: { provider: meta.model_provider, model: context.model, effort: context.effort ?? settings.reasoning_effort ?? null, summary: settings.reasoning_summary ?? null, personality: settings.personality ?? null, service_tier: settings.service_tier ?? null },
     mcp: Object.fromEntries([...servers].map(([server, known]) => [server, [...known.values()]])),

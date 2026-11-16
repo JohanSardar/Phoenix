@@ -14,7 +14,7 @@ mkdirSync(join("/phoenix/out/sessions", day), { recursive: true });
 symlinkSync("/phoenix/out/sessions", join(home, "sessions"));
 writeFileSync(join(home, "sessions", day, own), session.join("\n") + "\n");
 
-mkdirSync(loadout.cwd, { recursive: true });
+for (const directory of [loadout.cwd, ...loadout.directories]) mkdirSync(directory, { recursive: true });
 if (loadout.agents.project) writeFileSync(join(loadout.agents.directory ?? loadout.cwd, "AGENTS.md"), loadout.agents.project);
 const addendum = existsSync("/worktree/AGENTS.md") ? readFileSync("/worktree/AGENTS.md", "utf8").trim() : "";
 const global = [loadout.agents.global, addendum].filter(Boolean).join("\n\n");
