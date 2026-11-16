@@ -4,11 +4,12 @@ import { toolSchema } from "./declaration.mjs";
 
 const VERSIONS = ["0.167.0", "0.169.0"];
 const SEPARATOR = "\n\n--- project-doc ---\n\n";
-const { values } = parseArgs({ options: { at: { type: "string" } } });
+const { values } = parseArgs({ options: { at: { type: "string" }, "from-beginning": { type: "boolean" } } });
+const fromBeginning = !!values["from-beginning"];
 const lines = (await text(process.stdin)).split("\n");
 if (lines.at(-1) === "") lines.pop();
-const at = Number(values.at);
-if (!Number.isInteger(at) || at < 1 || at > lines.length) throw new Error(`--at must be a line of the session (1-${lines.length})`);
+let at = fromBeginning ? undefined : Number(values.at);
+if (!fromBeginning && (!Number.isInteger(at) || at < 1 || at > lines.length)) throw new Error(`--at must be a line of the session (1-${lines.length})`);
 const rows = lines.map((line, index) => ({ line: index + 1, row: JSON.parse(line) }));
 const meta = rows[0]?.row.type === "session_meta" ? rows[0].row.payload : undefined;
 if (!meta || !VERSIONS.includes(meta.cli_version)) throw new Error(`Only Codex sessions from versions ${VERSIONS.join(", ")} are supported`);
@@ -21,8 +22,9 @@ for (const entry of rows) {
   if (row.type === "response_item" && row.payload?.type === "message" && row.payload.role === "user") message = entry;
   if (message && row.type === "event_msg" && row.payload?.type === "item_completed" && row.payload.item?.type === "UserMessage") turns.push({ message, turn: entry });
 }
-const found = turns.findLast(({ message }) => message.line <= at);
-if (!found) throw new Error(`No user message at or before line ${at}; a moment starts at the user turn that holds it`);
+const found = fromBeginning ? turns[0] : turns.findLast(({ message }) => message.line <= at);
+if (!found) throw new Error(fromBeginning ? "The session has no user message" : `No user message at or before line ${at}; a moment starts at the user turn that holds it`);
+at ??= found.message.line;
 ({ message } = found);
 const { turn } = found;
 const content = turn.row.payload.item.content ?? [];
@@ -86,7 +88,7 @@ for (const { row } of rows) {
 
 process.stdout.write(JSON.stringify({
   phoenix_session_moment: 1,
-  at, turn: turn.line, cut_lines: message.line - 1, prompt, time: turn.row.timestamp, cwd: context.cwd,
+  at, turn: turn.line, from_beginning: fromBeginning, cut_lines: message.line - 1, prompt, time: turn.row.timestamp, cwd: context.cwd,
   model: { provider: "chatgpt", id: context.model, ...(context.effort ? { thinking: context.effort } : {}) },
   loadout: {
     session: meta.id, started: meta.timestamp, cwd: context.cwd, directories: [...new Set(answers.filter(answer => answer.connector === "codex-shell").map(answer => answer.args.cwd).filter(cwd => typeof cwd === "string"))], shell: world.environments?.environments?.local?.shell ?? null, timezone: world.environments?.timezone ?? null,
