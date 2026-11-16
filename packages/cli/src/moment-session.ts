@@ -24,12 +24,13 @@ export async function runMomentSessionCommand(args: string[]): Promise<number> {
   if (!out || rest.length || sources.length !== 1 || !v.id || (v.at !== undefined && v["from-beginning"])) throw new Error(USAGE);
   const home = resolve(v.home ?? process.env.PHOENIX_HOME ?? join(homedir(), ".phoenix"));
   let session = v.session, recipePath = v.recipe, at = v.at === undefined ? undefined : Number(v.at), fromBeginning = !!v["from-beginning"], check = v.check, timezone = v.timezone;
-  let answers: SessionAnswer[] = [], marked, madeUp = false, world: Record<string, unknown> | undefined;
+  let answers: SessionAnswer[] = [], marked, madeUp = false, world: Record<string, unknown> | undefined, readOnly: Record<string, string[]> | undefined;
   if (v.mark) {
     const read = await readMark(resolve(v.mark));
     session = read.session; recipePath ??= read.mark.recipe;
     if (at === undefined && !fromBeginning) at = read.mark.line;
     answers = read.services.map((answer, index) => ({ id: `mark-${index + 1}`, ...answer, before_cut: true }));
+    readOnly = read.mark.read_only;
     marked = { at: read.mark.at, ...(read.mark.note ? { note: read.mark.note } : {}), world: read.mark.world };
     world = { files: read.mark.world.files === "saved" ? `saved at the mark, ${read.mark.at}` : "not saved: this moment was marked after the fact, so the replay does not see the files as they were then", services: read.mark.world.services, session: session === read.mark.session.path ? "the live session file, unchanged up to the mark" : "the copy saved at the mark" };
   }
@@ -58,7 +59,7 @@ export async function runMomentSessionCommand(args: string[]): Promise<number> {
     answer.result = JSON.parse(Buffer.from(msg.body!).toString("utf8"));
   }
   const manifest = await createSessionMoment({
-    recipe, session: session!, capture: capture.root, ...(fromBeginning ? { fromBeginning } : { at: at! }), changes, answers, ...(marked ? { marked } : {}), madeUp,
+    recipe, session: session!, capture: capture.root, ...(fromBeginning ? { fromBeginning } : { at: at! }), changes, answers, ...(readOnly ? { readOnly } : {}), ...(marked ? { marked } : {}), madeUp,
     id: v.id, check: check!, out, policy: capture.policy, ...(timezone ? { timezone } : {}),
   });
   process.stdout.write(JSON.stringify({ moment: manifest.id, bundle: out, resumes: manifest.resume, ...(world ? { world } : {}), next: `Read ${out}/check.draft.yaml, then run phoenix check approve ${out}` }) + "\n");

@@ -15,7 +15,7 @@ export async function runMarkCommand(args: string[]): Promise<number> {
   const plugins = v.plugin ?? process.env.PHOENIX_PLUGINS?.split(":").filter(Boolean) ?? [];
   const mcpConfig = v["mcp-config"] ?? process.env.PHOENIX_MCP_CONFIG;
   const { mark, directory } = await markSession({
-    home: resolve(v.home ?? process.env.PHOENIX_HOME ?? join(homedir(), ".phoenix")), recipe, cwd: v.cwd ?? process.cwd(),
+    home: resolve(v.home ?? process.env.PHOENIX_HOME ?? join(homedir(), ".phoenix")), recipe, ...(v.cwd ? { cwd: v.cwd } : {}),
     ...(v.session ? { session: v.session } : {}), ...(v.at !== undefined ? { at: Number(v.at) } : {}), ...(v.note ? { note: v.note } : {}),
     ...(mcpConfig ? { mcpConfig } : {}), plugins,
   });

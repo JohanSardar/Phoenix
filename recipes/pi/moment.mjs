@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
-import { ADAPTER, METADATA, adapterCall, isProxy } from "./adapter.mjs";
+import { ADAPTER, METADATA, adapterCall, isProxy, withoutNulls } from "./adapter.mjs";
 
 const { values } = parseArgs({ options: { at: { type: "string" }, "from-beginning": { type: "boolean" }, change: { type: "string", multiple: true } } });
 const lines = (await text(process.stdin)).split("\n");
@@ -81,7 +81,7 @@ for (const { line, entry } of entries) {
   const call = calls.get(entry.message.toolCallId);
   if (!call) continue;
   const { content, details, isError } = entry.message;
-  const reached = proxies.has(call.name) ? adapterCall(call.name, call.arguments, adapter) : { ...route(call.name), args: call.arguments ?? {} };
+  const reached = proxies.has(call.name) ? adapterCall(call.name, call.arguments, adapter) : { ...route(call.name), args: withoutNulls(call.arguments ?? {}) };
   answers.push({ id: entry.message.toolCallId, line, tool: entry.message.toolName, connector: reached.connector, op: reached.op, args: reached.args, result: { content, isError: !!isError, ...(details ? { details } : {}) }, observed_at: entry.timestamp, before_cut: line < turn.line });
 }
 

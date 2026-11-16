@@ -27,12 +27,13 @@ export interface Mark {
   world: { files: "saved" | "not saved"; services: Record<string, string> };
   project?: { tar: string; root: string };
   services?: string;
+  read_only?: Record<string, string[]>;
 }
 
 export interface MarkOptions {
   home: string;
   recipe: string;
-  cwd: string;
+  cwd?: string;
   session?: string;
   at?: number;
   note?: string;
@@ -63,11 +64,10 @@ async function projectTar(cwd: string): Promise<{ root: string; tar: Buffer }> {
   return { root, tar: Buffer.concat(parts) };
 }
 
-async function serviceReads(o: MarkOptions & { recipeDir: string; descriptor: RecipeDescriptor; bytes: Buffer; line: number }, at: string): Promise<{ status: Record<string, string>; answers: ServiceAnswer[] }> {
-  const status: Record<string, string> = {}, answers: ServiceAnswer[] = [];
-  if (!o.mcpConfig || !o.plugins?.length) return { status, answers };
+async function serviceReads(o: MarkOptions & { recorded: { connector: string; op: string; args: unknown; result: unknown }[] }, at: string): Promise<{ status: Record<string, string>; answers: ServiceAnswer[]; readOnly: Record<string, string[]> }> {
+  const status: Record<string, string> = {}, answers: ServiceAnswer[] = [], readOnly: Record<string, string[]> = {};
+  if (!o.mcpConfig || !o.plugins?.length) return { status, answers, readOnly };
   const servers = (JSON.parse(await readFile(o.mcpConfig, "utf8")) as { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string>; cwd?: string }> }).mcpServers ?? {};
-  let recorded: { connector: string; op: string; args: unknown; result: unknown }[] | undefined;
   for (const plugin of await findPlugins([...o.plugins])) {
     for (const [name, server] of Object.entries(servers)) {
       if (!plugin.descriptor.recognize?.mcp_servers?.includes(name)) continue;
@@ -76,8 +76,7 @@ async function serviceReads(o: MarkOptions & { recipeDir: string; descriptor: Re
       let connection: Awaited<ReturnType<typeof captureConnection>> | undefined;
       try {
         if (!server.command) throw new Error("its MCP entry has no command");
-        recorded ??= (JSON.parse(await run(o.descriptor.resume!.moment, ["--at", String(o.line)], o.recipeDir, o.bytes)) as { answers: { connector: string; op: string; args: unknown; result: unknown }[] }).answers;
-        const own = recorded.filter(answer => answer.connector === name);
+        const own = o.recorded.filter(answer => answer.connector === name);
         const events = own.flatMap((answer, seq) => [
           { v: 1, capture: "mark", stream: "mark", seq: seq * 2, ts: { wall: at }, kind: "call", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${answer.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: seq, method: "tools/call", params: { name: answer.op, arguments: answer.args } }) } },
           { v: 1, capture: "mark", stream: "mark", seq: seq * 2 + 1, ts: { wall: at }, kind: "result", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${answer.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: seq, result: answer.result }) } },
@@ -96,11 +95,12 @@ async function serviceReads(o: MarkOptions & { recipeDir: string; descriptor: Re
           if (reply.result !== undefined) answers.push({ connector: name, op: call.op.slice("tools/call:".length), args: call.args, result: reply.result, observed_at: new Date().toISOString() });
         }
         status[name] = "saved";
+        readOnly[name] = (plugin.descriptor.read_only ?? []).filter(op => op.startsWith("tools/call:")).map(op => op.slice("tools/call:".length));
       } catch (error) { status[name] = `not saved: ${error instanceof Error ? error.message : String(error)}`; }
       finally { connection?.close(); await session?.stop(); await rm(scratch, { recursive: true, force: true }); }
     }
   }
-  return { status, answers };
+  return { status, answers, readOnly };
 }
 
 export async function markSession(o: MarkOptions): Promise<{ mark: Mark; directory: string }> {
@@ -108,8 +108,7 @@ export async function markSession(o: MarkOptions): Promise<{ mark: Mark; directo
   const descriptor = parse(await readFile(recipe, "utf8")) as RecipeDescriptor;
   if (!descriptor.resume) throw new Error(`The ${descriptor.name} recipe cannot put its harness back in a moment`);
   const recipeDir = dirname(recipe);
-  const cwd = resolve(o.cwd);
-  const path = o.session ? resolve(o.session) : descriptor.resume.locate ? (await run(descriptor.resume.locate, ["--cwd", cwd], recipeDir)).trim() : undefined;
+  const path = o.session ? resolve(o.session) : descriptor.resume.locate ? (await run(descriptor.resume.locate, ["--cwd", resolve(o.cwd ?? ".")], recipeDir)).trim() : undefined;
   if (!path) throw new Error(`The ${descriptor.name} recipe cannot find its live session; pass --session <file>`);
   const at = new Date().toISOString();
   const bytes = await readFile(path);
@@ -118,6 +117,8 @@ export async function markSession(o: MarkOptions): Promise<{ mark: Mark; directo
   if (!lines) throw new Error("The session has no complete line yet");
   if (o.at !== undefined && (!Number.isInteger(o.at) || o.at < 1 || o.at > lines)) throw new Error(`--at must be a line of the session (1-${lines})`);
   const live = o.at === undefined;
+  const reading = JSON.parse(await run(descriptor.resume.moment, ["--at", String(o.at ?? lines)], recipeDir, complete)) as { cwd?: string; answers: { connector: string; op: string; args: unknown; result: unknown }[] };
+  const cwd = resolve(o.cwd ?? reading.cwd ?? ".");
   const id = `${at.replace(/[-:]/g, "").replace(/\..+$/, "")}-${randomUUID().slice(0, 8)}`;
   const directory = join(o.home, "marks", id);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -133,8 +134,9 @@ export async function markSession(o: MarkOptions): Promise<{ mark: Mark; directo
     await writeFile(join(directory, "project.tar"), project.tar, { mode: 0o600 });
     mark.project = { tar: "project.tar", root: project.root };
     mark.world.files = "saved";
-    const services = await serviceReads({ ...o, recipeDir, descriptor, bytes: complete, line: mark.line }, at);
+    const services = await serviceReads({ ...o, recorded: reading.answers }, at);
     mark.world.services = services.status;
+    if (Object.keys(services.readOnly).length) mark.read_only = services.readOnly;
     if (services.answers.length) {
       await writeFile(join(directory, "services.json"), JSON.stringify(services.answers) + "\n", { mode: 0o600 });
       mark.services = "services.json";

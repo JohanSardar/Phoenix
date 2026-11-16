@@ -17,6 +17,7 @@ export interface SessionMomentOptions {
   fromBeginning?: boolean;
   changes?: readonly { line: number; file: string }[];
   answers?: readonly SessionAnswer[];
+  readOnly?: Readonly<Record<string, readonly string[]>>;
   marked?: NonNullable<MomentManifest["resume"]>["marked"];
   madeUp?: boolean;
   id: string;
@@ -58,7 +59,7 @@ export async function createSessionMoment(o: SessionMomentOptions): Promise<Mome
   if (!mark) throw new Error(`The imported session has no event for line ${reading.at}`);
   const prepared = await prepareSnapshotMoment({ capture: o.capture, mark: eventId(mark), start: "mark", id: o.id, connectors: [], check: o.check, workdir: false, prompt: reading.prompt, ...(o.timezone ? { timezone: o.timezone } : {}) });
   const connectors: NonNullable<MomentManifest["connectors"]> = {};
-  for (const name of new Set(reading.answers.map(a => a.connector))) connectors[name] = { surface: "mcp", routes: ["transcript"], tier: "recorded", origin: reading.answers.every(a => a.connector !== name || a.world) ? "seeded" : "captured", read_only: (reading.read_only?.[name] ?? []).map(op => ({ op: `tools/call:${op}`, source: "annotation" as const })), data: [{ path: "data/run.jsonl", kind: "run-evidence" }] };
+  for (const name of new Set(reading.answers.map(a => a.connector))) connectors[name] = { surface: "mcp", routes: ["transcript"], tier: "recorded", origin: reading.answers.every(a => a.connector !== name || a.world) ? "seeded" : "captured", read_only: [...(o.readOnly?.[name] ?? []).map(op => ({ op: `tools/call:${op}`, source: "plugin" as const })), ...(reading.read_only?.[name] ?? []).filter(op => !o.readOnly?.[name]?.includes(op)).map(op => ({ op: `tools/call:${op}`, source: "annotation" as const }))], data: [{ path: "data/run.jsonl", kind: "run-evidence" }] };
   const manifest: MomentManifest = {
     ...prepared.manifest, clock: { time: reading.time, timezone: prepared.manifest.clock!.timezone }, model: { id: `${reading.model.provider}/${reading.model.id}` }, connectors,
     resume: {

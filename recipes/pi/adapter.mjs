@@ -3,6 +3,7 @@
 // These helpers turn such a call back into the server and tool it reaches, so Phoenix answers it as that server would.
 
 export const ADAPTER = "pi-mcp-adapter";
+export const withoutNulls = args => args && typeof args === "object" && !Array.isArray(args) ? Object.fromEntries(Object.entries(args).filter(([, value]) => value !== null)) : args;
 export const METADATA = ["status", "server", "search", "describe", "instructions", "connect"];
 const MODES = ["action", "connect", "describe", "instructions", "search", "server"];
 const plain = name => name.replace(/[^A-Za-z0-9]/g, "_");
