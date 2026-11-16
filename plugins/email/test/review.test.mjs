@@ -88,3 +88,28 @@ test("S4: updating an HTML draft subject preserves its body", async t => {
   const updated = payload(await call("get_draft", { draftId: draft.id }));
   assert.equal(updated.htmlBody, htmlBody);
 });
+
+test("S2b: metadata-only messages also make full-text search unknown", async t => {
+  const call = await serve(t, {
+    answers: [{
+      op: "tools/call:get_message", args: { messageId: message.id, messageFormat: "METADATA_ONLY" },
+      observed_at: now, result: { structuredContent: {
+        id: message.id, threadId: message.threadId, labelIds: ["INBOX"],
+        internalDate: message.internalDate, sender: "sender@example.com",
+      } },
+    }],
+  });
+  const reply = await call("search_threads", { query: "body-only-needle" });
+  assert.equal(reply.status, "unsupported", JSON.stringify(reply));
+});
+
+test("S5: sending a new draft makes its fully known thread readable", async t => {
+  const call = await serve(t);
+  const draft = payload(await call("create_draft", {
+    to: ["test@example.com"], subject: "[phoenix-test] send draft", body: "Draft body",
+  }));
+  const sent = payload(await call("send_message", { draftId: draft.id }));
+  const thread = payload(await call("get_thread", { threadId: sent.threadId }));
+  assert.equal(thread.messageCount, 1);
+  assert.equal(thread.messages[0].plaintextBody, "Draft body");
+});

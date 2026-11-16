@@ -222,7 +222,8 @@ export class Mailbox {
       if (message.labelIds.includes("UNREAD")) d.messagesUnread++;
     }
     this.countThread(message.threadId, before);
-    if (!message.labelIds.includes("DRAFT") && (this.threadCounts.has(message.threadId) || message.threadId === message.id)) this.threadCounts.set(message.threadId, (this.threadCounts.get(message.threadId) ?? 0) + 1);
+    const draft = message.labelIds.includes("DRAFT");
+    if (this.threadCounts.has(message.threadId) || message.threadId === message.id) this.threadCounts.set(message.threadId, (this.threadCounts.get(message.threadId) ?? 0) + (draft ? 0 : 1));
     this.changes.push({ id: message.id, added: true });
   }
 

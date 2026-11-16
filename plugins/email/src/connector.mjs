@@ -102,7 +102,11 @@ export class Connector {
     const { match, mentionsBin, unknown } = compileQuery(a.query ?? "", this.box, nowMs);
     const visible = m => !m.labelIds.includes("DRAFT") && (a.includeTrash || mentionsBin || (!m.labelIds.includes("TRASH") && !m.labelIds.includes("SPAM")));
     const threads = new Map();
-    for (const m of this.box.messages.values()) if (visible(m) && knows(m, "minimal") && match(m)) threads.set(m.threadId, Math.max(threads.get(m.threadId) ?? 0, Number(m.internalDate ?? 0)));
+    for (const m of this.box.messages.values()) {
+      if (!visible(m) || !match(m)) continue;
+      if (!knows(m, "minimal")) throw new Unsupported(`the copy cannot show message ${m.id}, which the query matches`);
+      threads.set(m.threadId, Math.max(threads.get(m.threadId) ?? 0, Number(m.internalDate ?? 0)));
+    }
     if (unknown()) throw new Unsupported("the query searches text of messages whose content the copy does not hold");
     const order = [...threads.entries()].sort((x, y) => y[1] - x[1]).map(([id]) => id);
     if (!order.length) return {};
