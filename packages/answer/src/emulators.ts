@@ -1,9 +1,10 @@
-import { startServingPlugin, type InstalledPlugin, type ServingOptions, type ServingPlugin } from "@phoenix/plugin-host";
+import { PluginProcessError, startServingPlugin, type InstalledPlugin, type ServingOptions, type ServingPlugin } from "@phoenix/plugin-host";
 import { canonicalJson } from "@phoenix/wire";
 import type { Answer, Call, Miss } from "./types.ts";
 
 export interface EmulatorConfig { plugin: InstalledPlugin; options: ServingOptions }
 export interface EmulatorDifference { connector: string; op: string; expected: string; actual: string }
+export class EmulatorStartError extends Error {}
 
 export class Emulators {
   readonly #plugins = new Map<string, ServingPlugin>();
@@ -22,8 +23,10 @@ export class Emulators {
     try {
       for (const { plugin, options } of configs) {
         const connector = plugin.descriptor.connector;
-        if (world.#plugins.has(connector)) throw new Error(`Two emulator plugins configured for ${connector}`);
-        world.#plugins.set(connector, await startServingPlugin(plugin, options, now().toISOString()));
+        if (world.#plugins.has(connector)) throw new EmulatorStartError(`Two emulator plugins configured for ${connector}`);
+        world.#plugins.set(connector, await startServingPlugin(plugin, options, now().toISOString()).catch(error => {
+          throw error instanceof PluginProcessError ? new EmulatorStartError(`The ${connector} plugin could not start: ${error.message}`) : error;
+        }));
       }
       return world;
     } catch (error) { await world.close(); throw error; }
