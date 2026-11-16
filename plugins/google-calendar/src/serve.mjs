@@ -70,11 +70,31 @@ function accounts(answers) {
   return names.size ? [...names] : ["normal"];
 }
 
+// A Snapshot is either { answers, adapter? } (or a bare answers array), or the resume path's JSON Lines of session
+// call/result events, each carrying its JSON-RPC message in body.inline.
+function readSnapshot(text) {
+  const lines = text.split("\n").filter(line => line.trim());
+  const events = lines.length > 0 && lines.every(line => { try { return typeof JSON.parse(line).kind === "string"; } catch { return false; } });
+  if (!events) {
+    const snapshot = JSON.parse(text);
+    return Array.isArray(snapshot) ? { answers: snapshot } : { answers: snapshot.answers ?? [], adapter: snapshot.adapter };
+  }
+  const calls = new Map(), answers = [];
+  for (const line of lines) {
+    const event = JSON.parse(line);
+    const message = typeof event.body?.inline === "string" ? JSON.parse(event.body.inline) : undefined;
+    if (!message) continue;
+    if (event.kind === "call") calls.set(message.id, { op: message.params?.name ?? String(event.op).replace(/^tools\/call:/, ""), args: message.params?.arguments ?? {} });
+    else if (event.kind === "result" && calls.has(message.id) && message.result) answers.push({ ...calls.get(message.id), result: message.result, observed_at: event.ts?.wall });
+  }
+  return { answers };
+}
+
 async function initialize(params) {
   let answers = [], adapterTarget = { calendarId: "primary", account: undefined };
   if (params.snapshot) {
-    const snapshot = JSON.parse(await readFile(params.snapshot, "utf8"));
-    answers = Array.isArray(snapshot) ? snapshot : snapshot.answers ?? [];
+    const snapshot = readSnapshot(await readFile(params.snapshot, "utf8"));
+    answers = snapshot.answers;
     if (snapshot.adapter) adapterTarget = { ...adapterTarget, ...snapshot.adapter };
   }
   seedAll(copy, answers, adapterTarget);
