@@ -54,8 +54,9 @@ Phoenix answers the tool calls from the session's own results:
 - Each MCP server of the session is replaced by `mcp-stand-in.mjs`. It offers
   the server's tools with the descriptions the session saved, and sends every
   call to Phoenix.
-- Codex runs shell commands with `zsh -lc`. In the box, `zsh` is
-  `shell.mjs`, which sends the command to Phoenix instead of running it.
+- Codex runs shell commands with `zsh -lc`. In the box, `zsh`, `bash` and,
+  for Codex only, `sh` are `shell.mjs`, which sends the command to Phoenix
+  instead of running it.
 
 ### The harness
 
@@ -93,8 +94,6 @@ Put the image ID and the path to `recipe.yaml` in the Workbench settings.
   replays stop early. Ticket T11 (JOH-55) owns the fix, for every harness.
 - The box runs Codex 0.169.0. Its own tool descriptions and base instructions
   can differ from the ones in an older session.
-- If the LLM asks for `/bin/sh` as the shell, the command runs in the box
-  instead of getting the session's result. The box needs its real `sh`.
 - Other sites on chatgpt.com can be reached from the box.
 - A user turn with images or files can't be a moment yet.
 - The resumed run uses the real clock.

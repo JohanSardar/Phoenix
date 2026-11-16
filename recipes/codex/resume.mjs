@@ -38,7 +38,7 @@ if (profile) writeFileSync(join(home, "harness.config.toml"), readFileSync("/wor
 
 const { LD_PRELOAD: _, ...env } = process.env;
 const child = spawn("codex", ["exec", ...(profile ? ["-p", "harness"] : []), "fork", loadout.session, "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-"], {
-  cwd: loadout.cwd, stdio: ["pipe", "inherit", "inherit"], env: { ...env, CODEX_HOME: home, SHELL: "/bin/zsh" },
+  cwd: loadout.cwd, stdio: ["pipe", "inherit", "inherit"], env: { ...env, CODEX_HOME: home, SHELL: "/bin/zsh", PHOENIX_CODEX_SHELL: "1" },
 });
 child.stdin.end(moment.prompt);
 const code = await new Promise(resolve => child.once("close", code => resolve(code ?? 1)));
