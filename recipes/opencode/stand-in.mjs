@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,12 +14,15 @@ const native = result => {
   return { output: result.output ?? (result.content ?? []).map(block => block.text ?? "").join("\n"), title: extra.title ?? "", metadata: extra.metadata ?? {}, ...(extra.attachments ? { attachments: extra.attachments } : {}) };
 };
 
-const printed = ({ stdout, stderr, exit_code }) => {
+const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+const printing = reply => {
   const folder = mkdtempSync(join(tmpdir(), "phoenix-output-"));
-  const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
-  writeFileSync(join(folder, "stdout"), stdout);
-  writeFileSync(join(folder, "stderr"), stderr);
-  return `cat ${quote(join(folder, "stdout"))}; cat ${quote(join(folder, "stderr"))} >&2; exit ${exit_code}`;
+  return (({ command, outputs }) => command.replace(/\u0000(\d+)\u0000/g, (_, i) => {
+  const out = join(folder, i + ".out"), err = join(folder, i + ".err");
+  writeFileSync(out, outputs[i].stdout);
+  writeFileSync(err, outputs[i].stderr);
+  return "(cat " + quote(out) + "; cat " + quote(err) + " >&2; exit " + outputs[i].exit_code + ")";
+}))(reply);
 };
 
 export const PhoenixStandIn = async () => {
@@ -43,8 +47,9 @@ export const PhoenixStandIn = async () => {
       const reply = await ask("tools/call", name, args, ctx.callID, {}, ctx.abort);
       if (reply.error) throw new Error("Phoenix stopped this replay: " + reply.error.message);
       if (reply.command_output) {
-        const output = reply.command_output.stdout + reply.command_output.stderr;
-        return { output, title: args.description ?? "", metadata: { output, exit: reply.command_output.exit_code, description: args.description ?? "" } };
+        const ran = spawnSync("sh", ["-c", printing(reply.command_output)], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+        const output = (ran.stdout ?? "") + (ran.stderr ?? "");
+        return { output, title: args.description ?? "", metadata: { output, exit: ran.status ?? 1, description: args.description ?? "" } };
       }
       if (reply.result.isError) throw new Error(reply.result.error ?? native(reply.result).output);
       return native(reply.result);
@@ -57,7 +62,7 @@ export const PhoenixStandIn = async () => {
       const reply = await ask("tools/call", name, output.args, callID);
       if (reply.error) throw new Error("Phoenix stopped this replay: " + reply.error.message);
       if (reply.run_in_box) { pending.set(callID, output.args); return; }
-      if (reply.command_output) { output.args.command = printed(reply.command_output); return; }
+      if (reply.command_output) { output.args.command = printing(reply.command_output); return; }
       if (reply.result.isError) throw new Error(reply.result.error ?? native(reply.result).output);
       output.result = native(reply.result);
     },

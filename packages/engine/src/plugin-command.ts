@@ -4,9 +4,17 @@ import { lex } from "./read-only-shell.ts";
 
 export type CommandPlugin = Pick<PluginDescriptor, "connector" | "recognize" | "read_only">;
 export interface RecognizedCommand { connector: string; argv: string[]; stdin?: string; readOnly: boolean }
+/**
+ * calls are the plugin commands in the line, in order. around is the line with the i-th plugin command written as
+ * a NUL, i, NUL marker and every other word single-quoted, so it reads as the same shell line once each marker is
+ * replaced by something that prints that command's output; a line that is one plugin command alone is just its marker.
+ */
+export interface RecognizedLine { calls: RecognizedCommand[]; around: string }
 
+export const marker = (i: number): string => `\u0000${i}\u0000`;
 const HEREDOC = /<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|([A-Za-z_][A-Za-z0-9_]*))[ \t]*\n/;
 const ESCAPES: Record<string, string> = { n: "\n", t: "\t", "\\": "\\", '"': '"', "'": "'" };
+const quote = (word: string) => "'" + word.replaceAll("'", "'\\''") + "'";
 
 function heredoc(command: string): { line: string; stdin?: string } | undefined {
   const opened = HEREDOC.exec(command);
@@ -29,8 +37,9 @@ function printed([name, ...args]: string[]): string | undefined {
   }
   if (name !== "printf" || args[0] === undefined || args[0].startsWith("-")) return undefined;
   const [format, ...values] = args;
-  let out = "", at = 0;
+  let out = "", at = 0, from = -1;
   do {
+    from = at;
     for (let i = 0; i < format.length; i++) {
       const c = format[i]!, next = format[i + 1];
       if (c === "\\" && next !== undefined && Object.hasOwn(ESCAPES, next)) { out += ESCAPES[next]; i++; }
@@ -39,31 +48,55 @@ function printed([name, ...args]: string[]): string | undefined {
       else if (c === "%" || c === "\\") return undefined;
       else out += c;
     }
-  } while (at < values.length && format.includes("%s"));
+  } while (at < values.length && at > from);
   return out;
 }
 
 /**
- * Which plugin a shell command line belongs to, as the argv and stdin that plugin's command would get, and whether
- * the plugin's read-only rules call it a read. It reads only the command line, so it works on a session's past
- * commands as well as new ones. A command it cannot take apart exactly (expansions, redirections, chains, or a
- * pipe into anything but the plugin's command) belongs to no plugin.
+ * The plugin commands in a shell command line: for each, which plugin it belongs to, the argv and stdin that
+ * plugin's command gets, and whether the plugin's read-only rules call it a read. It reads only the command line,
+ * so it works on a session's past commands as well as new ones. A line with no plugin command, or one it cannot take
+ * apart exactly (expansions, input redirections, or input piped into a plugin command from anything but echo or
+ * printf of plain text), gives undefined.
  */
-export function recognizeCommand(command: string, plugins: readonly CommandPlugin[]): RecognizedCommand | undefined {
+export function recognizeCommand(command: string, plugins: readonly CommandPlugin[]): RecognizedLine | undefined {
+  if (command.includes("\u0000")) return undefined;
   const split = heredoc(command);
   const tokens = split && lex(split.line.trimEnd());
-  if (!tokens) return undefined;
-  const segments: string[][] = [[]];
-  for (const token of tokens) {
-    if ("text" in token) segments.at(-1)!.push(token.text);
-    else if (token.op === "|" && segments.at(-1)!.length) segments.push([]);
-    else return undefined;
+  if (!tokens?.length) return undefined;
+  type Simple = { words: string[]; redirects: string[]; before?: string };
+  const simple: Simple[] = [{ words: [], redirects: [] }];
+  for (let at = 0; at < tokens.length; at++) {
+    const token = tokens[at]!;
+    if ("text" in token) { simple.at(-1)!.words.push(token.text); continue; }
+    if (["|", "&&", "||", ";"].includes(token.op)) {
+      if (!simple.at(-1)!.words.length) return undefined;
+      simple.push({ words: [], redirects: [], before: token.op });
+      continue;
+    }
+    const target = tokens[at + 1];
+    if (!target || !("text" in target) || token.op.includes("<")) return undefined;
+    simple.at(-1)!.redirects.push(token.op, quote(target.text));
+    at++;
   }
-  const argv = segments.at(-1)!;
-  const plugin = plugins.find(p => argv[0] !== undefined && p.recognize.commands?.includes(argv[0]));
-  if (!plugin || segments.length > 2 || (segments.length === 2 && split!.stdin !== undefined)) return undefined;
-  const stdin = segments.length === 2 ? printed(segments[0]!) : split!.stdin;
-  if (segments.length === 2 && stdin === undefined) return undefined;
-  const readOnly = isReadOnly({ read_only: (plugin.read_only ?? []).map(op => ({ op, source: "plugin" as const })) }, "cli", argv[0]!, { argv });
-  return { connector: plugin.connector, argv, ...(stdin === undefined ? {} : { stdin }), readOnly };
+  if (!simple.at(-1)!.words.length) { if (simple.at(-1)!.before !== ";") return undefined; simple.pop(); }
+  const owner = (words: string[]) => plugins.find(p => words[0] !== undefined && p.recognize.commands?.includes(words[0]));
+  const calls: RecognizedCommand[] = [];
+  const parts: string[] = [];
+  for (const [i, { words, redirects, before }] of simple.entries()) {
+    const plugin = owner(words);
+    if (before) parts.push(before);
+    if (!plugin) { parts.push([...words.map(quote), ...redirects].join(" ")); continue; }
+    let stdin = split!.stdin;
+    if (stdin !== undefined && simple.length > 1) return undefined;
+    if (before === "|") {
+      const source = simple[i - 1]!;
+      stdin = source.before === "|" || source.redirects.length || owner(source.words) ? undefined : printed(source.words);
+      if (stdin === undefined) return undefined;
+    }
+    const readOnly = isReadOnly({ read_only: (plugin.read_only ?? []).map(op => ({ op, source: "plugin" as const })) }, "cli", words[0]!, { argv: words });
+    calls.push({ connector: plugin.connector, argv: words, ...(stdin === undefined ? {} : { stdin }), readOnly });
+    parts.push([marker(calls.length - 1), ...redirects].join(" "));
+  }
+  return calls.length ? { calls, around: parts.join(" ") } : undefined;
 }
