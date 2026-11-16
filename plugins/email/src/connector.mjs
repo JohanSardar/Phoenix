@@ -4,7 +4,7 @@ import { buildMessage, rfc2822 } from "./mime.mjs";
 import { BODY_KEYS, compileQuery, htmlText, keysFor, knowsFor, snippetOf, sortLabels } from "./mailbox.mjs";
 
 export const READ_ONLY = ["search_threads", "get_thread", "get_message", "list_labels", "list_drafts", "get_draft", "download_gmail_attachment"];
-export const TOOLS = [...READ_ONLY, "send_message", "reply", "forward", "create_draft", "update_draft", "delete_draft", "label_message", "unlabel_message", "label_thread", "unlabel_thread", "update_message_labels", "trash_message", "untrash_message", "trash_thread", "untrash_thread", "mark_message_spam", "unmark_message_spam", "mark_thread_spam", "unmark_thread_spam", "apply_sensitive_message_label", "apply_sensitive_thread_label", "create_label", "update_label", "delete_label"];
+export const TOOLS = [...READ_ONLY, "send_message", "reply", "forward", "create_draft", "update_draft", "delete_draft", "label_message", "unlabel_message", "label_thread", "unlabel_thread", "update_message_labels", "trash_message", "untrash_message", "trash_thread", "untrash_thread", "mark_message_spam", "unmark_message_spam", "mark_thread_spam", "unmark_thread_spam", "apply_sensitive_message_label", "apply_sensitive_thread_label"];
 
 export class Unsupported extends Error {}
 export class ToolError extends Error {}
@@ -99,10 +99,11 @@ export class Connector {
   }
 
   search(a, nowMs) {
-    const { match, mentionsBin } = compileQuery(a.query ?? "", this.box, nowMs);
+    const { match, mentionsBin, unknown } = compileQuery(a.query ?? "", this.box, nowMs);
     const visible = m => !m.labelIds.includes("DRAFT") && (a.includeTrash || mentionsBin || (!m.labelIds.includes("TRASH") && !m.labelIds.includes("SPAM")));
     const threads = new Map();
     for (const m of this.box.messages.values()) if (visible(m) && knows(m, "minimal") && match(m)) threads.set(m.threadId, Math.max(threads.get(m.threadId) ?? 0, Number(m.internalDate ?? 0)));
+    if (unknown()) throw new Unsupported("the query searches text of messages whose content the copy does not hold");
     const order = [...threads.entries()].sort((x, y) => y[1] - x[1]).map(([id]) => id);
     if (!order.length) return {};
     const size = Math.min(a.pageSize ?? 20, 50), start = a.pageToken ? Number(Buffer.from(a.pageToken, "base64url").toString()) : 0;
@@ -238,7 +239,8 @@ export class Connector {
     const old = this.draftMessage(a.draftId);
     const original = old.replyTo ? this.box.messages.get(old.replyTo) : undefined;
     const body = a.body ?? old.fields.plaintextBody;
-    const html = original ? `<html><body><div dir="auto">${escape(body ?? "").replace(/\n/g, "<br/>")}</div>${this.quote(original)}</body></html>` : undefined;
+    const keep = a.body === undefined && a.htmlBody === undefined ? old.fields.htmlBody : undefined;
+    const html = keep ?? (original ? `<html><body><div dir="auto">${escape(body ?? "").replace(/\n/g, "<br/>")}</div>${this.quote(original)}</body></html>` : undefined);
     this.box.remove(old);
     this.box.gone.delete(old.id);
     const m = this.compose({ to: a.to ?? old.fields.toRecipients ?? [], cc: a.cc ?? old.fields.ccRecipients ?? [], bcc: a.bcc ?? old.fields.bccRecipients ?? [], subject: a.subject ?? old.fields.subject ?? "", body, htmlBody: a.htmlBody, html, threadId: old.threadId, labelIds: ["DRAFT"], nowMs });

@@ -187,6 +187,7 @@ export class Mailbox {
       d.messagesUnread += Number(after.has(l) && unreadAfter) - Number(before.has(l) && unreadBefore);
     }
     this.countThread(message.threadId, threadBefore);
+    if (before.has("DRAFT") !== after.has("DRAFT") && this.threadCounts.has(message.threadId)) this.threadCounts.set(message.threadId, this.threadCounts.get(message.threadId) + (after.has("DRAFT") ? -1 : 1));
     this.changes.push({ id: message.id, labelIds: message.labelIds });
     return true;
   }
@@ -221,7 +222,7 @@ export class Mailbox {
       if (message.labelIds.includes("UNREAD")) d.messagesUnread++;
     }
     this.countThread(message.threadId, before);
-    if (this.threadCounts.has(message.threadId) || message.threadId === message.id) this.threadCounts.set(message.threadId, (this.threadCounts.get(message.threadId) ?? 0) + 1);
+    if (!message.labelIds.includes("DRAFT") && (this.threadCounts.has(message.threadId) || message.threadId === message.id)) this.threadCounts.set(message.threadId, (this.threadCounts.get(message.threadId) ?? 0) + 1);
     this.changes.push({ id: message.id, added: true });
   }
 
@@ -235,7 +236,7 @@ export class Mailbox {
       if (message.labelIds.includes("UNREAD")) d.messagesUnread--;
     }
     this.countThread(message.threadId, before);
-    if (this.threadCounts.has(message.threadId)) this.threadCounts.set(message.threadId, this.threadCounts.get(message.threadId) - 1);
+    if (!message.labelIds.includes("DRAFT") && this.threadCounts.has(message.threadId)) this.threadCounts.set(message.threadId, this.threadCounts.get(message.threadId) - 1);
     this.changes.push({ id: message.id, removed: true });
   }
 
@@ -296,10 +297,16 @@ export function compileQuery(query, mailbox, nowMs) {
   const date = value => { const [y, mo, d] = value.split(/[/-]/).map(Number); return Date.UTC(y, (mo ?? 1) - 1, d ?? 1); };
   const age = value => { const n = Number(value.slice(0, -1)), unit = value.at(-1); return n * ({ d: 86400e3, m: 30 * 86400e3, y: 365 * 86400e3, h: 3600e3 }[unit] ?? 86400e3); };
   const people = (m, keys) => keys.flatMap(k => { const v = m.fields[k]; return Array.isArray(v) ? v : v ? [v] : []; }).concat(keys.includes("sender") ? (m.fields.addressDisplayNames ?? []).map(a => a.displayName) : []).join(" ");
+  let unknown = false;
+  const text = (m, haystack, value) => {
+    if (contains(haystack, value)) return true;
+    if (!m.know.has("body") && !(m.raw && !m.rawWritten)) unknown = true;
+    return false;
+  };
   const term = t => {
     const op = /^([A-Za-z_]+):(.*)$/.exec(t);
     const value = op ? op[2].replace(/^"(.*)"$/, "$1").replace(/^\((.*)\)$/, "$1") : t.replace(/^"(.*)"$/, "$1");
-    if (!op) return m => contains([m.fields.subject, m.fields.plaintextBody ?? htmlText(m.fields.htmlBody ?? ""), m.fields.snippet, people(m, ["sender", "toRecipients", "ccRecipients"])].join(" "), value);
+    if (!op) return m => text(m, [m.fields.subject, m.fields.plaintextBody ?? htmlText(m.fields.htmlBody ?? ""), m.fields.snippet, people(m, ["sender", "toRecipients", "ccRecipients"])].join(" "), value);
     const key = op[1].toLowerCase();
     const v = value.toLowerCase();
     const has = l => m => m.labelIds.includes(l);
@@ -319,12 +326,12 @@ export function compileQuery(query, mailbox, nowMs) {
       case "newer_than": return m => Number(m.internalDate) >= nowMs - age(v);
       case "older_than": return m => Number(m.internalDate) < nowMs - age(v);
       case "filename": return m => (m.fields.attachments ?? []).some(a => (a.filename ?? "").toLowerCase().includes(v));
-      default: return m => contains(JSON.stringify(m.fields), value);
+      default: return m => text(m, JSON.stringify(m.fields), value);
     }
   };
   const f = tokens.length ? parseOr() : () => true;
   const mentionsBin = /\bin:(trash|spam|anywhere)\b/i.test(query ?? "") || /\blabel:(trash|spam)\b/i.test(query ?? "");
-  return { match: f, mentionsBin };
+  return { match: f, mentionsBin, unknown: () => unknown };
 }
 
 export const knowsFor = format => format === "RAW" ? "raw" : format === "METADATA_ONLY" ? "metadata" : format === "MINIMAL" ? "minimal" : "body";
