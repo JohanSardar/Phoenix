@@ -11,6 +11,8 @@
     "@phoenix/store": "workspace:*",
     "@phoenix/checks": "workspace:*",
     "@phoenix/fidelity": "workspace:*",
-    "@phoenix/formats": "workspace:*"
+    "@phoenix/formats": "workspace:*",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "yaml": "^2.9.1"
   }
 }
