@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "24.22.3"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: git clean -fdx && pnpm install --prod --frozen-lockfile
+      - run: scripts/build-release.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/dist"
+      - name: Smoke-test the Linux x64 archive
+        run: |
+          tar -xzf "$RUNNER_TEMP/dist/phoenix-linux-x64.tar.gz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/phoenix/node/bin/node" "$RUNNER_TEMP/phoenix/app/packages/cli/src/phoenix.ts" --help
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/dist/* --title "Phoenix $GITHUB_REF_NAME" --generate-notes --verify-tag
+
+  verify:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install the published release with its own installer
+        env:
+          PHOENIX_VERSION: ${{ github.ref_name }}
+          INSTALLER: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/install.sh
+        run: |
+          HOME=$(mktemp -d)
+          export HOME
+          curl -fsSL "$INSTALLER" | sh
+          "$HOME/.phoenix/bin/phoenix" --help
