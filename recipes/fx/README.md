@@ -13,7 +13,7 @@ docker build -f recipes/fx/resume.Dockerfile -t phoenix-fx-resume:0.0.16 recipes
 docker image inspect phoenix-fx-resume:0.0.16 --format '{{.Id}}'
 ```
 
-The image builds fx 0.0.16 from its own source, with `stand-in.patch`. That patch sends every tool call, fx's own tools and MCP tools alike, to `tool.mjs`, which asks Phoenix for the answer. Nothing else in fx changes.
+The image builds fx 0.0.16 from its own source, with `stand-in.patch`. That patch sends every tool call, fx's own tools (file edits included) and MCP tools alike, to `tool.mjs`, which asks Phoenix for the answer. Nothing else in fx changes.
 
 Make the moment from the session's `log.jsonl`. `--at` is a line in the log, and the moment starts at the turn that holds it:
 
@@ -22,7 +22,7 @@ phoenix moment create --session ~/.fx/sessions/v2/SESSION_ID/log.jsonl \
   --recipe recipes/fx/recipe.yaml --at LINE --id ID --check check.yaml OUT
 ```
 
-Phoenix also copies the session's `blobs/` folder, which holds the full tool outputs, with secrets stripped. Blobs it can't scan, such as fx's binary command replays, are left out. The original session is never changed.
+Phoenix also copies the session's `blobs/` folder, which holds the full tool outputs, with secrets stripped. Blobs it can't scan, such as fx's binary command replays, are left out. A tool call whose full output was left out gets no answer, so a replay that makes that call again stops there. The original session is never changed.
 
 The harness is a folder with `run: { resume: {} }` in its `phoenix.harness.yaml`. Three files in it change how fx acts:
 
