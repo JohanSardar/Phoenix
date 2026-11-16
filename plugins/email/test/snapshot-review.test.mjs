@@ -43,9 +43,9 @@ async function serve(t, snapshot) {
   };
 }
 
-async function listedMail(t) {
+async function listedMail(t, recipient = "Test Recipient") {
   const raw = [
-    "From: Sender Name <sender@example.com>", "To: Test Recipient <test@example.com>",
+    "From: Sender Name <sender@example.com>", `To: ${JSON.stringify(recipient)} <test@example.com>`,
     "Subject: [phoenix-test] named recipient", "Date: Mon, 16 Nov 2026 12:00:00 +0000",
     "Message-ID: <phoenix-test@example.com>", "Content-Type: text/plain; charset=UTF-8", "", "Synthetic body",
   ].join("\r\n");
@@ -54,7 +54,7 @@ async function listedMail(t) {
     labelIds: ["INBOX"], uids: { INBOX: 4521 }, raw: Buffer.from(raw).toString("base64url"),
   }] });
   const stdout = await source(argv);
-  assert.equal(JSON.parse(stdout)[0].to.name, "Test Recipient");
+  assert.equal(JSON.parse(stdout)[0].to.name, recipient);
   return stdout;
 }
 
@@ -77,6 +77,13 @@ test("S12: a recorded CLI meta/open invocation seeds its stdout", async t => {
 
 test("S13: learning an envelope preserves its recipient display name", async t => {
   const stdout = await listedMail(t);
+  const copy = await serve(t, { himalaya_output: [{ argv, stdout, at: time }] });
+  const learned = JSON.parse(await copy(argv));
+  assert.deepEqual(learned[0].to, JSON.parse(stdout)[0].to);
+});
+
+test("S13b: learning a comma-containing recipient name preserves the full name", async t => {
+  const stdout = await listedMail(t, "Recipient, Test");
   const copy = await serve(t, { himalaya_output: [{ argv, stdout, at: time }] });
   const learned = JSON.parse(await copy(argv));
   assert.deepEqual(learned[0].to, JSON.parse(stdout)[0].to);
