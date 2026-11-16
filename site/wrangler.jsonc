@@ -1,0 +1,8 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "phoenix-site",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-15",
+  "workers_dev": false,
+  "routes": [{ "pattern": "phoenix.eilmer.si", "custom_domain": true }]
+}
