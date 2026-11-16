@@ -3,10 +3,12 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { startToolStandIn, type ToolStandIn } from "@phoenix/engine";
+import { parse } from "yaml";
+import type { RecipeDescriptor } from "@phoenix/formats";
 import { writeClockFile, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
 import type { MomentBundle } from "@phoenix/store";
 import type { ResolvedPlan } from "./plan.ts";
-import { optional } from "./files.ts";
+import { optional, save } from "./files.ts";
 
 const execute = promisify(execFile);
 const TOOLS_HOST = "phoenix-tools";
@@ -54,7 +56,9 @@ export async function resumeAttempt(input: {
   try {
     const [login, ...loginArgs] = recipe.resume.login;
     await execute(login!, [...loginArgs, join(box, "agent"), moment.model.provider], { cwd: recipeDirectory });
-    await writeClockFile(join(root, "clock"), new Date());
+    const time = bundle.manifest.clock?.time ?? new Date().toISOString();
+    await writeClockFile(join(root, "clock"), time);
+    const { clock } = parse(await readFile(join(recipeDirectory, recipe.file), "utf8")) as RecipeDescriptor;
     const running = await sandbox.start({
       image: plan.harness_image, argv: recipe.resume.command, env: { PHOENIX_TOOLS_URL: `http://${TOOLS_HOST}`, TZ: bundle.manifest.clock?.timezone ?? "UTC" },
       mounts: [
@@ -64,9 +68,10 @@ export async function resumeAttempt(input: {
         { source: join(box, "out"), target: "/phoenix/out" },
         { source: join(directory, "inputs/candidate"), target: "/worktree", readOnly: true },
       ],
-      clockFile: join(root, "clock"), workdir: "/worktree", dontFakeMonotonic: true, directHosts: hosts,
+      clockFile: join(root, "clock"), virtualTime: time, ...(clock ? { clockProbe: clock.probe } : {}), workdir: "/worktree", dontFakeMonotonic: true, directHosts: hosts,
     });
     process = running.process;
+    await save(join(root, "clock-report.json"), process.clock);
     await input.started(process.id);
     process.stdin.end();
     process.stdout.resume(); process.stderr.resume();

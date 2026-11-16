@@ -3,7 +3,8 @@ import { realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { EngineChannel } from "./channel.ts";
 import { clockEnvironment, classifyClockProbe, inspectElf } from "./clock.ts";
 import type { Sandbox, SandboxSpec, CommandResult, ClockReport } from "./types.ts";
@@ -16,7 +17,7 @@ export class ContainerSandbox implements Sandbox {
 
   constructor(options: { cli?: string[]; relayImage?: string; relayPorts?: number[] } = {}) {
     this.cli = options.cli ?? ["docker"];
-    this.relayImage = options.relayImage ?? "phoenix-relay:1";
+    this.relayImage = options.relayImage ?? `phoenix-relay:${createHash("sha256").update(readFileSync(new URL("../relay/Dockerfile", import.meta.url))).update(readFileSync(new URL("../relay/relay.mjs", import.meta.url))).digest("hex").slice(0, 12)}`;
     this.relayPorts = options.relayPorts ?? [80, 443, 8080];
     if (!this.cli.length || this.relayPorts.some((p) => !Number.isInteger(p) || p < 1 || p > 65535 || p === 53)) throw new Error("Invalid container driver options");
   }
@@ -78,7 +79,7 @@ export class ContainerSandbox implements Sandbox {
       const isolation = ["--cap-drop=ALL", "--security-opt=no-new-privileges", "--init"];
       const direct = spec.directHosts?.length ? ["--network", "bridge", "--cap-add=NET_ADMIN", "--env", `PHOENIX_DIRECT_HOSTS=${JSON.stringify(spec.directHosts)}`] : ["--network", "none"];
       await this.require(["run", "-d", "--name", relay, ...direct, ...isolation, "--cap-add=NET_BIND_SERVICE", "--env", `PHOENIX_RELAY_PORTS=${JSON.stringify(this.relayPorts)}`, this.relayImage]);
-      await this.require(["exec", relay, "node", "-e", "const f=require('fs');let tries=0;function ready(){if(f.existsSync('/run/phoenix/engine.sock'))process.exit(0);if(++tries>100)process.exit(1);setTimeout(ready,20)}ready()"]);
+      await this.require(["exec", relay, "node", "-e", "const f=require('fs');let tries=0;function ready(){if(f.existsSync('/run/phoenix/engine.sock'))process.exit(0);if(++tries>400)process.exit(1);setTimeout(ready,20)}ready()"]);
       const bridge = this.spawn(["exec", "-i", relay, "node", "/relay.mjs", "bridge"]);
       children.push(bridge);
       channel = new EngineChannel(bridge.stdout, bridge.stdin);

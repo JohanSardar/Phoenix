@@ -110,6 +110,16 @@ builtins and absolute executable paths. Bash may reset PATH through a user's
 shell startup files: verify a shim event actually arrived instead of assuming
 it did. CLI output does not recreate file writes.
 
+## Replay by resuming the session
+
+`phoenix moment create --session <copy of a pi session file> --recipe recipes/pi/recipe.yaml --at <line>` cuts the session before the user turn that holds that line. In the box, `resume.mjs` resumes pi from the cut with `pi --fork`. Phoenix answers every tool call.
+
+- pi-mcp-adapter hides MCP tools behind its `mcp` tool and, after a connect, behind `mcp__<server>`. `adapter.mjs` turns each such call back into the server and tool it reaches, so a calendar call through the adapter is answered as the calendar's own call. The adapter's own questions (status, list, search, describe, connect) are answered from the session. A question the session never asked has no answer, and the replay stops there.
+- The box's clock is the moment's time. `clock.mjs` moves only the clock pi's JavaScript sees. The TLS library keeps the real clock, so the LLM's certificate still checks out for an older moment.
+- The harness is `APPEND_SYSTEM.md` plus any pi extension in the harness's `extensions/` folder. Both load in the box.
+- pi reaches its LLM directly, with nothing from Phoenix in between. The box may reach only the addresses of the hosts in `resume.llm_hosts`, on port 443, looked up once before pi starts. DNS and every other address are shut.
+- Known limit, by Johan's decision on 2026-11-16: another site that shares the LLM provider's addresses can be reached on port 443. Closing it would need a gate in the LLM's path, which Johan ruled out as too complicated. Don't add one.
+
 ## Login coverage
 
 | Pi credential source or login | Model route |
