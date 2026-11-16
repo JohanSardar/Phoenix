@@ -4,7 +4,7 @@ const loadout = JSON.parse(readFileSync(process.env.PHOENIX_OPENCODE_LOADOUT, "u
 const url = process.env.PHOENIX_TOOLS_URL;
 const MARK = "__phoenix_stand_in";
 const CONTINUE = process.env.PHOENIX_OPENCODE_CONTINUE;
-const boxed = new Set(process.env.PHOENIX_PROJECT ? loadout.in_box ?? [] : []);
+const boxed = new Set(process.env.PHOENIX_PROJECT ? [...loadout.in_box ?? [], ...loadout.shell ?? []] : []);
 const stood = loadout.tools.filter(name => !boxed.has(name));
 const native = result => {
   const extra = result.structuredContent ?? result;

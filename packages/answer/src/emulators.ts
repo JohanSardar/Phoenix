@@ -32,10 +32,10 @@ export class Emulators {
     } catch (error) { await world.close(); throw error; }
   }
 
-  async resolve(call: Call, at = this.#now().toISOString()): Promise<Answer | Miss> {
+  async resolve(call: Call, at = this.#now().toISOString(), recorded?: Answer["raw"]): Promise<Answer | Miss> {
     const plugin = this.#plugins.get(call.connector);
     if (!plugin) return { miss: true, why: "No emulator configured for this connector" };
-    const reply = await plugin.call(call, at);
+    const reply = await plugin.call(call, at, recorded);
     if (reply.status === "unsupported") return { miss: true, why: reply.reason };
     if (reply.status !== "answer") throw new Error(`Emulator ${call.connector}: ${reply.status}: ${reply.reason}`);
     if (!call.readOnly) this.#written.add(call.connector);
@@ -54,7 +54,7 @@ export class Emulators {
       if (!call.readOnly) this.#untaken.set(call.connector, [...this.untaken(call.connector), call.key]);
       return;
     }
-    const actual = await this.resolve(call, at);
+    const actual = await this.resolve(call, at, answer.raw);
     if ("miss" in actual) {
       if (!call.readOnly) throw new Error(`Emulator cannot mirror write on ${call.connector}: ${actual.why}`);
       return;

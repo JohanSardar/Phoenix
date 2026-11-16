@@ -33,6 +33,7 @@ export class Copy {
     this.gaps = [];
     this.now = () => Date.now();
     this.counter = 0;
+    this.nextIds = [];
   }
 
   takeGaps() { const gaps = this.gaps; this.gaps = []; return gaps; }
@@ -203,6 +204,7 @@ export class Copy {
       cal.windows.push(...old.windows); cal.busy.push(...old.busy);
       for (const [k, v] of old.offsets) cal.offsets.set(k, v);
       cal.entry ??= old.entry;
+      cal.hosted ??= old.hosted;
     }
   }
   putEntry(entry) {
@@ -367,7 +369,7 @@ export class Copy {
     const zone = this.zoneOf(cal);
     if (!cal.entry) this.gap(`the copy does not know calendar ${cal.id}`);
     if (body.conferenceData?.createRequest) this.gap("the copy cannot create Google Meet links");
-    const id = body.id ?? Array.from(randomBytes(26), b => B32[b % 32]).join("");
+    const id = body.id ?? this.nextIds.shift() ?? Array.from(randomBytes(26), b => B32[b % 32]).join("");
     if (this.getEvent(cal, id)) return apiError(409, "duplicate", "The requested identifier already exists.");
     const start = this.normalTime(body.start, zone, cal), end = this.normalTime(body.end, zone, cal);
     if (!start || !end || start.invalid || end.invalid) return apiError(400, "required", "Missing end time.");

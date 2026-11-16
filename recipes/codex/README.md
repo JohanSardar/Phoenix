@@ -84,9 +84,9 @@ Put the image ID and the path to `recipe.yaml` in the Workbench settings.
 
 ### Limits
 
-- A shell command the session never ran gets no answer yet, and the replay
-  stops there. Codex often runs a new shell command first, like `pwd`, so many
-  replays stop early.
+- A shell command the session never ran runs on the files copy only when it
+  just reads files, like `pwd`, `ls` or `cat`. Anything else, like `git status`,
+  gets a made-up answer, or stops the replay when no simulator is set.
 - The box runs Codex 0.169.0. Its own tool descriptions and base instructions
   can differ from the ones in an older session.
 - Other sites on chatgpt.com can be reached from the box.

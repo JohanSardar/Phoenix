@@ -525,13 +525,13 @@ The resolvers run in this order:
    - Non-read-only calls get a synthesized acknowledgement and change nothing. That acknowledgement never counts as evidence that a state change happened. When a working copy couldn't take a write and the write got a made-up acknowledgement, later answers on that connector are flagged, because neither the session nor the copy knows what the service would say then.
 7. **Divergence.** The chain stops the sample and records the call and every resolver's reason for missing. It never falls back to a live connector.
 
-On a resumed session, the stand-in adds one step for the tools the recipe runs in the box, such as file reads and writes, when the moment has a files copy. For those tools the simulator is skipped. When the chain misses, the stand-in tells the recipe's in-box code to run the tool for real on the files copy, and records the answer with provenance `real` and resolver `files-copy`. So a file tool the session never called runs on the copy, and a service call the session never made gets its working copy or a made-up answer.
+On a resumed session, the stand-in adds one step for the tools the recipe runs in the box, such as file reads and writes, when the moment has a files copy. For those tools the simulator is skipped. When the chain misses, the stand-in tells the recipe's in-box code to run the tool for real on the files copy, and records the answer with provenance `real` and resolver `files-copy`. A shell call counts as one of those tools when its command only reads files and every path is inside the copy; the recipe names which argument holds the command. So a file tool the session never called runs on the copy, and a service call the session never made gets its working copy or a made-up answer.
 
 Each sample has its own state: its own write histories, overlay and working copies.
 
 Every answer carries a provenance:
 
-- `real` means the live system during Capture, or a file tool run for real on the files copy during a Replay.
+- `real` means the live system during Capture, or a file tool or read-only shell command run for real on the files copy during a Replay.
 - `recorded` means bytes from captured evidence, from the session, or from prefetch.
 - `derived` means computed from recorded data by a fill, the overlay, an emulator or a repeat.
 - `seeded` means written by a person for a made-up moment or a Scenario, or saved at a mark.
@@ -781,7 +781,7 @@ A connector plugin is a separately installed package with a `phoenix-plugin.json
 - an optional entity map;
 - up to two commands.
 
-`capture` makes a plan of read-only calls over what was recorded (section 3.2). Plugin capture and `phoenix mark` run that plan on their own connection. `serve` starts a working copy (an emulator) from a Snapshot directory, at `http` or `tool` level, with a seed and a `now` endpoint. It also exposes its state for `end_state`. Replies distinguish four cases: an answer, an unsupported operation (a miss, never an empty success), invalid input, and execution failure. Both commands speak newline-delimited JSON on stdio or plain HTTP, so a plugin can be written in any language. In a Replay, plugin processes run in their own box with no network.
+`capture` makes a plan of read-only calls over what was recorded (section 3.2). Plugin capture and `phoenix mark` run that plan on their own connection. `serve` starts a working copy (an emulator) from a Snapshot directory, at `http` or `tool` level, with a seed and a `now` endpoint. It also exposes its state for `end_state`. When the engine sends a call the session already answered to a working copy to keep it in step, the `call` request also carries the recorded answer as `recorded`, so the plugin can keep the identifiers the agent was given. A plugin may ignore it. Replies distinguish four cases: an answer, an unsupported operation (a miss, never an empty success), invalid input, and execution failure. Both commands speak newline-delimited JSON on stdio or plain HTTP, so a plugin can be written in any language. In a Replay, plugin processes run in their own box with no network.
 
 An existing emulator would be wrapped this way, never linked into the core. A declared tier is a ceiling, never proof. `plugin-kit` seeds a plugin from a Snapshot, runs the recorded exchanges through it, and reports every difference in content, protocol behavior and end state. This is how people add connectors and check their fidelity themselves.
 
@@ -981,7 +981,7 @@ Phoenix uses no database and no native add-on of its own. The trace files are th
 - **Other sites behind the LLM provider's addresses.** The box can reach the LLM hosts' addresses on port 443. Another site on the same addresses, such as one behind the same CDN, can be reached too. Johan decided on 2026-11-16 to accept this. Closing it would need a gate in the LLM's path, which he ruled out.
 - **The LLM path is out of Phoenix's sight.** Phoenix doesn't see or record what the harness sends its LLM. A provider-run tool, such as a provider's own web search, acts on the live world from the provider's side, and Phoenix can't refuse it. A harness that points its LLM at conversation state the provider holds from the live run gets that live state.
 - **One provider per resumed replay.** The box opens only the hosts of the session's own LLM provider and copies only that provider's login. A change to another provider's LLM can't be tried on the resume path.
-- **New shell commands.** A shell command the session never ran is not run for real. With the Codex recipe the replay stops there today, and Codex often starts with a new command such as `pwd`, so many Codex replays stop early.
+- **New shell commands.** A shell command the session never ran runs for real only when it just reads files inside the files copy. Anything else, like git or a test runner, gets a made-up answer, or stops the replay when no simulator LLM is set. fx's shell commands never run on the copy.
 - **Made-up answers need a simulator LLM account.** The made-up answer step calls the simulator LLM through the person's own provider account, named in the replay settings by host environment references. Without a working account, any call nothing else answers stops the replay.
 - **The login copy.** The box needs the harness's own login for its LLM provider. It is copied in for the run only and deleted afterward, but while the run lasts it is inside a box that runs the candidate's code. An expired login stops the sample before it starts.
 - **The harness version in the box.** The box runs the version the recipe's image installs. Its tool descriptions and base instructions can differ from the version that wrote an older session.

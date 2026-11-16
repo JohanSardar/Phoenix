@@ -26,7 +26,7 @@ async function inside(path) {
   const servers = {};
   const phoenix = join(process.env.PATH.split(delimiter)[0], "phoenix");
   for (const file of config.mcp) Object.assign(servers, (await json(file)).mcpServers ?? {});
-  const coverage = { model: "transcript only", mcp: {}, cli: config.routes.includes("cli-proxy") ? config.shim : [], limitations: ["Builtins and absolute command paths bypass PATH shims", "Native tools are available only as logged tool blocks", "Cloud connectors, plugins and unlisted MCP scopes are not proxied"] };
+  const coverage = { model: "transcript only", mcp: {}, cli: config.routes.includes("cli-proxy") ? config.shim : [], limitations: ["Builtins and absolute command paths bypass PATH shims", "Native tools are available only as logged tool blocks", "Cloud connectors, plugins and unlisted MCP scopes are not proxied"], ...(config.claudeai ? { claudeai_connectors: "on for this run; direct; transcript only. Claude Code drops them under --strict-mcp-config, so MCP servers from the person's other scopes load too, direct and transcript only" } : {}) };
   try {
     for (const [name, server] of Object.entries(servers)) {
       if (!config.routes.includes("mcp-proxy")) { coverage.mcp[name] = "direct; transcript only"; continue; }
@@ -56,7 +56,8 @@ async function inside(path) {
     const env = { ...process.env };
     const settings = {};
     if (config.routes.includes("cli-proxy")) settings.PATH = env.PATH;
-    return await run([...config.command, "--session-id", config.session, "--strict-mcp-config", "--mcp-config", join(config.temp, "mcp.json"), "--settings", JSON.stringify({ env: settings }), ...config.args], { cwd: config.cwd, env });
+    if (config.claudeai) settings.ENABLE_CLAUDEAI_MCP_SERVERS = "true";
+    return await run([...config.command, "--session-id", config.session, ...(config.claudeai ? [] : ["--strict-mcp-config"]), "--mcp-config", join(config.temp, "mcp.json"), "--settings", JSON.stringify({ env: settings }), ...config.args], { cwd: config.cwd, env });
   } finally { for (const child of proxies) child.kill("SIGTERM"); }
 }
 
@@ -66,7 +67,7 @@ async function main() {
   const { values } = parseArgs({ args: process.argv.slice(2, split < 0 ? undefined : split), options: {
     "login-mode": { type: "string" }, home: { type: "string" }, cwd: { type: "string" }, routes: { type: "string" },
     mcp: { type: "string", multiple: true }, "remote-reverse": { type: "string", multiple: true }, shim: { type: "string" },
-    phoenix: { type: "string" }, importer: { type: "string" }, claude: { type: "string" },
+    phoenix: { type: "string" }, importer: { type: "string" }, claude: { type: "string" }, "claudeai-connectors": { type: "boolean" },
   } });
   const modes = ["api-key", "console", "subscription", "oauth-token", "auth-token", "api-key-helper", "profile-wif", "bedrock", "bedrock-bearer", "aws", "aws-bearer", "vertex", "foundry", "claude-apps-gateway", "managed"];
   if (!modes.includes(values["login-mode"])) throw new Error("Choose an explicit --login-mode; this recipe never changes credentials or providers");
@@ -86,7 +87,7 @@ async function main() {
   const temp = await mkdtemp(join(home, "runtime/claude-code-")), session = randomUUID();
   try {
     const shim = (values.shim ?? "ls,cat").split(",").filter(Boolean);
-    const config = { cwd, temp, session, command, args, routes, shim, mcp: (values.mcp ?? []).map(file => resolve(file)), remote: values["remote-reverse"] ?? [] };
+    const config = { cwd, temp, session, command, args, routes, shim, mcp: (values.mcp ?? []).map(file => resolve(file)), remote: values["remote-reverse"] ?? [], claudeai: !!values["claudeai-connectors"] };
     await save(join(temp, "config.json"), config);
     await save(join(temp, "recipe.json"), { phoenix_recipe: 1, name: "claude-code", harness_versions: ["2.1.325"], routes: [{ versions: "2.1.325", login_mode: mode, surfaces: { all: routes } }], shim });
     await save(join(temp, "harness.json"), { phoenix_harness: 1, name: "claude-code", run: { command }, endpoints: { model: { env: setting } }, editable: ["prompts/**"] });

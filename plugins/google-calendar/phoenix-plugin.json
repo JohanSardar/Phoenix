@@ -1,7 +1,7 @@
 {
   "phoenix_plugin": 1,
   "connector": "calendar",
-  "recognize": { "mcp_servers": ["google-calendar", "calendar"] },
+  "recognize": { "mcp_servers": ["google-calendar", "calendar", "claude_ai_Google_Calendar"] },
   "tier": "stateful",
   "operations": [
     "tools/call:list_events",
@@ -19,7 +19,14 @@
     "tools/call:get-freebusy",
     "tools/call:get-current-time",
     "tools/call:respond-to-event",
-    "tools/call:manage-accounts"
+    "tools/call:manage-accounts",
+    "tools/call:list_calendars",
+    "tools/call:search_events",
+    "tools/call:suggest_time",
+    "tools/call:create_event",
+    "tools/call:update_event",
+    "tools/call:delete_event",
+    "tools/call:respond_to_event"
   ],
   "read_only": [
     "tools/call:list_events",
@@ -30,7 +37,10 @@
     "tools/call:get-event",
     "tools/call:list-colors",
     "tools/call:get-freebusy",
-    "tools/call:get-current-time"
+    "tools/call:get-current-time",
+    "tools/call:list_calendars",
+    "tools/call:search_events",
+    "tools/call:suggest_time"
   ],
   "entity_map": {
     "tools/call:list_events": {
