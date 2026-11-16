@@ -93,10 +93,12 @@ export function createCopy({ snapshot, replies, socket, database }) {
     let result, error;
     await c.query("BEGIN");
     await c.query("SAVEPOINT phoenix_statement");
-    try { result = await c.query(parameters?.length ? { text, values: parameters } : text); await c.query("RELEASE SAVEPOINT phoenix_statement"); }
+    const sequences = await admin("select format('%I.%I', schemaname, sequencename) as name, coalesce(last_value, start_value) as value, last_value is not null as called from pg_sequences");
+    try { result = await c.query(parameters?.length ? { text, values: parameters } : text); await c.query("SET CONSTRAINTS ALL IMMEDIATE"); await c.query("RELEASE SAVEPOINT phoenix_statement"); }
     catch (thrown) { if (!thrown.code) throw thrown; error = thrown; await c.query("ROLLBACK TO SAVEPOINT phoenix_statement"); }
     const partial = (await c.query({ text: "select relid::int as oid from pg_stat_xact_all_tables where relid = any($1::oid[]) and seq_scan + coalesce(idx_scan, 0) + n_tup_ins + n_tup_upd + n_tup_del > 0", values: [[...watched.keys()]] })).rows.map(row => watched.get(row.oid));
     await c.query(partial.length || error ? "ROLLBACK" : "COMMIT");
+    if (partial.length) for (const { name, value, called } of sequences) await admin({ text: "select setval($1::regclass, $2, $3)", values: [name, value, called] });
     return { result, error, partial };
   }
   const partialMiss = (partial, what) => missed("the snapshot " + partial.map(rel => unknown.get(rel) ?? "cannot tell which tables a statement with its own transaction control reads").join(" and ") + ", so " + what + " could differ from Supabase's");

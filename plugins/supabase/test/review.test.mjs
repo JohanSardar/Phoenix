@@ -144,3 +144,45 @@ test("S5: a truncated parent must not cause a false foreign-key error on a fully
       `The real database accepts this write; the copy must accept it or miss, not return ${answer.status}: ${answer.body}; seed: ${JSON.stringify(seeded)}`);
   } finally { await real.end(); }
 });
+
+test("S6: deferred triggers must not commit results computed from partially captured rows", async () => {
+  const { real, copy } = await fixture(
+    "CREATE TABLE items (id int); INSERT INTO items VALUES (1), (2); " +
+    "CREATE TABLE events (id int); CREATE TABLE totals (n bigint); " +
+    "CREATE FUNCTION update_total() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN " +
+    "INSERT INTO totals SELECT count(*) FROM items; RETURN NEW; END $$; " +
+    "CREATE CONSTRAINT TRIGGER update_total AFTER INSERT ON events DEFERRABLE INITIALLY DEFERRED " +
+    "FOR EACH ROW EXECUTE FUNCTION update_total()",
+    { tables: ["items", "events", "totals"], rowLimit: 1 });
+  try {
+    const query = "INSERT INTO events VALUES (1)";
+    await real.query(query);
+    assert.equal((await real.query("SELECT n FROM totals")).rows[0].n, "2");
+    copy.begin();
+    const answer = await sql(copy, query);
+    const readback = await sql(copy, "SELECT n FROM totals");
+    assert.equal(answer.status, 501,
+      `Deferred trigger committed an incomplete result: write ${answer.status}; later read ${readback.status} ${readback.body}`);
+  } finally { await real.end(); }
+});
+
+test("S7: a missed statement must not consume sequence values used by later writes", async () => {
+  const { real, copy } = await fixture(
+    "CREATE TABLE items (id int); INSERT INTO items VALUES (1), (2); " +
+    "CREATE TABLE events (id serial PRIMARY KEY, n bigint)",
+    { tables: ["items", "events"], rowLimit: 1 });
+  try {
+    const partial = "SELECT CASE WHEN (SELECT count(*) FROM items) = 1 " +
+      "THEN nextval('events_id_seq') ELSE 0 END AS n";
+    assert.equal((await real.query(partial)).rows[0].n, "0");
+    copy.begin();
+    const missed = await sql(copy, partial);
+    assert.equal(missed.status, 501);
+    const query = "INSERT INTO events (n) VALUES (0) RETURNING id";
+    const expected = (await real.query(query)).rows;
+    const answer = await sql(copy, query);
+    assert.equal(answer.status, 201);
+    assert.deepEqual(JSON.parse(answer.body.toString()), expected,
+      `The unsupported statement changed the next successful write: ${answer.body}`);
+  } finally { await real.end(); }
+});
