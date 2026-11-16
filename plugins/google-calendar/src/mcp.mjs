@@ -9,7 +9,6 @@ const [calendarId, account, command, ...args] = process.argv.slice(2);
 if (!calendarId || !account || !command) throw new Error("Usage: phoenix-google-calendar-mcp <calendar-id> <account> <upstream-command> [args...]");
 const upstream = new Client({ name: "phoenix-google-calendar", version: "1" });
 const server = new Server({ name: "phoenix-google-calendar", version: "1" }, { capabilities: { tools: {} } });
-const fields = ["description", "created", "updated", "creator", "organizer", "recurrence", "recurringEventId", "originalStartTime", "extendedProperties", "iCalUID", "sequence"];
 const tools = [
   { name: "list_events", description: "List events in the configured single calendar within a bounded RFC3339 time window. Results may be incomplete; recurring instances keep their exact ids. No local timezone conversion is performed.", inputSchema: { type: "object", properties: { timeMin: { type: "string" }, timeMax: { type: "string" }, privateExtendedProperty: { type: "array", items: { type: "string" } } }, required: ["timeMin", "timeMax"], additionalProperties: false } },
   { name: "get_event", description: "Read one event by its exact id in the configured calendar, preserving the upstream event fields.", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } },
@@ -17,7 +16,7 @@ const tools = [
 ];
 
 async function read(name, arguments_, key) {
-  const result = await upstream.callTool({ name, arguments: { ...arguments_, calendarId, account, fields } });
+  const result = await upstream.callTool({ name, arguments: { ...arguments_, calendarId, account } });
   if (result.isError) throw new Error(`Upstream ${name} failed`);
   const data = result.structuredContent ?? (result.content?.length === 1 && result.content[0].type === "text" ? JSON.parse(result.content[0].text) : undefined);
   const value = data?.[key];
