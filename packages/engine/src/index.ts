@@ -4,3 +4,4 @@ export { startToolStandIn, type RecordedToolAnswer, type ToolStandIn, type ToolS
 export { SampleTrace, type TraceEntry } from "./trace.ts";
 export { isModelDialect, resolveModelDialect, type ModelDialectName } from "@phoenix/answer";
 export { createSimulator, type SimulatorOptions } from "@phoenix/answer";
+export { EmulatorStartError } from "@phoenix/answer";

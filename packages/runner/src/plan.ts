@@ -1,5 +1,5 @@
-import { cp, mkdir, mkdtemp, readFile, rename } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { cp, mkdir, mkdtemp, readdir, readFile, readlink, rename } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse } from "yaml";
 import type { Bindings, HarnessContract, PluginDescriptor, RecipeDescriptor, ReplayPlan } from "@phoenix/formats";
 import { createSimulator, resolveModelDialect, type SimulatorOptions } from "@phoenix/engine";
@@ -81,6 +81,13 @@ export async function resolvePlan(root: string, ledger: string, request: ReplayR
     if (!plugin.name || !plugin.version || /[~^*<>=| ]/.test(plugin.version)) throw new Error("Plugin versions must be resolved, not ranges");
     if (![descriptor.connector, ...descriptor.recognize.mcp_servers ?? []].some(name => bundle.manifest.connectors?.[name])) throw new Error(`Plugin connector is not in this moment: ${descriptor.connector}`);
     for (const path of [plugin.snapshot, plugin.seed]) if (path && !bundle.files.has(path)) throw new Error(`Plugin input is not locked bundle data: ${path}`);
+    for (const entry of await readdir(plugin.directory, { recursive: true, withFileTypes: true })) {
+      if (!entry.isSymbolicLink()) continue;
+      const link = join(entry.parentPath, entry.name), target = await readlink(link);
+      const inside = relative(plugin.directory, resolve(entry.parentPath, target));
+      if (isAbsolute(target) || inside === ".." || inside.startsWith(".." + sep))
+        throw new Error(`Plugin ${plugin.name} links ${relative(plugin.directory, link)} to ${target}, outside its folder. A replay mounts only the plugin folder, so the link would be broken there. Install the packed plugin instead: pack it, unpack it, and install its dependencies inside the unpacked folder.`);
+    }
     const { directory: _, ...settings } = plugin;
     plugins.push({ ...settings, descriptor, tree: await treeDigest(plugin.directory) });
   }
