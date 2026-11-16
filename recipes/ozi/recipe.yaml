@@ -1,0 +1,79 @@
+phoenix_recipe: 1
+name: ozi
+harness_versions: ["0.1.0", "0.1.4"]
+login_modes:
+  - claude-api-key
+  - claude-subscription
+  - claude-console
+  - claude-sso
+  - claude-bedrock
+  - codex-api-key
+  - codex-chatgpt-browser
+  - codex-chatgpt-device
+  - codex-access-token
+  - codex-bedrock
+  - codex-managed-chatgpt
+  - pi-native
+  - fx-native
+  - muse-native-or-api-key
+  - grok-cached-token-or-api-key
+  - cursor-browser-or-api-key
+  - antigravity-oauth-personal
+  - antigravity-oauth-business
+  - antigravity-gemini-api-key
+  - antigravity-agent-platform
+  - opencode-native
+  - acp-discovered
+routes:
+  - versions: "0.1.0 || 0.1.4"
+    login_mode: claude-api-key
+    surfaces: &claude
+      model: [gateway, transcript]
+      mcp: [mcp-proxy, transcript]
+      cli: [cli-proxy, transcript]
+  - {versions: "0.1.0 || 0.1.4", login_mode: claude-subscription, surfaces: *claude}
+  - {versions: "0.1.0 || 0.1.4", login_mode: claude-console, surfaces: *claude}
+  - {versions: "0.1.0 || 0.1.4", login_mode: claude-sso, surfaces: *claude}
+  - versions: "0.1.0 || 0.1.4"
+    login_mode: claude-bedrock
+    surfaces: &native
+      model: [transcript]
+      mcp: [mcp-proxy, transcript]
+      cli: [cli-proxy, transcript]
+  - {versions: "0.1.0 || 0.1.4", login_mode: codex-api-key, surfaces: *claude}
+  - {versions: "0.1.0 || 0.1.4", login_mode: codex-chatgpt-browser, surfaces: *native}
+  - {versions: "0.1.0 || 0.1.4", login_mode: codex-chatgpt-device, surfaces: *native}
+  - {versions: "0.1.0 || 0.1.4", login_mode: codex-access-token, surfaces: *native}
+  - {versions: "0.1.0 || 0.1.4", login_mode: codex-bedrock, surfaces: *native}
+  - versions: "0.1.0 || 0.1.4"
+    login_mode: codex-managed-chatgpt
+    surfaces: &fallback
+      model: [transcript]
+      mcp: [transcript]
+      cli: [cli-proxy, transcript]
+  - {versions: "0.1.0 || 0.1.4", login_mode: pi-native, surfaces: *fallback}
+  - {versions: "0.1.0 || 0.1.4", login_mode: fx-native, surfaces: *fallback}
+  - {versions: "0.1.0 || 0.1.4", login_mode: muse-native-or-api-key, surfaces: *fallback}
+  - {versions: "0.1.0 || 0.1.4", login_mode: grok-cached-token-or-api-key, surfaces: *fallback}
+  - {versions: "0.1.0 || 0.1.4", login_mode: cursor-browser-or-api-key, surfaces: *fallback}
+  - {versions: "0.1.0 || 0.1.4", login_mode: antigravity-oauth-personal, surfaces: *fallback}
+  - {versions: "0.1.0 || 0.1.4", login_mode: antigravity-oauth-business, surfaces: *fallback}
+  - {versions: "0.1.0 || 0.1.4", login_mode: antigravity-gemini-api-key, surfaces: *fallback}
+  - {versions: "0.1.0 || 0.1.4", login_mode: antigravity-agent-platform, surfaces: *fallback}
+  - {versions: "0.1.0 || 0.1.4", login_mode: opencode-native, surfaces: *fallback}
+  - {versions: "0.1.0 || 0.1.4", login_mode: acp-discovered, surfaces: *fallback}
+model:
+  setting: providerInstances.<instance>.environment; ANTHROPIC_BASE_URL for native Claude, OPENAI_BASE_URL for native API-key Codex
+  dialect: anthropic-messages
+mcp:
+  file: .mcp.json
+  format: mcpServers
+shim: [ls, cat, date]
+transcript_reader:
+  command: [node, read-transcript.mjs]
+  harness_versions: ["0.1.0", "0.1.4"]
+image: node:26.12.1-bookworm-slim
+clock:
+  probe: [node, -e, "console.log(new Date().toISOString())"]
+  dont_fake_monotonic: true
+copy_ignored: false
