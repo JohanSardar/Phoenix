@@ -57,7 +57,7 @@ const args = [
   "--system-prompt-file", join(home, "system.md"),
   ...(existsSync("/worktree/APPEND_SYSTEM.md") ? ["--append-system-prompt-file", "/worktree/APPEND_SYSTEM.md"] : []),
   "--permission-mode", "bypassPermissions",
-  ...(configured.model ? [] : ["--model", model]),
+  "--model", model,
   ...(box.effort && !configured.effortLevel ? ["--effort", box.effort] : []),
 ];
 const { LD_PRELOAD: _, ...inherited } = process.env;
