@@ -29,13 +29,15 @@ A write through one is seen by the other. If the agent stars a message with hima
 | `labels` | A `list_labels` answer |
 | `messages`, `drafts` | Messages and drafts already known |
 | `answers` | Recorded connector answers `{ op, args, result, observed_at }` |
-
-The snapshot can also be capture events, one JSON line per call and per result. That is what the resume path writes; each `tools/call` is paired with its result to make `answers`. A recorded himalaya call (its invocation and stdout frames) and a command-line capture read (a `prefetch` event) become `himalaya_output`.
-
-The copy learns mail from himalaya's JSON output (`-o json`). `envelope list` gives each message its real id in that folder, its flags, subject, sender, recipient and date. `message read` of one id gives that message its headers and body. A message seen only in a list keeps its body unknown, so reading it falls through. Plain-text output is not parsed.
 | `cut_at` | Answers observed at or before this time are the moment's past |
 | `himalaya` | `{ top, accounts: [{ name, lines, default }] }`: the person's himalaya settings without connection or login lines |
 | `himalaya_output` | `[{ argv, stdout, at }]`: what himalaya calls printed |
+
+The snapshot can also be capture events, one JSON line per call and per result. That is what the resume path writes; each `tools/call` is paired with its result to make `answers`. A recorded himalaya call (its invocation and stdout frames) and a command-line capture read (a `prefetch` event) become `himalaya_output`.
+
+The copy learns mail from himalaya's JSON output (`-o json`). `envelope list` gives each message its real id in that folder, its flags, subject, sender, recipient and date with its UTC offset. Messages listed in the same minute keep the order himalaya printed them in. `message read` of one id gives that message its headers and body. A message seen only in a list keeps its body unknown, so reading it falls through. Plain-text output is not parsed. The account's address comes from the sender of mail listed in `[Gmail]/Sent Mail` when the snapshot doesn't name it.
+
+With no `himalaya` settings, the copy's himalaya gets Gmail's folder names as its sent, drafts and trash folders. himalaya's own defaults (`Sent`, `Trash`, `Drafts`) don't exist on Gmail, so a working Gmail setup names these folders.
 
 The copy learns the mailbox from the answers in time order. A recorded send, reply or draft is replayed inside the copy and takes the id Gmail gave it. Gmail ids carry the millisecond the message was made, so the copy also takes Gmail's `internalDate` from the id.
 
@@ -73,11 +75,14 @@ The plugin test kit was run on 38 answers recorded from the real connector. Thes
 - `resultCountEstimate` and threads the copy never saw in a search.
 - The real connector sometimes leaves out `structuredContent` and sends only the text. The text is the same.
 
+## himalaya against the real Gmail
+
+A real session (two sends, list, read, search, send, move to All Mail, delete) was recorded on test messages and its later calls asked of a copy made from its first three. 10 of 15 answers were the same. 4 differed only in the ids of messages new to a folder. 1, the body of a message the session never read, fell through.
+
 ## Limits
 
 Merged with a gap (JOH-57 stays open). Not proven or not built yet:
 
-- himalaya against the real Gmail. Its output is compared only with the copy's own IMAP so far. This waits for Johan's app password.
 - pi on the resume path, the pi half of steps 2 to 4 and 6. pi reaches email only through himalaya.
 - The copy learns mail from himalaya's output and from command-line capture reads, but nothing in the core hands them to it yet: a mark doesn't plan command-line reads, and a resume snapshot holds only MCP answers. MCP prefetch isn't used either. Both wait for the step that recognizes a session's shell command as a plugin's (PHOE-47).
 - The resume path does not yet send a new shell command, one the session never made, to a plugin's copy.
@@ -86,6 +91,6 @@ Other limits:
 
 - Attachment bytes are not held.
 - From himalaya output alone, the copy learns messages in INBOX and Gmail's own folders. A label folder needs the label list from the connector.
-- With no himalaya settings from the person, a himalaya send saves its copy to "Sent", which the copy doesn't have. The message is still delivered.
+- A message new to a folder gets the next id the copy knows for that folder. Gmail's id can be higher (each send to Sent Mail used two ids), and the copy never sees the ids of folders the session didn't list, such as All Mail or Trash. Ids the session saw are kept.
 - `create_label` and `update_label` answer only plain labels: a color or a nested name (with `/`) falls through, because no real answer for those has been recorded.
 - A search with plain words falls through when any message the copy holds has content it never saw, because the copy can't tell whether those words are in it.

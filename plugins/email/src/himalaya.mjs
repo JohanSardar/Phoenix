@@ -7,6 +7,9 @@ import { join } from "node:path";
 import { startImap, startSmtp } from "./imap.mjs";
 
 const tomlString = s => JSON.stringify(String(s));
+// himalaya's own folder names (Sent, Trash, Drafts) do not exist on Gmail, so a person's working
+// Gmail setup names Gmail's folders. Used when the snapshot carries no himalaya settings.
+const GMAIL_FOLDERS = ['folder.aliases.inbox = "INBOX"', 'folder.aliases.sent = "[Gmail]/Sent Mail"', 'folder.aliases.drafts = "[Gmail]/Drafts"', 'folder.aliases.trash = "[Gmail]/Trash"'];
 const LOG = process.env.PHOENIX_EMAIL_LOG;
 
 export class Himalaya {
@@ -17,7 +20,7 @@ export class Himalaya {
     this.imap = await startImap(this.box, { log });
     this.smtp = await startSmtp(this.box, { log });
     this.home = await mkdtemp(join(tmpdir(), "phoenix-email-"));
-    const accounts = this.settings.accounts ?? [{ name: "gmail", lines: [], default: true }];
+    const accounts = this.settings.accounts ?? [{ name: "gmail", lines: GMAIL_FOLDERS, default: true }];
     const body = accounts.map(account => [
       `[accounts.${account.name}]`,
       `email = ${tomlString(this.box.account.email)}`,

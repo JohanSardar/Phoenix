@@ -35,8 +35,8 @@ export class Folders {
 
   inFolder(m, entry) {
     const [, label] = entry;
-    if (label === null) return !m.labelIds.includes("TRASH") && !m.labelIds.includes("SPAM");
-    return m.labelIds.includes(label);
+    if (label !== "TRASH" && label !== "SPAM" && (m.labelIds.includes("TRASH") || m.labelIds.includes("SPAM"))) return false;
+    return label === null || m.labelIds.includes(label);
   }
 
   // Each folder keeps its own UIDs; a message keeps its UID while it stays in the folder.
