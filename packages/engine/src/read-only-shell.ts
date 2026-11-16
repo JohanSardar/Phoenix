@@ -1,10 +1,43 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-const COMMANDS = new Set(["cat", "ls", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "find", "stat", "pwd", "cd", "sed", "sort", "uniq", "cut", "tr", "nl", "echo", "basename", "dirname", "realpath", "du", "true"]);
-const FIND_ACTIONS = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
+type Operands = "paths" | "text" | "pattern" | "sed" | "find" | "none" | "dir";
+type Spec = { flags?: string; valued?: string; long?: string[]; numeric?: boolean; operands: Operands; max?: number };
+
+const GREP_LONG = ["--include=", "--exclude=", "--exclude-dir=", "--color", "--colour", "--line-number", "--recursive", "--ignore-case", "--count", "--files-with-matches", "--files-without-match", "--fixed-strings", "--extended-regexp", "--invert-match", "--word-regexp", "--line-regexp", "--no-filename", "--with-filename", "--max-count=", "--context=", "--after-context=", "--before-context=", "--only-matching", "--quiet", "--silent", "--no-messages", "--binary-files="];
+const RG_LONG = ["--files", "--hidden", "--no-ignore", "--glob=", "--iglob=", "--type=", "--type-not=", "--line-number", "--no-line-number", "--no-heading", "--heading", "--color=", "--count", "--count-matches", "--files-with-matches", "--files-without-match", "--fixed-strings", "--ignore-case", "--smart-case", "--case-sensitive", "--max-count=", "--context=", "--after-context=", "--before-context=", "--max-depth=", "--word-regexp", "--line-regexp", "--invert-match", "--json", "--sort=", "--trim", "--only-matching", "--no-filename", "--with-filename", "--column", "--vimgrep", "--max-columns=", "--multiline", "--regexp="];
+const SPECS: Record<string, Spec> = {
+  cat: { flags: "nbsAvETetu", operands: "paths" },
+  ls: { flags: "1aAbBcCdfFghiklmnopqrRsStuUvwxX", long: ["--all", "--almost-all", "--human-readable", "--classify", "--color", "--color="], operands: "paths" },
+  head: { flags: "qv", valued: "nc", numeric: true, operands: "paths" },
+  tail: { flags: "qv", valued: "nc", numeric: true, operands: "paths" },
+  wc: { flags: "lwcmL", operands: "paths" },
+  grep: { flags: "iIvwxcnlLhHrsqoEFGPaZz", valued: "emABC", long: GREP_LONG, operands: "pattern" },
+  egrep: { flags: "iIvwxcnlLhHrsqoaZz", valued: "emABC", long: GREP_LONG, operands: "pattern" },
+  fgrep: { flags: "iIvwxcnlLhHrsqoaZz", valued: "emABC", long: GREP_LONG, operands: "pattern" },
+  rg: { flags: "iISsnNlcwxuvHFoq0U", valued: "egtTmABCM", long: RG_LONG, operands: "pattern" },
+  find: { operands: "find" },
+  stat: { flags: "Lft", valued: "c", long: ["--format=", "--terse", "--dereference", "--file-system"], operands: "paths" },
+  pwd: { flags: "LP", operands: "none" },
+  true: { operands: "none" },
+  cd: { operands: "dir", max: 1 },
+  sed: { flags: "nErsuz", valued: "e", operands: "sed" },
+  sort: { flags: "bdfgiMhnRrsuVcCz", valued: "kt", operands: "paths" },
+  uniq: { flags: "cdDiuz", valued: "fsw", operands: "paths", max: 1 },
+  cut: { flags: "sz", valued: "dfcb", long: ["--complement"], operands: "paths" },
+  tr: { flags: "cCdst", operands: "text" },
+  nl: { flags: "p", valued: "bdfhinsvlw", operands: "paths" },
+  echo: { flags: "neE", operands: "text" },
+  basename: { flags: "az", valued: "s", operands: "text" },
+  dirname: { flags: "z", operands: "text" },
+  realpath: { flags: "emsqz", operands: "paths" },
+  du: { flags: "sahckmx", valued: "d", long: ["--max-depth=", "--summarize", "--human-readable"], operands: "paths" },
+};
+const FIND_VALUED = new Set(["-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-type", "-maxdepth", "-mindepth", "-size", "-mtime", "-mmin", "-perm", "-user", "-group", "-regex", "-iregex"]);
+const FIND_PLAIN = new Set(["-print", "-print0", "-empty", "-prune", "-not", "!", "-o", "-a", "-or", "-and", "-true", "-false", "-depth", "-xdev"]);
 const SED_PRINT = /^\s*(\d+|\$)?\s*(,\s*(\d+|\$)\s*)?p\s*$/;
 
-type Word = { text: string; bare: boolean };
+type Word = { text: string };
 type Token = Word | { op: string };
 
 function lex(command: string): Token[] | undefined {
@@ -16,7 +49,7 @@ function lex(command: string): Token[] | undefined {
     if (c === "'") {
       const close = command.indexOf("'", at + 1);
       if (close < 0) return undefined;
-      word = { text: (word?.text ?? "") + command.slice(at + 1, close), bare: false };
+      word = { text: (word?.text ?? "") + command.slice(at + 1, close) };
       at = close;
     } else if (c === '"') {
       let text = "";
@@ -25,60 +58,124 @@ function lex(command: string): Token[] | undefined {
         if (command[at] === "\\" && '"\\'.includes(command[at + 1] ?? "")) at++;
         text += command[at];
       }
-      word = { text: (word?.text ?? "") + text, bare: false };
+      word = { text: (word?.text ?? "") + text };
     } else if (c === "\\") {
       if (command[at + 1] === "\n") { at++; continue; }
       if (at + 1 >= command.length) return undefined;
-      word = { text: (word?.text ?? "") + command[++at], bare: false };
+      word = { text: (word?.text ?? "") + command[++at] };
     } else if (c === " " || c === "\t") end();
     else if ("|&;<>\n".includes(c)) {
-      const fd = word?.bare && /^[12]$/.test(word.text) && command[at] === ">" ? word.text : "";
+      const fd = word && /^[12]$/.test(word.text) && c === ">" && !/\S/.test(command[at - 2] ?? "") && /\d/.test(command[at - 1] ?? "") ? word.text : "";
       if (fd) word = undefined; else end();
       let op = c === "\n" ? ";" : c;
       while (at + 1 < command.length && "|&<>".includes(command[at + 1]!) && op.length < 2) op += command[++at];
       tokens.push({ op: fd + op });
-    } else if ("$`(){}#".includes(c)) return undefined;
-    else word = { text: (word?.text ?? "") + c, bare: word ? word.bare : true };
+    } else if ("$`(){}#*?[~".includes(c)) return undefined;
+    else word = { text: (word?.text ?? "") + c };
   }
   end();
   return tokens;
 }
 
-/** Whether a shell command only reads files and folders under root, so it can run for real on a copy of them. */
-export function readsOnly(command: string, root: string, cwd: string = root): boolean {
+function parse(spec: Spec, args: string[]): { operands: string[]; values: Map<string, string[]> } | undefined {
+  const operands: string[] = [], values = new Map<string, string[]>();
+  const add = (key: string, value: string) => values.set(key, [...values.get(key) ?? [], value]);
+  for (let at = 0; at < args.length; at++) {
+    const arg = args[at]!;
+    if (arg === "--") { operands.push(...args.slice(at + 1)); break; }
+    if (arg === "-" || !arg.startsWith("-")) { operands.push(arg); continue; }
+    if (arg.startsWith("--")) {
+      const equals = arg.indexOf("=");
+      const name = equals < 0 ? arg : arg.slice(0, equals);
+      if (equals >= 0) { if (!spec.long?.includes(name + "=")) return undefined; add(name, arg.slice(equals + 1)); continue; }
+      if (spec.long?.includes(name)) continue;
+      if (!spec.long?.includes(name + "=") || at + 1 >= args.length) return undefined;
+      add(name, args[++at]!);
+      continue;
+    }
+    if (spec.numeric && /^-\d+$/.test(arg)) continue;
+    for (let i = 1; i < arg.length; i++) {
+      const letter = arg[i]!;
+      if (spec.flags?.includes(letter)) continue;
+      if (!spec.valued?.includes(letter)) return undefined;
+      const value = i + 1 < arg.length ? arg.slice(i + 1) : args[++at];
+      if (value === undefined) return undefined;
+      add("-" + letter, value);
+      break;
+    }
+  }
+  return { operands, values };
+}
+
+/**
+ * Whether a shell command only reads files and folders under root, so it can run for real on a copy of them.
+ * root is the folder as the session saw it; copy is where those files are on this machine (root itself by default),
+ * used to refuse paths that leave the copy through a symlink.
+ */
+export function readsOnly(command: string, root: string, cwd: string = root, copy: string = root): boolean {
   const tokens = lex(command);
   const last = tokens?.at(-1);
   if (!tokens?.some(token => "text" in token) || (last && "op" in last && last.op !== ";")) return false;
-  const under = (path: string) => { const rest = relative(root, path); return rest === "" || (!rest.startsWith("..") && !isAbsolute(rest)); };
-  if (!under(cwd)) return false;
-  const commands: string[][] = [[]];
+  const lexically = (path: string) => { const rest = relative(root, path); return rest === "" || (!rest.startsWith("..") && !isAbsolute(rest)); };
+  const base = existsSync(copy) ? realpathSync(copy) : undefined;
+  const inside = (path: string) => {
+    if (path === "/dev/null") return true;
+    if (!lexically(path)) return false;
+    if (!base) return true;
+    let existing = join(copy, relative(root, path)), rest = "";
+    while (!existsSync(existing)) { rest = join(existing.slice(dirname(existing).length + 1), rest); existing = dirname(existing); }
+    const real = relative(base, join(realpathSync(existing), rest));
+    return real === "" || (!real.startsWith("..") && !isAbsolute(real));
+  };
+  if (!lexically(cwd)) return false;
+  const commands: { words: string[]; before?: string; after?: string }[] = [{ words: [] }];
   for (let at = 0; at < tokens.length; at++) {
     const token = tokens[at]!;
-    if ("text" in token) { commands.at(-1)!.push(token.text); continue; }
-    if (["|", "&&", "||", ";"].includes(token.op)) { if (!commands.at(-1)!.length) return false; commands.push([]); continue; }
+    if ("text" in token) { commands.at(-1)!.words.push(token.text); continue; }
+    if (["|", "&&", "||", ";"].includes(token.op)) {
+      if (!commands.at(-1)!.words.length) return false;
+      commands.at(-1)!.after = token.op;
+      commands.push({ words: [], before: token.op });
+      continue;
+    }
     const target = tokens[at + 1];
     if (!target || !("text" in target)) return false;
     if (/^[12]?>&$/.test(token.op) ? !/^[12]$/.test(target.text) : !(/^([12]?>>?|&>)$/.test(token.op) && target.text === "/dev/null")) return false;
     at++;
   }
-  if (!commands.at(-1)!.length) commands.pop();
-  for (const [name, ...args] of commands) {
-    if (!COMMANDS.has(name!)) return false;
-    const options = args.filter(arg => arg.startsWith("-") && arg !== "-");
-    const operands = args.filter(arg => !options.includes(arg));
-    const short = (letters: string) => options.some(option => !option.startsWith("--") && [...letters].some(letter => option.slice(1).includes(letter)));
-    const long = (...names: string[]) => options.some(option => names.some(name => option === name || option.startsWith(`${name}=`)));
-    if (name === "tail" && (short("fF") || long("--follow", "--retry"))) return false;
-    if (name === "sort" && (short("o") || long("--output", "--compress-program"))) return false;
-    if (name === "uniq" && operands.length > 1) return false;
-    if (name === "rg" && long("--pre", "--pre-glob", "--search-zip")) return false;
-    if (name === "find" && args.some(arg => FIND_ACTIONS.has(arg))) return false;
-    if (name === "sed" && (!short("n") || short("ief") || long("--in-place", "--expression", "--file") || operands.length < 1 || !SED_PRINT.test(operands[0]!))) return false;
-    for (const arg of [...operands, ...options.map(option => option.split("=").slice(1).join("="))]) {
-      if (arg.startsWith("~")) return false;
-      if ((isAbsolute(arg) || arg.split("/").includes("..")) && arg !== "/dev/null" && !under(resolve(cwd, arg))) return false;
+  if (!commands.at(-1)!.words.length) commands.pop();
+  const changesDirectory = commands.some(({ words }) => words[0] === "cd");
+  if (changesDirectory && tokens.some(token => "op" in token && (token.op === "||" || token.op === ";"))) return false;
+  for (const { words: [name, ...args], before, after } of commands) {
+    const spec = SPECS[name!];
+    if (!spec) return false;
+    const parsed = parse(spec, name === "find" ? [] : args);
+    if (!parsed) return false;
+    let { operands } = parsed;
+    const paths: string[] = [];
+    if (spec.operands === "paths") paths.push(...operands);
+    else if (spec.operands === "none" && operands.length) return false;
+    else if (spec.operands === "pattern") paths.push(...(parsed.values.has("-e") || parsed.values.has("--regexp") || parsed.values.has("--files") || args.includes("--files") ? operands : operands.slice(1)));
+    else if (spec.operands === "sed") {
+      const scripts = parsed.values.get("-e") ?? operands.slice(0, 1);
+      if (!args.some(arg => /^-[a-z]*n/i.test(arg) && !arg.startsWith("--")) || !scripts.length || !scripts.every(script => SED_PRINT.test(script))) return false;
+      paths.push(...(parsed.values.has("-e") ? operands : operands.slice(1)));
+    } else if (spec.operands === "find") {
+      let at = 0;
+      while (at < args.length && !args[at]!.startsWith("-") && args[at] !== "!") paths.push(args[at++]!);
+      for (; at < args.length; at++) {
+        const arg = args[at]!;
+        if (arg === "-newer") { if (at + 1 >= args.length) return false; paths.push(args[++at]!); }
+        else if (FIND_VALUED.has(arg)) { if (++at >= args.length) return false; }
+        else if (!FIND_PLAIN.has(arg)) return false;
+      }
+    } else if (spec.operands === "dir") {
+      if (operands.length !== 1 || (before && before !== "&&") || after !== "&&") return false;
+      paths.push(operands[0]!);
     }
-    if (name === "cd") { if (operands.length !== 1) return false; cwd = resolve(cwd, operands[0]!); }
+    if (spec.max !== undefined && operands.length > spec.max) return false;
+    if (!paths.every(path => inside(resolve(cwd, path)))) return false;
+    if (name === "cd") cwd = resolve(cwd, operands[0]!);
   }
   return true;
 }

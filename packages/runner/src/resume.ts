@@ -118,8 +118,8 @@ export async function resumeAttempt(input: {
       if ((moment.in_box?.[connector] ?? []).includes(op)) return true;
       const shell = moment.shell?.[connector]?.[op];
       const given = args as Record<string, unknown>;
-      const command = shell && given[shell.command], cwd = shell?.cwd ? given[shell.cwd] : moment.cwd;
-      return typeof command === "string" && readsOnly(command, project.root, typeof cwd === "string" ? cwd : undefined);
+      const command = shell && given[shell.command], cwd = (shell?.cwd ? given[shell.cwd] : undefined) ?? moment.cwd;
+      return typeof command === "string" && readsOnly(command, project.root, typeof cwd === "string" ? cwd : undefined, join(box, "project"));
     },
     ...(input.simulator ? { simulator: input.simulator } : {}),
     cutTime: bundle.manifest.clock?.time ?? new Date().toISOString(),
