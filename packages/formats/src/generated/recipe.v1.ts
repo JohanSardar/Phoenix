@@ -126,7 +126,7 @@ export interface RecipeDescriptor {
      */
     command: string[];
     /**
-     * Per LLM provider, the hosts the box may reach on port 443. Phoenix passes such a connection on unread when its TLS hello names that host, and refuses every other way out.
+     * Per LLM provider, the hosts the box may reach directly. Nothing from Phoenix sits between the harness and these hosts.
      */
     llm_hosts: {
       /**

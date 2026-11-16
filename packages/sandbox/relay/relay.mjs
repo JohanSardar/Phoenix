@@ -2,6 +2,8 @@ import net from "node:net";
 import dgram from "node:dgram";
 import fs from "node:fs";
 import readline from "node:readline";
+import { execFileSync } from "node:child_process";
+import { Resolver } from "node:dns/promises";
 
 const path = "/run/phoenix/engine.sock";
 if (process.argv[2] === "bridge") {
@@ -19,6 +21,23 @@ if (process.argv[2] === "bridge") {
   const hosts = new Map();
   const sockets = new Map();
   const send = (message) => engine?.write(JSON.stringify(message) + "\n");
+  const direct = new Set(JSON.parse(process.env.PHOENIX_DIRECT_HOSTS ?? "[]").map((host) => host.toLowerCase()));
+  const resolved = new Map();
+  if (direct.size) {
+    const servers = fs.readFileSync("/etc/resolv.conf", "utf8").split("\n").flatMap((line) => /^nameserver\s+(\d+\.\d+\.\d+\.\d+)\s*$/.exec(line)?.[1] ?? []);
+    if (!servers.length) throw new Error("No IPv4 nameserver for direct hosts");
+    const upstream = new Resolver({ timeout: 3000, tries: 2 });
+    upstream.setServers(servers);
+    for (const host of direct) resolved.set(host, (await upstream.resolve4(host)).slice(0, 8));
+    const rule = (...args) => execFileSync("iptables", args, { stdio: "ignore" });
+    rule("-N", "PHOENIX_DIRECT");
+    for (const ip of new Set([...resolved.values()].flat())) rule("-A", "PHOENIX_DIRECT", "-d", ip, "-p", "tcp", "--dport", "443", "-j", "ACCEPT");
+    rule("-A", "OUTPUT", "-o", "lo", "-j", "ACCEPT");
+    rule("-A", "OUTPUT", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT");
+    rule("-A", "OUTPUT", "-j", "PHOENIX_DIRECT");
+    rule("-P", "OUTPUT", "DROP");
+    try { execFileSync("ip6tables", ["-P", "OUTPUT", "DROP"], { stdio: "ignore" }); } catch {}
+  }
   const forward = (socket, key) => {
     sockets.set(key, socket);
     socket.on("data", (data) => send({ type: "data", id: key, data: data.toString("base64") }));
@@ -49,7 +68,7 @@ if (process.argv[2] === "bridge") {
   });
   control.listen(path);
   const dns = dgram.createSocket("udp4");
-  dns.on("message", (query, peer) => {
+  dns.on("message", async (query, peer) => {
     try {
       if (query.length < 17 || query.readUInt16BE(4) !== 1) return;
       let p = 12;
@@ -70,7 +89,13 @@ if (process.argv[2] === "bridge") {
       header.writeUInt32BE(0, 8);
       const question = query.subarray(12, p + 4);
       let answer = Buffer.alloc(0);
-      if (type === 1) {
+      if (direct.has(host)) {
+        if (type === 1) {
+          const ips = resolved.get(host);
+          header.writeUInt16BE(ips.length, 6);
+          answer = Buffer.concat(ips.map((ip) => Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 30, 0, 4, ...ip.split(".").map(Number)])));
+        }
+      } else if (type === 1) {
         if (!names.has(host)) {
           if (address >= 0xfffffe) return;
           const ip = `127.${address >> 16}.${(address >> 8) & 255}.${address & 255}`;

@@ -31,6 +31,7 @@ export interface SandboxSpec {
   virtualTime?: string;
   faketimeLibrary?: string;
   dontFakeMonotonic?: boolean;
+  directHosts?: string[];
 }
 
 export interface SandboxProcess {
@@ -42,6 +43,7 @@ export interface SandboxProcess {
   interrupted: Promise<Error>;
   clock: ClockReport;
   exec(argv: string[]): Promise<CommandResult>;
+  egress?(): Promise<CommandResult>;
   stop(): Promise<void>;
 }
 

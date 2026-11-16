@@ -552,7 +552,7 @@ Stdio MCP entries point at a shim that relays to the engine, and CLI shims do th
 
 The container reaches only the engine, the engine forwards only inference operations, and no real credential enters the container. No flag turns any of these off.
 
-**Resumed replays (ADR 0007).** When the box resumes the harness's own session, the harness talks to its LLM itself, with its own login. The box still has no network. The runner passes a connection on only when it goes to an LLM host the recipe names, on port 443, and its TLS hello names that same host. It reads that one name and forwards the encrypted bytes unchanged. Every other connection, DNS included, goes to the engine, which answers tool calls and nothing else.
+**Resumed replays (ADR 0007).** When the box resumes the harness's own session, the harness talks to its LLM itself, with its own login, and nothing from Phoenix is in that path. The relay looks up the recipe's LLM hosts once, before the harness starts, and the box may reach only those addresses on port 443. Every other connection, DNS included, goes to the engine, which answers tool calls and nothing else. Known limit, by Johan's decision on 2026-11-16: another site on the LLM provider's shared addresses can be reached on port 443. Closing it would put a gate in the LLM's path, which he ruled out. Don't add one.
 
 ### 3.10 Virtual clock
 
