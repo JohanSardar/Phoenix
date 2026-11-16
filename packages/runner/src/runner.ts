@@ -55,12 +55,14 @@ async function sampleTrace(root: string): Promise<{ events: TraceEvent[]; body(e
 function answerSources(trace: readonly TraceEvent[]): NonNullable<Sample["answers"]> {
   const results = trace.filter(e => e.kind === "result" && e.stream.startsWith("stand-in"));
   const madeUp = results.filter(e => e.provenance === "synthesized");
+  const afterUntaken = results.filter(e => e.after_untaken_write);
   return {
     session: results.filter(e => e.resolver === "recorded").length,
     files_copy: results.filter(e => e.resolver === "files-copy").length,
     working_copy: results.filter(e => e.resolver === "overlay" || e.resolver === "emulator").length,
     made_up: madeUp.length,
     made_up_calls: madeUp.map(e => ({ connector: e.connector ?? "", op: e.op ?? "" })),
+    ...(afterUntaken.length ? { after_untaken_write_calls: afterUntaken.map(e => ({ connector: e.connector ?? "", op: e.op ?? "" })) } : {}),
   };
 }
 

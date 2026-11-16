@@ -1,0 +1,19 @@
+{
+  "name": "@phoenix/plugin-email",
+  "version": "0.0.0",
+  "description": "A working copy of a Gmail mailbox for Phoenix: answers the claude.ai Gmail connector and himalaya from one mailbox",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "phoenix-plugin.json",
+    "Dockerfile",
+    "src/",
+    "README.md"
+  ],
+  "exports": {
+    "./phoenix-plugin.json": "./phoenix-plugin.json"
+  },
+  "license": "MIT"
+}
