@@ -98,4 +98,5 @@ process.stdout.write(JSON.stringify({
   },
   answers,
   read_only: readOnly,
+  shell: { "codex-shell": { exec: { command: "command", cwd: "cwd" } } },
 }) + "\n");

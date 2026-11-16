@@ -2,8 +2,10 @@ export type ModelDialect = "messages" | "chat-completions" | "responses" | "gene
 
 export interface ModelConfiguration {
   model: string;
-  endpoint: string;
-  dialect: ModelDialect;
+  endpoint?: string;
+  dialect?: ModelDialect;
+  command?: readonly string[];
+  cwd?: string;
   maxOutputTokens: number;
   temperature?: number;
 }
