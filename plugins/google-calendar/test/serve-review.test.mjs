@@ -111,3 +111,13 @@ test("S6: creating a weekly series without an end date is supported", { timeout:
   const reply = await call("create-events", { calendarId, timeZone: "UTC", sendUpdates: "none", events: [{ summary: "[phoenix-test] weekly", start: "2026-11-16T10:00:00Z", end: "2026-11-16T11:00:00Z", recurrence: ["RRULE:FREQ=WEEKLY"] }] });
   assert.equal(payload(reply).totalCreated, 1);
 });
+
+test("S8: a series time change must not discard a seeded field-only exception", { timeout: 20000 }, async t => {
+  const changed = { ...instances[1], summary: "[phoenix-test] changed occurrence" };
+  const call = await start(t, [listed([instances[0], changed]), observed("get-event", { calendarId, eventId: master.id }, { event: master })]);
+  const reply = await call("update-event", { calendarId, eventId: master.id, modificationScope: "all", end: "2026-11-16T12:00:00Z", checkConflicts: false, sendUpdates: "none" });
+  if (reply.status === "unsupported") return;
+  payload(reply);
+  const got = payload(await call("get-event", { calendarId, eventId: changed.id })).event;
+  assert.equal(got.summary, changed.summary, "Moving the series must preserve the exception or return unsupported before mutating it");
+});
