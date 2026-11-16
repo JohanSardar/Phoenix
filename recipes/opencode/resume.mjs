@@ -12,7 +12,7 @@ const marker = box.continue ? "PHOENIX_CONTINUE_" + randomUUID() : "";
 const env = {
   ...process.env, HOME: home,
   XDG_DATA_HOME: join(home, "data"), XDG_CONFIG_HOME: join(home, "config"), XDG_CACHE_HOME: join(home, "cache"), XDG_STATE_HOME: join(home, "state"),
-  OPENCODE_DISABLE_AUTOUPDATE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_MODELS_PATH: "/opt/opencode/models.json", OPENCODE_DISABLE_LSP_DOWNLOAD: "1",
+  OPENCODE_DISABLE_AUTOUPDATE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_MODELS_PATH: "/opt/opencode/models.json", OPENCODE_DISABLE_LSP_DOWNLOAD: "1", npm_config_offline: "true",
   PHOENIX_OPENCODE_LOADOUT: join(home, "loadout.json"), ...(marker ? { PHOENIX_OPENCODE_CONTINUE: marker } : {}),
 };
 for (const dir of ["data/opencode", "config/opencode/plugins", "cache", "state"]) mkdirSync(join(home, dir), { recursive: true });
