@@ -15,6 +15,11 @@ const keyOf = (method, path, search) => {
   query.sort();
   return `${method} ${path}?${query}`;
 };
+const listKey = url => {
+  const query = new URLSearchParams(url.search);
+  for (const name of ["query", "limit", "per_page", "cursor"]) query.delete(name);
+  return keyOf("GET", url.pathname, query.toString());
+};
 const parse = text => { try { return JSON.parse(text); } catch { return undefined; } };
 const tokens = query => query.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
 const micro = iso => iso.replace(/\.(\d{3})Z$/, ".$1000Z");
@@ -23,6 +28,7 @@ export function createCopy(snapshot) {
   const recorded = new Map();
   const issues = new Map();
   const alias = new Map();
+  const listed = new Map();
   let user;
   let first = 9_000_000_000n;
   const issue = id => { if (!issues.has(id)) issues.set(id, { id }); return issues.get(id); };
@@ -43,6 +49,8 @@ export function createCopy(snapshot) {
       const found = issue(item.id);
       found.org = match[1];
       found.item ??= item;
+      if (!listed.has(listKey(url))) listed.set(listKey(url), new Map());
+      listed.get(listKey(url)).set(item.id, item);
       for (const ref of [item.id, item.shortId]) alias.set(`${match[1]}/${ref}`, item.id);
     }
     const activity = Array.isArray(body?.activity) ? body.activity : NOTES.test(url.pathname) && Array.isArray(body) ? body : [];
@@ -90,31 +98,29 @@ export function createCopy(snapshot) {
     if (!ids.length) return line;
     const items = parse(line.body);
     if (!Array.isArray(items)) return line;
-    const query = url.searchParams.get("query") ?? "";
-    const words = tokens(query);
-    const status = words.filter(word => /^!?is:/.test(word));
-    const other = words.filter(word => !/^!?is:/.test(word));
-    const matches = item => status.every(word => {
+    const project = url.searchParams.get("project");
+    const org = ISSUES.exec(url.pathname)[1];
+    const inScope = ids.map(id => issues.get(id)).filter(found => found?.org === org && (!project || found.item?.project?.id === project || found.detail?.project?.id === project));
+    if (!inScope.length) return line;
+    const words = tokens(url.searchParams.get("query") ?? "");
+    const unknown = words.filter(word => !STATUS[/^!?is:(.+)$/.exec(word)?.[1]]);
+    if (unknown.length) return miss(method, url.pathname, `can't tell if a changed issue matches ${unknown.join(" ")}`);
+    const matches = item => words.every(word => {
       const [, not, value] = /^(!?)is:(.+)$/.exec(word);
-      const rule = STATUS[value];
-      if (!rule) return undefined;
-      return (item[rule[0]] === rule[1]) !== !!not;
+      const [field, wanted] = STATUS[value];
+      return (item[field] === wanted) !== !!not;
     });
-    if (status.some(word => !STATUS[word.replace(/^!?is:/, "")]) && items.some(item => changed(item.id))) return miss(method, url.pathname, `can't evaluate ${status.join(" ")} after the replay's writes`);
     const hits = Number(line.headers.find(([name]) => name === "x-hits")?.[1] ?? items.length);
     const limit = Number(url.searchParams.get("limit") ?? url.searchParams.get("per_page") ?? 100);
     const kept = items.map(item => current(item, item.id)).filter(matches);
-    const project = url.searchParams.get("project");
-    const org = ISSUES.exec(url.pathname)[1];
-    const added = ids.filter(id => !items.some(item => item.id === id)).map(id => issues.get(id)).filter(found => found?.org === org && (!project || found.item?.project?.id === project || found.detail?.project?.id === project));
-    const entering = added.filter(found => status.length && matches(current(found.item ?? found.detail, found.id)));
+    const entering = inScope.filter(found => !items.some(item => item.id === found.id) && matches(current(found.item ?? found.detail, found.id)));
     if (entering.length) {
-      if (other.length) return miss(method, url.pathname, `can't tell if a changed issue matches ${other.join(" ")}`);
-      if (entering.some(found => !found.item)) return miss(method, url.pathname, "a changed issue was never seen in a list");
+      const seen = listed.get(listKey(url));
+      if (entering.some(found => !seen?.has(found.id))) return miss(method, url.pathname, "a changed issue was never seen in a list with these filters");
       const field = SORT[url.searchParams.get("sort") ?? "date"];
       if (!field) return miss(method, url.pathname, "unknown sort");
       const value = item => field === "count" || field === "userCount" ? Number(item[field]) : Date.parse(item[field]);
-      kept.push(...entering.map(found => current(found.item, found.id)));
+      kept.push(...entering.map(found => current(seen.get(found.id), found.id)));
       kept.sort((a, b) => value(b) - value(a));
     }
     if (kept.length < items.length && hits > items.length) return miss(method, url.pathname, "the next page after a removed issue was never seen");
