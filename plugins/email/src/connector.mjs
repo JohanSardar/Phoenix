@@ -302,7 +302,7 @@ export class Connector {
     const counts = this.box.threadCounts, from = m.threadId, weight = m.labelIds.includes("DRAFT") ? 0 : 1;
     const alone = !this.box.thread(from).some(o => o !== m);
     if (counts.has(threadId)) counts.set(threadId, counts.get(threadId) + weight);
-    else if (alone && counts.has(from) && !this.box.thread(threadId).length) counts.set(threadId, counts.get(from));
+    else if (!this.box.thread(threadId).length && (threadId === m.id || (alone && counts.has(from)))) counts.set(threadId, alone && counts.has(from) ? counts.get(from) : weight);
     if (alone) counts.delete(from);
     else if (counts.has(from)) counts.set(from, counts.get(from) - weight);
     m.threadId = threadId;

@@ -101,10 +101,11 @@ test("S19: adopting a new forward thread preserves the original complete thread"
   const request = await serve(t, "snapshot.json", JSON.stringify({ account: { email: me }, labels: [] }));
   const old = await mcp(request, "send_message", { to: ["ana@example.com"], subject: "[phoenix-test] original", body: "Original" });
   assert.equal((await mcp(request, "get_thread", { threadId: old.threadId })).messageCount, 1);
-  await mcp(request, "forward", { messageId: old.id, to: ["ben@example.com"], forwardText: "Forward" }, {
+  const forwarded = await mcp(request, "forward", { messageId: old.id, to: ["ben@example.com"], forwardText: "Forward" }, {
     id: "1a1e6171bb000002", threadId: "1a1e6171bb000002",
   });
   assert.equal((await mcp(request, "get_thread", { threadId: old.threadId })).messageCount, 1);
+  assert.equal((await mcp(request, "get_thread", { threadId: forwarded.threadId })).messageCount, 1);
 });
 
 test("S20: matching subjects alone must not bind a different sender's recorded UID", async t => {
