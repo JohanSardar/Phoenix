@@ -213,7 +213,8 @@
         "real",
         "recorded",
         "derived",
-        "synthesized"
+        "synthesized",
+        "seeded"
       ]
     },
     "resolver": {

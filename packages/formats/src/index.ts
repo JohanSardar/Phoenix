@@ -13,6 +13,7 @@ import harnessV1 from "@phoenix/spec/schemas/harness.v1.json" with { type: "json
 import bindingsV1 from "@phoenix/spec/schemas/bindings.v1.json" with { type: "json" };
 import recipeV1 from "@phoenix/spec/schemas/recipe.v1.json" with { type: "json" };
 import pluginV1 from "@phoenix/spec/schemas/plugin.v1.json" with { type: "json" };
+import madeUpV1 from "@phoenix/spec/schemas/made-up.v1.json" with { type: "json" };
 import type { TraceEvent } from "./generated/trace.v1.ts";
 import type { WorkdirSnapshot } from "./generated/workdir.v1.ts";
 import type { MomentManifest } from "./generated/moment.v1.ts";
@@ -26,6 +27,7 @@ import type { HarnessContract } from "./generated/harness.v1.ts";
 import type { Bindings } from "./generated/bindings.v1.ts";
 import type { RecipeDescriptor } from "./generated/recipe.v1.ts";
 import type { PluginDescriptor } from "./generated/plugin.v1.ts";
+import type { MadeUpMoment } from "./generated/made-up.v1.ts";
 
 export type { TraceEvent } from "./generated/trace.v1.ts";
 export type { WorkdirSnapshot } from "./generated/workdir.v1.ts";
@@ -40,6 +42,7 @@ export type { HarnessContract } from "./generated/harness.v1.ts";
 export type { Bindings } from "./generated/bindings.v1.ts";
 export type { RecipeDescriptor } from "./generated/recipe.v1.ts";
 export type { PluginDescriptor } from "./generated/plugin.v1.ts";
+export type { MadeUpMoment } from "./generated/made-up.v1.ts";
 
 export interface FormatTypes {
   trace: TraceEvent;
@@ -55,6 +58,7 @@ export interface FormatTypes {
   bindings: Bindings;
   recipe: RecipeDescriptor;
   plugin: PluginDescriptor;
+  "made-up": MadeUpMoment;
 }
 export type FormatName = keyof FormatTypes;
 
@@ -72,6 +76,7 @@ export const FORMATS = {
   bindings: { label: "bindings", versionField: "phoenix_bindings", schemas: { 1: bindingsV1 } },
   recipe: { label: "recipe descriptor", versionField: "phoenix_recipe", schemas: { 1: recipeV1 } },
   plugin: { label: "plugin descriptor", versionField: "phoenix_plugin", schemas: { 1: pluginV1 } },
+  "made-up": { label: "made-up moment", versionField: "phoenix_made_up", schemas: { 1: madeUpV1 } },
 } as const satisfies Record<FormatName, { label: string; versionField: string; schemas: Record<number, object> }>;
 
 export type VersionCheck = { ok: true; version: number } | { ok: false; error: string };

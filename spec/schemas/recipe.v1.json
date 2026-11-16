@@ -237,7 +237,7 @@
             "type": "string"
           },
           "minItems": 1,
-          "description": "Host command, run in the recipe directory: reads the session file on stdin, takes --at <line>, prints the session moment JSON."
+          "description": "Host command, run in the recipe directory: reads the session file on stdin, takes --at <line> or --from-beginning, and --change <line>=<file> for each tool answer to change, then prints the session moment JSON."
         },
         "login": {
           "type": "array",
@@ -258,6 +258,26 @@
           },
           "minItems": 1,
           "description": "Command run inside the box."
+        },
+        "locate": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Host command, run in the recipe directory: given --cwd <folder>, prints the path of the session file the harness is writing for that folder. phoenix mark uses it."
+        },
+        "compose": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Host command, run in the recipe directory: reads a made-up moment as JSON on stdin and prints a session file whose last turn is the prompt."
+        },
+        "from_beginning_only": {
+          "type": "boolean",
+          "description": "The harness has no resume command. Its replays always start again from the first message."
         },
         "llm_hosts": {
           "type": "object",

@@ -14,6 +14,7 @@ export interface RecordedToolAnswer {
   result: unknown;
   observedAt: string;
   beforeCut: boolean;
+  world?: "exact" | "any-args";
 }
 
 export interface ToolStandInOptions {
@@ -45,7 +46,8 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
     const op = `tools/call:${answer.op}`;
     const request = { body: rpc(position, { method: "tools/call", params: { name: answer.op, arguments: answer.args } }) };
     const call = toCall({ surface: "mcp", connector: answer.connector, op, args: answer.args, raw: request }, policy(answer.connector));
-    return { ...call, id: answer.id, history: [], frozen: answer.beforeCut, position, completed: position, observedAt: answer.observedAt, provenance: "recorded", request, response: { body: rpc(position, { result: answer.result }) }, during: [], after: [] };
+    const world = answer.world ? { key: `world:${call.key}`, anyArgs: answer.world === "any-args", provenance: "seeded" as const } : { provenance: "recorded" as const };
+    return { ...call, id: answer.id, history: [], frozen: answer.beforeCut, position, completed: position, observedAt: answer.observedAt, request, response: { body: rpc(position, { result: answer.result }) }, during: [], after: [], ...world };
   });
   for (const exchange of exchanges) exchange.history = exchanges.filter(w => w.connector === exchange.connector && !w.readOnly && w.completed < exchange.position).map(w => w.key);
   const index: ExchangeIndex = { exchanges, prefetch: [], frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), notifications: new Map(), startTime: options.cutTime, cutTime: options.cutTime };

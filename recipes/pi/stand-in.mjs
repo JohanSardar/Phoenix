@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createEditToolDefinition, createFindToolDefinition, createGrepToolDefinition, createLsToolDefinition, createReadToolDefinition, createWriteToolDefinition } from "@earendil-works/pi-coding-agent";
-import { adapterCall } from "./adapter.mjs";
+import { adapterCall, withoutNulls } from "./adapter.mjs";
 
 const loadout = JSON.parse(readFileSync(process.env.PHOENIX_PI_LOADOUT, "utf8"));
 const url = process.env.PHOENIX_TOOLS_URL;
@@ -17,7 +17,7 @@ export default function standIn(pi) {
       parameters: tool.parameters,
       ...(tool.constrainedSampling ? { constrainedSampling: tool.constrainedSampling } : {}),
       async execute(toolCallId, params, signal, onUpdate, ctx) {
-        const { connector, op, args } = tool.adapter?.proxy ? adapterCall(tool.name, params, loadout.adapter) : { connector: tool.connector, op: tool.op, args: params };
+        const { connector, op, args } = tool.adapter?.proxy ? adapterCall(tool.name, params, loadout.adapter) : { connector: tool.connector, op: tool.op, args: withoutNulls(params) };
         const ask = (method, payload) => fetch(`${url}/${encodeURIComponent(connector)}`, {
           method: "POST",
           headers: { "content-type": "application/json", "x-phoenix-tool-call": toolCallId },

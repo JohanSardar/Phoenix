@@ -274,7 +274,8 @@
                 "overlay",
                 "emulator",
                 "prefetch",
-                "simulator"
+                "simulator",
+                "world"
               ]
             },
             "description": "Answer-chain steps removed for this connector."
@@ -440,6 +441,55 @@
               "type": "array",
               "items": { "type": "string" },
               "description": "Files not in the copy: over 1 MB, or binary and over 64 KB. They are missing inside the box."
+            }
+          }
+        },
+        "from_beginning": {
+          "type": "boolean",
+          "description": "The replay starts at the session's first message, with its original prompt."
+        },
+        "changed_answers": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": "Session lines of recorded tool answers that a person changed before the replay."
+        },
+        "made_up": {
+          "type": "boolean",
+          "description": "The moment never happened live. A person wrote its messages and its world."
+        },
+        "marked": {
+          "type": "object",
+          "required": ["at", "world"],
+          "description": "Set when the moment came from phoenix mark.",
+          "properties": {
+            "at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the mark was made."
+            },
+            "note": {
+              "type": "string"
+            },
+            "world": {
+              "type": "object",
+              "required": ["files", "services"],
+              "description": "What the mark saved of the world at that time.",
+              "properties": {
+                "files": {
+                  "enum": ["saved", "not saved"],
+                  "description": "saved: a copy of the project's files as they were at the mark."
+                },
+                "services": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Per service with a working copy, saved or why not."
+                }
+              }
             }
           }
         }

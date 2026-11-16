@@ -8,3 +8,4 @@ export { snapshot } from "./snapshot.ts";
 export { readDescriptor, applyRecipe } from "./recipe.ts";
 export { capturePlugin, type PluginCaptureOptions } from "./plugin-capture.ts";
 export type { CaptureTarget } from "./plugin-connection.ts";
+export { markSession, readMark, type Mark, type MarkOptions, type ServiceAnswer } from "./mark.ts";

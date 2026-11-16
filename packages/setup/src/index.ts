@@ -1,6 +1,7 @@
 export { createSnapshotMoment, createScenarioMoment } from "./manual.ts";
 export type { SnapshotMomentOptions } from "./manual.ts";
-export { createSessionMoment, type SessionMomentOptions } from "./session.ts";
+export { createSessionMoment, type SessionAnswer, type SessionMomentOptions } from "./session.ts";
+export { composeMadeUp, type ComposedMoment } from "./made-up.ts";
 export { setupSnapshotMoment } from "./auto.ts";
 export type { AutoSetupOptions } from "./auto.ts";
 export type { FilledItem, MissingItem } from "./fill.ts";

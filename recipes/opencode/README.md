@@ -98,6 +98,9 @@ Put the image ID and the path to `recipe.yaml` in the Workbench settings.
 - In the box, OpenCode may read and write outside the project folder without
   asking, because everything there is a copy. A harness's own
   `permission.external_directory` rule still wins.
+- The replays that proved this recipe did not run on the sessions' own LLMs.
+  One session's LLM is retired, and the other's provider returned an error, so
+  both harnesses named an OpenCode Go LLM in `opencode.json`.
 - Permission rules on command patterns are not applied to stand-in tools.
 - Subagents started by `task` are answered from the session, not run again.
 - The resumed run uses the real clock.

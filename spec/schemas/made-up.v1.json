@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phoenix:made-up:v1",
+  "title": "MadeUpMoment",
+  "description": "A made-up moment (moment.yaml in a made-up folder): a moment that never happened live. A person writes the messages before it, the prompt, the tools the agent has, and what those tools answer.",
+  "type": "object",
+  "required": [
+    "phoenix_made_up",
+    "time",
+    "llm",
+    "prompt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "phoenix_made_up": {
+      "const": 1,
+      "description": "Major version of this format."
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the moment happens. The box's clock starts here."
+    },
+    "timezone": {
+      "type": "string",
+      "description": "IANA time zone for the box, such as America/Chicago."
+    },
+    "cwd": {
+      "type": "string",
+      "description": "The folder the agent works in. Files in the folder's files/ are laid out here in the box."
+    },
+    "llm": {
+      "type": "object",
+      "required": [
+        "provider",
+        "id"
+      ],
+      "additionalProperties": false,
+      "description": "The LLM the harness talks to, as the harness names it.",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thinking": {
+          "type": "string"
+        }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "description": "Tools the agent has in this moment, besides the harness's own.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "service",
+          "description",
+          "parameters"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The tool's name as the agent sees it."
+          },
+          "service": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The service the tool reaches, such as calendar. Checks name the tool as <service>.<op>."
+          },
+          "op": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The service's name for the operation. Defaults to name."
+          },
+          "description": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "object",
+            "description": "JSON Schema of the tool's arguments."
+          }
+        }
+      }
+    },
+    "messages": {
+      "type": "array",
+      "description": "Turns before the prompt, oldest first.",
+      "items": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "calls": {
+            "type": "array",
+            "description": "Tool calls the assistant made in this turn, each with the answer it got.",
+            "items": {
+              "type": "object",
+              "required": [
+                "tool",
+                "answer"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "tool": {
+                  "type": "string",
+                  "description": "The tool's name as the agent sees it."
+                },
+                "args": {
+                  "type": "object"
+                },
+                "answer": {},
+                "error": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "prompt": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The user's message that starts the moment."
+    },
+    "world": {
+      "type": "array",
+      "description": "What the tools answer during the replay. An entry without args answers that tool for any arguments.",
+      "items": {
+        "type": "object",
+        "required": [
+          "tool",
+          "answer"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "tool": {
+            "type": "string",
+            "pattern": "^[^.]+\\..+$",
+            "description": "<service>.<op>, as in checks."
+          },
+          "args": {
+            "type": "object"
+          },
+          "answer": {
+            "description": "The answer, as text or JSON."
+          },
+          "error": {
+            "type": "boolean",
+            "description": "The answer is a tool error."
+          }
+        }
+      }
+    }
+  }
+}

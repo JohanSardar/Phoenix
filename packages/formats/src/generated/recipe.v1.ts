@@ -104,7 +104,7 @@ export interface RecipeDescriptor {
    */
   resume?: {
     /**
-     * Host command, run in the recipe directory: reads the session file on stdin, takes --at <line>, prints the session moment JSON.
+     * Host command, run in the recipe directory: reads the session file on stdin, takes --at <line> or --from-beginning, and --change <line>=<file> for each tool answer to change, then prints the session moment JSON.
      *
      * @minItems 1
      */
@@ -125,6 +125,22 @@ export interface RecipeDescriptor {
      * @minItems 1
      */
     command: string[];
+    /**
+     * Host command, run in the recipe directory: given --cwd <folder>, prints the path of the session file the harness is writing for that folder. phoenix mark uses it.
+     *
+     * @minItems 1
+     */
+    locate?: string[];
+    /**
+     * Host command, run in the recipe directory: reads a made-up moment as JSON on stdin and prints a session file whose last turn is the prompt.
+     *
+     * @minItems 1
+     */
+    compose?: string[];
+    /**
+     * The harness has no resume command. Its replays always start again from the first message.
+     */
+    from_beginning_only?: boolean;
     /**
      * Per LLM provider, the hosts the box may reach directly. Nothing from Phoenix sits between the harness and these hosts.
      */

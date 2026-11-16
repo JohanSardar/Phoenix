@@ -13,7 +13,9 @@ const USAGE = [
   "         [--workdir <snapshot> | --no-workdir] [--include-ignored | --no-include-ignored] [--prompt <text>] [--timezone <tz>] <out-dir>",
   "       phoenix moment create --scenario <dir> [--home <dir>] [--who <name>] <out-dir>",
   "       phoenix moment create --auto ... (run with --auto for its options)",
-  "       phoenix moment create --session <session-file> --recipe <recipe.yaml> --at <line> --id <id> --check <check.yaml> <out-dir>",
+  "       phoenix moment create --session <session-file> --recipe <recipe.yaml> (--at <line> | --from-beginning) --id <id> --check <check.yaml> <out-dir>",
+  "       phoenix moment create --mark <mark-dir> --id <id> --check <check.yaml> <out-dir>",
+  "       phoenix moment create --made-up <folder> --recipe <recipe.yaml> --id <id> <out-dir>",
   "       phoenix moment accept [--home <dir>] [--who <name>] <moment-dir>",
   "       phoenix moment pack --out <packed-dir> [--archive <file.tar>] [--presidio <analyzer-url>] [--home <dir>] [--who <name>] <moment-dir>",
 ].join("\n");
@@ -22,7 +24,7 @@ const SURFACES = ["mcp", "cli", "http"] as const;
 
 export async function runMomentCommand(args: string[]): Promise<number> {
   if (args[0] === "create" && args.includes("--auto")) return runMomentAutoCommand(args.slice(1));
-  if (args[0] === "create" && args.includes("--session")) return runMomentSessionCommand(args.slice(1));
+  if (args[0] === "create" && !args.includes("--capture") && ["--session", "--mark", "--made-up"].some(flag => args.includes(flag))) return runMomentSessionCommand(args.slice(1));
   if (args[0] === "pack") return runMomentPackCommand(args.slice(1));
   const { values: v, positionals } = parseArgs({
     args, allowPositionals: true, options: {
