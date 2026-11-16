@@ -59,3 +59,10 @@ image: phoenix-claude-code:2.1.325
 clock:
   probe: [node, -e, "console.log(Date.now())"]
 copy_ignored: false
+resume:
+  moment: [node, moment.mjs]
+  login: [node, login.mjs]
+  image: resume.Dockerfile
+  command: [node, /phoenix/recipe/resume.mjs]
+  llm_hosts:
+    anthropic: [api.anthropic.com]

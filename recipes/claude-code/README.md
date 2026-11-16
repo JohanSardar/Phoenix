@@ -1,8 +1,9 @@
 # Claude Code
 
 This recipe targets **2.1.325**, including its JSONL session format. It uses the
-installed CLI and its existing login; it never installs, upgrades, signs in,
-copies login state, sets a credential, or changes the selected provider.
+installed CLI and its existing login; capture never installs, upgrades, signs
+in, copies login state, sets a credential, or changes the selected provider.
+Resuming a session (below) is the one place a login enters a box.
 `capture.mjs` checks installation/version and `claude auth status` before capture.
 Core packages have no knowledge of this harness.
 
@@ -167,6 +168,66 @@ started from Node: delete `FAKETIME_SHARED` from the child's environment while
 keeping `LD_PRELOAD` and the clock file. Otherwise that image failed at startup
 with `sem_open ... File exists`. The runner's Node clock probe saw virtual time;
 the native runtime's clock remains unverified.
+
+## Resume a saved session from a moment
+
+This is the replay path from ADR 0007. Claude Code itself resumes the saved
+session in the sealed box with `claude --resume <session> --fork-session`, and
+talks straight to its LLM at `api.anthropic.com`. Phoenix only answers tool
+calls.
+
+```sh
+phoenix moment create --session ~/.claude/projects/<dir>/<session>.jsonl \
+  --recipe recipes/claude-code/recipe.yaml --at <line> --id <name> --check check.yaml <out>
+```
+
+`--at` is a line of the session file. `moment.mjs` cuts before the user turn on
+or before that line and reads, from the session file alone, what the agent had
+at that point: the LLM and effort, the harness prompt, the MCP servers and tool
+definitions offered, the files it had read, and every recorded tool result. The
+original file is only read. Build `resume.Dockerfile` and put its digest in the
+workspace settings; the harness folder says `run: { resume: {} }`.
+
+In the box, `resume.mjs` puts the cut session where Claude Code looks for it and
+starts it with the moment's prompt. Tool calls go to Phoenix this way:
+
+- Built-in tools go through Claude Code's own hooks (`stand-in.mjs`, on
+  PreToolUse and PostToolUse). Bash never runs: it becomes a `cat` of the
+  answer Phoenix gives. Read, Write, Edit, Glob and Grep act on files inside
+  the box only, and Claude Code then gets the recorded result.
+  Other built-ins are refused with the recorded answer as the reason.
+- Each MCP server of the session is replaced by `mcp.mjs`, which lists the
+  tool definitions the session recorded and sends every call to Phoenix.
+- A call Phoenix has no answer for stops the replay. Answering new calls is
+  separate work.
+
+What a harness change can be: `CLAUDE.md` in the harness folder (Claude Code
+loads it as usual), `SYSTEM.md` to replace the harness prompt,
+`APPEND_SYSTEM.md` to add to it, and `.claude/settings.json` for `model` (swap
+the LLM) or `permissions.deny` (take a tool away).
+
+Things to know:
+
+- Claude Code 2.1.322 and later pin the harness prompt and tool list in a
+  `prompt_snapshot` record and send those again on resume. They ignore
+  `--system-prompt-file`. So `resume.mjs` writes `SYSTEM.md` and
+  `APPEND_SYSTEM.md` into that record.
+- Phoenix removes secrets from the session before cutting it. That can turn a
+  tool schema property with a secret-like name (for example `page_token`) into
+  a placeholder, which the LLM rejects. `resume.mjs` turns such a property
+  back into an empty schema.
+- Claude Code keeps the session's own LLM unless `--model` is passed, so
+  `resume.mjs` always passes it.
+- When the cut comes after a dangling tool result (the person wrote while the
+  agent was still working), Claude Code adds "No response requested." before
+  the new turn. In the original session, that message arrived mid-turn instead.
+- `login.mjs` copies the existing claude.ai access token (from the macOS
+  keychain or `~/.claude/.credentials.json`) into the box. The refresh token is
+  left out. Phoenix deletes the box's agent folder after every run. Run `claude`
+  once first if the login expires within 15 minutes.
+- Sessions from Claude Code hosts (Claude Desktop, other SDK hosts) set
+  `CLAUDE_CODE_ENTRYPOINT`. The box uses the same value, so the same built-in
+  tools appear. The host's own MCP servers become stand-ins like any other.
 
 Sources: [authentication](https://code.claude.com/docs/en/authentication),
 [gateway](https://code.claude.com/docs/en/llm-gateway),

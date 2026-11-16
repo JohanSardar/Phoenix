@@ -11,7 +11,7 @@ emit("meta", "transcript.coverage", {
   carries: ["user and assistant messages", "thinking blocks when logged", "tool names, inputs, ids and result blocks", "session id, wall timestamps and source records", "request-shape, request-delta and attachment records when logged"],
   lacks: ["HTTP requests/responses and wire bytes", "complete system prompt and provider configuration", "MCP tool lists, protocol version and result envelopes", "CLI argv, stdin, separate stderr, exit status and filesystem effects", "stream chunk timing and host monotonic clock", "unlogged or compacted history"],
 });
-const known = new Set(["user", "assistant", "system", "progress", "file-history-snapshot", "queue-operation", "last-prompt", "summary", "custom-title", "agent-name", "agent-color", "tag", "pr-link", "saved_hook_context", "attribution-snapshot", "session-owner", "atis-latch", "api-request-blob", "api-request-shape", "api-request", "tools-used", "cost-state", "attachment"]);
+const known = new Set(["user", "assistant", "system", "progress", "file-history-snapshot", "queue-operation", "last-prompt", "summary", "custom-title", "agent-name", "agent-color", "tag", "pr-link", "saved_hook_context", "attribution-snapshot", "session-owner", "atis-latch", "api-request-blob", "api-request-shape", "api-request", "tools-used", "cost-state", "attachment", "mode", "ai-title", "frame-link", "permission-mode", "file-history-delta", "bridge-session", "artifact-autoreact-ledger", "artifact-comment-monitor"]);
 const calls = new Map();
 let sawVersion = false;
 async function* lines() {
@@ -44,11 +44,11 @@ for await (const bytes of lines()) {
     continue;
   }
   emit("meta", "transcript.record", row, row, { source_line: line }, ["body.inline"]);
-  if (!known.has(row.type) || (row.version !== undefined && row.version !== "2.1.325")) {
+  if (!known.has(row.type) || (row.version !== undefined && !/^2\.1\.\d+$/.test(row.version))) {
     emit("meta", "transcript.unread", { line, type: row.type, reason: "Unsupported record type or harness version" }, row);
     continue;
   }
-  if (row.version === "2.1.325") sawVersion = true;
+  if (row.version !== undefined) sawVersion = true;
   if (!["user", "assistant"].includes(row.type)) continue;
   const message = row.message;
   if (!message || !["user", "assistant"].includes(message.role) || !(typeof message.content === "string" || Array.isArray(message.content))) {
