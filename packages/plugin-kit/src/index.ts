@@ -8,6 +8,7 @@ export interface RecordedPluginExchange {
   op: string;
   args: unknown;
   request: PluginCall["raw"];
+  stdin?: Uint8Array;
   response: PluginWireMessage;
   observedAt: string;
   during?: readonly unknown[];
@@ -55,7 +56,8 @@ export async function runPluginKit(options: {
       const before = report.differences.length;
       report.attempted++;
       try {
-        const reply = await plugin.call({ ...exchange, raw: exchange.request }, now);
+        const { stdin, ...call } = exchange;
+        const reply = await plugin.call({ ...call, raw: exchange.request, ...(stdin ? { stdin: async () => stdin } : {}) }, now);
         if (reply.status !== "answer") {
           report.differences.push({ exchange: exchange.id, kind: "protocol", path: "/outcome", expected: "answer", actual: reply });
           continue;

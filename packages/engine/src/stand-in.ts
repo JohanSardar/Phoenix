@@ -94,7 +94,7 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
       const recorded = JSON.parse(Buffer.from(answered.answer.raw.body).toString()) as { result: unknown };
       const reply = rpc(message.id, { result: recorded.result });
       served++;
-      await trace.append(stream, { kind: "result", surface: "mcp", layer: "agent", connector, op: call.op, body: reply, provenance: answered.answer.provenance, resolver: answered.answer.resolver });
+      await trace.append(stream, { kind: "result", surface: "mcp", layer: "agent", connector, op: call.op, body: reply, provenance: answered.answer.provenance, resolver: answered.answer.resolver, afterUntakenWrite: answered.answer.afterUntakenWrite });
       response.end(reply);
     })().catch(error => {
       stop({ trigger: "lifecycle", detail: error instanceof Error ? error.message : String(error) });

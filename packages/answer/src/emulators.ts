@@ -8,6 +8,7 @@ export interface EmulatorDifference { connector: string; op: string; expected: s
 export class Emulators {
   readonly #plugins = new Map<string, ServingPlugin>();
   readonly #written = new Set<string>();
+  readonly #untaken = new Map<string, string[]>();
   readonly #now: () => Date;
   readonly #difference: (difference: EmulatorDifference) => Promise<void>;
 
@@ -42,8 +43,14 @@ export class Emulators {
 
   wrote(connector: string): boolean { return this.#written.has(connector); }
 
+  untaken(connector: string): readonly string[] { return this.#untaken.get(connector) ?? []; }
+
   async observe(call: Call, answer: Answer, at?: string): Promise<EmulatorDifference | undefined> {
-    if (!this.#plugins.has(call.connector) || answer.resolver === "emulator" || answer.provenance === "synthesized") return;
+    if (!this.#plugins.has(call.connector) || answer.resolver === "emulator") return;
+    if (answer.provenance === "synthesized") {
+      if (!call.readOnly) this.#untaken.set(call.connector, [...this.untaken(call.connector), call.key]);
+      return;
+    }
     const actual = await this.resolve(call, at);
     if ("miss" in actual) {
       if (!call.readOnly) throw new Error(`Emulator cannot mirror write on ${call.connector}: ${actual.why}`);

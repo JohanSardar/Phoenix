@@ -5,6 +5,7 @@ import { processBackend } from "./upstream.ts";
 
 export type CaptureTarget =
   | { surface: "mcp"; command: string[]; cwd?: string; env?: NodeJS.ProcessEnv }
+  | { surface: "cli"; command: string[]; cwd?: string; env?: NodeJS.ProcessEnv }
   | { surface: "http"; url: string; headers?: Record<string, string> };
 export interface CaptureObservation {
   request: { body: Uint8Array; head?: { method: string; url: string; headers: string[] } };
@@ -59,6 +60,25 @@ export async function captureConnection(target: CaptureTarget, connector: string
       if (target.surface === "mcp") {
         if (!op.startsWith("tools/call:")) throw new Error("Capture MCP reads must be tools/call operations");
         return request("tools/call", { name: op.slice(11), arguments: args });
+      }
+      if (target.surface === "cli") {
+        const input = args as { argv?: unknown; stdin?: unknown };
+        if (!Array.isArray(input.argv) || !input.argv.every(arg => typeof arg === "string") || input.argv[0] !== op || (input.stdin !== undefined && typeof input.stdin !== "string"))
+          throw new Error("Capture CLI reads need argv starting with the operation's command and an optional stdin string");
+        if (!target.command.length) throw new Error("Capture target needs its own command");
+        const stdin = Buffer.from(input.stdin ?? "");
+        const invocation = { argv: input.argv, cwd: target.cwd ?? process.cwd(), env: {}, terminals: { stdin: null, stdout: null, stderr: null } };
+        const run = processBackend([...target.command, ...input.argv.slice(1)], { cwd: target.cwd, env: target.env }).open({ surface: "cli", connector, meta: invocation });
+        const timer = setTimeout(() => run.abort("Capture read timed out"), timeoutMs);
+        try {
+          if (stdin.length) await run.write(frame("out", 0, stdin, false));
+          await run.write(frame("out", 0, new Uint8Array(), true));
+          const streams = new Map<number, Buffer[]>([[1, []], [2, []], [3, []]]);
+          for await (const f of run.frames()) streams.get(f.stream)?.push(Buffer.from(f.bytes));
+          if (!streams.get(3)!.length) throw new Error("Capture CLI read ended without an exit status");
+          const frames = [{ dir: "out", stream: 0, bytes: stdin.toString("base64"), last: true }, ...[1, 2, 3].map(stream => ({ dir: "back", stream, bytes: Buffer.concat(streams.get(stream)!).toString("base64"), last: true }))];
+          return { request: { body: Buffer.from(JSON.stringify(invocation)) }, response: { body: Buffer.from(JSON.stringify(frames)) } };
+        } finally { clearTimeout(timer); }
       }
       const [method, destination] = op.split(" ");
       const url = new URL(target.url);
