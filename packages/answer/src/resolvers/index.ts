@@ -6,4 +6,4 @@ import { overlay } from "./overlay.ts";
 import { prefetch } from "./prefetch.ts";
 import { world } from "./world.ts";
 
-export const resolvers: readonly Resolver[] = [recorded, world, overlay, emulator, prefetch, simulator];
+export const resolvers: readonly Resolver[] = [world, recorded, overlay, emulator, prefetch, simulator];

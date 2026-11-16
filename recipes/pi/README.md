@@ -131,6 +131,9 @@ Four more ways into a moment, besides `--at <line>`:
   answer right then (with `--mcp-config` and `--plugin`). `phoenix mark
   --session <file> --at <line>` marks a past moment; then nothing is saved but
   the session. Make the moment with `phoenix moment create --mark <mark-dir>`.
+  The answers saved at the mark win over the session's own for the same call.
+  Not yet: a replay does not serve the saved copy of the project's files. A
+  mark saves the copy, and T11 (JOH-55) makes the replay use it.
 - **From the beginning.** `--from-beginning` starts at the session's first
   message, with its original prompt.
 - **A changed answer.** `--change-answer <line>=<file>` replaces the tool answer

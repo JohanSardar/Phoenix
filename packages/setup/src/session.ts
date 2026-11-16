@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { text } from "node:stream/consumers";
 import type { MomentManifest, RecipeDescriptor, TraceEvent } from "@phoenix/formats";
 import { stripSecrets, type SecretPolicy } from "@phoenix/redact";
@@ -42,10 +43,22 @@ export async function createSessionMoment(o: SessionMomentOptions): Promise<Mome
   if (o.fromBeginning === (o.at !== undefined)) throw new Error("Give the moment a line with --at, or start it --from-beginning");
   const [command, ...args] = resume.moment;
   const where = o.fromBeginning ? ["--from-beginning"] : ["--at", String(o.at)];
-  const changes = (o.changes ?? []).flatMap(change => ["--change", `${change.line}=${resolve(change.file)}`]);
-  const child = spawn(command!, [...args, ...where, ...changes], { cwd: o.recipe.directory, stdio: ["pipe", "pipe", "pipe"] });
-  child.stdin.end(Buffer.from(lines.join("\n")));
-  const [stdout, stderr, code] = await Promise.all([text(child.stdout), text(child.stderr), new Promise<number | null>(resolve => child.once("close", resolve))]);
+  const scratch = await mkdtemp(join(tmpdir(), "phoenix-changed-answers-"));
+  let stdout: string, stderr: string, code: number | null;
+  try {
+    const changes: string[] = [];
+    for (const [index, change] of (o.changes ?? []).entries()) {
+      const original = await readFile(change.file);
+      const { msg } = await stripSecrets({ body: original }, o.policy);
+      if (msg.secrets === "unscanned") throw new Error(`The answer in ${change.file} could not be scanned for secrets`);
+      const file = join(scratch, String(index));
+      await writeFile(file, msg.body ? Buffer.from(msg.body) : original, { mode: 0o600 });
+      changes.push("--change", `${change.line}=${file}`);
+    }
+    const child = spawn(command!, [...args, ...where, ...changes], { cwd: o.recipe.directory, stdio: ["pipe", "pipe", "pipe"] });
+    child.stdin.end(Buffer.from(lines.join("\n")));
+    [stdout, stderr, code] = await Promise.all([text(child.stdout), text(child.stderr), new Promise<number | null>(done => child.once("close", done))]);
+  } finally { await rm(scratch, { recursive: true, force: true }); }
   if (code !== 0) throw new Error(`The ${o.recipe.descriptor.name} recipe could not read the moment: ${stderr.trim().split("\n").at(-1) ?? code}`);
   const reading = JSON.parse(stdout) as Reading;
   for (const edit of reading.edits ?? []) lines[edit.line - 1] = edit.text;

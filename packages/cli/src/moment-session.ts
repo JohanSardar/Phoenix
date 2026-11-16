@@ -29,7 +29,7 @@ export async function runMomentSessionCommand(args: string[]): Promise<number> {
     const read = await readMark(resolve(v.mark));
     session = read.session; recipePath ??= read.mark.recipe;
     if (at === undefined && !fromBeginning) at = read.mark.line;
-    answers = read.services.map((answer, index) => ({ id: `mark-${index + 1}`, ...answer, before_cut: true }));
+    answers = read.services.map((answer, index) => ({ id: `mark-${index + 1}`, ...answer, before_cut: false, world: "exact" as const }));
     readOnly = read.mark.read_only;
     marked = { at: read.mark.at, ...(read.mark.note ? { note: read.mark.note } : {}), world: read.mark.world };
     world = { files: read.mark.world.files === "saved" ? `saved at the mark, ${read.mark.at}` : "not saved: this moment was marked after the fact, so the replay does not see the files as they were then", services: read.mark.world.services, session: session === read.mark.session.path ? "the live session file, unchanged up to the mark" : "the copy saved at the mark" };

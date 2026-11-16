@@ -24,7 +24,7 @@ const SURFACES = ["mcp", "cli", "http"] as const;
 
 export async function runMomentCommand(args: string[]): Promise<number> {
   if (args[0] === "create" && args.includes("--auto")) return runMomentAutoCommand(args.slice(1));
-  if (args[0] === "create" && ["--session", "--mark", "--made-up"].some(flag => args.includes(flag))) return runMomentSessionCommand(args.slice(1));
+  if (args[0] === "create" && !args.includes("--capture") && ["--session", "--mark", "--made-up"].some(flag => args.includes(flag))) return runMomentSessionCommand(args.slice(1));
   if (args[0] === "pack") return runMomentPackCommand(args.slice(1));
   const { values: v, positionals } = parseArgs({
     args, allowPositionals: true, options: {
