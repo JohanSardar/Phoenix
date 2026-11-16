@@ -81,6 +81,7 @@ Each cell says what was seen and by whom: **Captain** (the agent that directs th
 - The flag for answers that come after a write the working copy refused is written only on the session-resume path.
 - A moment made from a Phoenix capture alone replays from the beginning only, and nobody has run that path on a real harness other than Phoenix's reference harness.
 - Files copy: a folder outside git is copied without dot-files and dot-folders, so pi's `.pi` folder is left out.
+- Files copy: Phoenix refuses a hidden folder directly in the home folder, such as `~/.claude`, but a session started deeper inside one, such as `~/.claude/projects/x`, still has that folder copied, within the size caps and without dot-files.
 
 ## Working copies
 
