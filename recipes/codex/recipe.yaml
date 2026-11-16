@@ -50,6 +50,13 @@ clock:
   probe: [node, clock-probe.ts]
 copy_ignored: false
 launcher: [node, capture.ts]
+resume:
+  moment: [node, moment.mjs]
+  login: [node, login.mjs]
+  image: resume.Dockerfile
+  command: [node, /phoenix/recipe/resume.mjs]
+  llm_hosts:
+    chatgpt: [chatgpt.com]
 limitations:
   - Gateway is explicit HTTP/SSE capture for an already selected custom provider; built-in OpenAI ignores the WebSocket disable override and falls back to transcripts
   - No authentication or billing route is changed; a failed explicit route is refused instead of silently replaced
