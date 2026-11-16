@@ -1,7 +1,24 @@
 export class Unknown extends Error {}
 
 const formatters = new Map();
+// Zones the copy worked out from offsets, by the name it hands out: each maps to every IANA zone that fits.
+const fitted = new Map();
+
+// Registers the zones that fit what Google showed and returns the name used for them.
+export function fitZone(zones) {
+  fitted.set(zones[0], zones);
+  return zones[0];
+}
+
 function parts(zone, ms) {
+  const zones = fitted.get(zone);
+  if (!zones) return zoneParts(zone, ms);
+  const p = zoneParts(zones[0], ms);
+  if (zones.some(z => JSON.stringify(zoneParts(z, ms)) !== JSON.stringify(p))) throw new Unknown(`the copy cannot tell the calendar's local time at ${new Date(ms).toISOString()}, because it does not know the calendar's time zone`);
+  return p;
+}
+
+function zoneParts(zone, ms) {
   let f = formatters.get(zone);
   if (!f) {
     f = new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", weekday: "short" });

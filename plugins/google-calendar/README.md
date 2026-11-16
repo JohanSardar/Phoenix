@@ -36,6 +36,8 @@ What the copy knows comes from the Snapshot given at `initialize`: a JSON file `
 
 When the copy does not know enough, it does not guess. It answers `unsupported` with the reason, and the answer chain moves on. Examples: a time window it never saw listed, an event id it never saw that could exist, a calendar whose time zone it does not know, a Google Meet link, or a repeating rule it cannot expand. A call to Google's hosted Calendar MCP server (the claude.ai connector) is also `unsupported` for now, because no real answers from that server could be recorded yet.
 
+The adapter tools only show Google's events, not the calendar list, so a session that used only the adapter does not tell the copy the calendar's time zone. Google writes each event time with the calendar's UTC offset, so the copy keeps every IANA time zone that matches all the offsets it saw. It answers a time only where all of those zones give the same local time, and answers `unsupported` anywhere they differ, for example across a daylight-saving change none of the seen times covers. While the copy serves the calendar, the engine turns off the entity overlay for it, so the copy has to answer the adapter reads the overlay used to answer.
+
 Known differences from the real service, measured side by side against real answers:
 
 - `created` and `updated` come from the replay clock, so they differ from the real ones by up to about one second.
@@ -53,6 +55,17 @@ Without `serve`, the descriptor's entity map still lets the engine's overlay ans
 
 ## Capture
 
-Explicitly call `capturePlugin` with this installed descriptor and a separately authorized stdio MCP target. The sidecar reads only the supplied connector segments and their referenced blobs. It repeats observed `list_events` calls and fetches ids observed in tool arguments or successful event payloads with `get_event`. Both operations are declared read-only; `move_event` is never planned. The host owns the separate upstream connection, timestamps, redaction, prefetch storage and timeout. The sidecar makes no network calls.
+Explicitly call `capturePlugin` with this installed descriptor and a separately authorized stdio MCP target, or take a mark with `phoenix mark`, which runs the same capture against the session's own calendar server. The sidecar reads only the supplied connector segments and their referenced blobs, and plans read-only calls only. A capture reads more of the real calendar than the agent touched, so the copy can answer calls the session never made:
+
+- Through the local server: the whole calendar list, with each calendar's name and time zone; every event in each time window the session listed or searched; each event named in a call; and the series master of every repeating occurrence those lists returned.
+- Through the adapter: each `list_events` window the session asked for again, and `get_event` for every event id seen. The adapter has no calendar-list tool, so the time zone comes from the offsets as described above.
+
+These answers are real calendar data. A mark keeps them in its `services.json`, and a replay keeps the copy's snapshot under its emulator inputs, all on the machine that took them, in files only the owner can read. `move_event` and other writes are never planned. The host owns the separate upstream connection, timestamps, redaction, prefetch storage and timeout. The sidecar makes no network calls.
 
 Coverage always reports the event collection as incomplete: observed ids and windows do not prove a vendor-wide snapshot, even when the sidecar finishes successfully. Captured error replies remain recorded observations, not empty successful state.
+
+## Limits
+
+Merged with a gap (JOH-59 step 6): Google's hosted Calendar MCP server, the claude.ai Google Calendar connector, has nine tools (`list_calendars`, `list_events`, `get_event`, `search_events`, `suggest_time`, `create_event`, `update_event`, `delete_event`, `respond_to_event`). The copy answers every one of them `unsupported`, because none could be recorded: the Google Cloud project must first be enrolled in the Google Workspace Developer Preview, then `calendarmcp.googleapis.com` re-enabled and the connector reconnected in claude.ai. Until then, a replay that calls that server gets no answer from the copy.
+
+In a replay that starts from the beginning of a recording rather than resuming a session, the copy knows only the snapshot given in the replay settings. Without one it starts empty.

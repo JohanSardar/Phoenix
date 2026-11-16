@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { Unknown, basicDate, basicUtc, formatInZone, naiveToMs, occurrences, parseInstant, validZone, wallOf, wallToMs } from "./time.mjs";
+import { Unknown, basicDate, basicUtc, fitZone, formatInZone, naiveToMs, occurrences, offsetMinutes, parseInstant, validZone, wallOf, wallToMs } from "./time.mjs";
 
 // Google's public color palette (the same for every account).
 const PALETTE = {"calendar":{"1":{"background":"#ac725e","foreground":"#1d1d1d"},"2":{"background":"#d06b64","foreground":"#1d1d1d"},"3":{"background":"#f83a22","foreground":"#1d1d1d"},"4":{"background":"#fa573c","foreground":"#1d1d1d"},"5":{"background":"#ff7537","foreground":"#1d1d1d"},"6":{"background":"#ffad46","foreground":"#1d1d1d"},"7":{"background":"#42d692","foreground":"#1d1d1d"},"8":{"background":"#16a765","foreground":"#1d1d1d"},"9":{"background":"#7bd148","foreground":"#1d1d1d"},"10":{"background":"#b3dc6c","foreground":"#1d1d1d"},"11":{"background":"#fbe983","foreground":"#1d1d1d"},"12":{"background":"#fad165","foreground":"#1d1d1d"},"13":{"background":"#92e1c0","foreground":"#1d1d1d"},"14":{"background":"#9fe1e7","foreground":"#1d1d1d"},"15":{"background":"#9fc6e7","foreground":"#1d1d1d"},"16":{"background":"#4986e7","foreground":"#1d1d1d"},"17":{"background":"#9a9cff","foreground":"#1d1d1d"},"18":{"background":"#b99aff","foreground":"#1d1d1d"},"19":{"background":"#c2c2c2","foreground":"#1d1d1d"},"20":{"background":"#cabdbf","foreground":"#1d1d1d"},"21":{"background":"#cca6ac","foreground":"#1d1d1d"},"22":{"background":"#f691b2","foreground":"#1d1d1d"},"23":{"background":"#cd74e6","foreground":"#1d1d1d"},"24":{"background":"#a47ae2","foreground":"#1d1d1d"}},"event":{"1":{"background":"#a4bdfc","foreground":"#1d1d1d"},"2":{"background":"#7ae7bf","foreground":"#1d1d1d"},"3":{"background":"#dbadff","foreground":"#1d1d1d"},"4":{"background":"#ff887c","foreground":"#1d1d1d"},"5":{"background":"#fbd75b","foreground":"#1d1d1d"},"6":{"background":"#ffb878","foreground":"#1d1d1d"},"7":{"background":"#46d6db","foreground":"#1d1d1d"},"8":{"background":"#e1e1e1","foreground":"#1d1d1d"},"9":{"background":"#5484ed","foreground":"#1d1d1d"},"10":{"background":"#51b749","foreground":"#1d1d1d"},"11":{"background":"#dc2127","foreground":"#1d1d1d"}}};
@@ -42,10 +42,26 @@ export class Copy {
   cal(id) {
     const key = this.calId(decodeURIComponent(id));
     let cal = this.calendars.get(key);
-    if (!cal) { cal = { id: key, entry: undefined, events: new Map(), overridden: new Map(), windows: [], busy: [] }; this.calendars.set(key, cal); }
+    if (!cal) { cal = { id: key, entry: undefined, events: new Map(), overridden: new Map(), windows: [], busy: [], offsets: new Map() }; this.calendars.set(key, cal); }
     return cal;
   }
-  zoneOf(cal) { return cal.entry?.timeZone ?? this.gap(`the copy does not know the time zone of calendar ${cal.id}`); }
+  zoneOf(cal) { return cal.entry?.timeZone ?? this.fittedZone(cal) ?? this.gap(`the copy does not know the time zone of calendar ${cal.id}`); }
+  // Without the calendar list, the UTC offsets in Google's own answers narrow the calendar's zone to the IANA zones that fit.
+  // A time is only answered where all of them agree (see fitZone).
+  fittedZone(cal) {
+    if (!cal.offsets.size) return undefined;
+    if (cal.fit?.seen !== cal.offsets.size) {
+      const zones = Intl.supportedValuesOf("timeZone").filter(zone => [...cal.offsets].every(([ms, offset]) => offsetMinutes(zone, ms) === offset));
+      cal.fit = { seen: cal.offsets.size, zone: zones.length ? fitZone(zones) : undefined };
+    }
+    return cal.fit.zone;
+  }
+  sawOffset(calId, dateTime) {
+    const m = /([+-])(\d{2}):(\d{2})$|Z$/.exec(dateTime ?? "");
+    const ms = parseInstant(dateTime);
+    if (!m || !Number.isFinite(ms)) return;
+    this.cal(calId).offsets.set(ms, m[1] ? (m[1] === "-" ? -1 : 1) * (+m[2] * 60 + +m[3]) : 0);
+  }
 
   // ---- time helpers on stored events
   startMs(ev, cal) { return ev.start?.date ? this.dayMs(ev.start.date, cal) : parseInstant(ev.start?.dateTime); }
@@ -179,6 +195,7 @@ export class Copy {
       const cal = this.cal(id);
       for (const [k, v] of old.events) cal.events.set(k, v);
       cal.windows.push(...old.windows); cal.busy.push(...old.busy);
+      for (const [k, v] of old.offsets) cal.offsets.set(k, v);
       cal.entry ??= old.entry;
     }
   }
@@ -194,6 +211,7 @@ export class Copy {
     try {
       return this.route(method, url, body, headers);
     } catch (error) {
+      if (error instanceof Unknown && !this.gaps.includes(error.message)) this.gaps.push(error.message);
       if (error instanceof Unknown) return { status: 400, body: { error: { errors: [{ domain: "phoenix", reason: "notInCopy", message: error.message }], code: 400, message: error.message } }, gap: true };
       throw error;
     }
@@ -214,6 +232,8 @@ export class Copy {
       const cal = this.cal(m[1]);
       if (cal.entry) return { status: 200, body: cal.entry };
       if (this.listComplete) return apiError(404, "notFound", "Not Found");
+      const fitted = this.fittedZone(cal);
+      if (fitted) return { status: 200, body: { kind: "calendar#calendarListEntry", id: cal.id, timeZone: fitted } };
       this.gap(`the copy does not know calendar ${cal.id}`);
     }
     if (method === "GET" && (m = /^\/calendar\/v3\/calendars\/([^/]+)$/.exec(path))) {
@@ -284,7 +304,7 @@ export class Copy {
     const offset = q.get("pageToken") ? Number(Buffer.from(q.get("pageToken"), "base64url").toString()) || 0 : 0;
     const page = items.slice(offset, offset + max).map(e => this.render(e, zone, q.get("timeZone")));
     const updated = [...cal.events.values()].map(e => Date.parse(e.updated)).filter(Number.isFinite);
-    const e = cal.entry;
+    const e = cal.entry ?? this.gap(`the copy does not know calendar ${cal.id}`);
     const result = {
       kind: "calendar#events", etag: `"p3${createHash("sha1").update(JSON.stringify(page.map(i => i.etag))).digest("hex").slice(0, 14)}"`,
       summary: e.summaryOverride ?? e.summary, description: e.description ?? "", updated: isoMs(updated.length ? Math.max(...updated) : this.now()),
@@ -379,7 +399,8 @@ export class Copy {
       touched.add(key);
       if (value === null) { delete next[key]; continue; }
       if (TIME_FIELDS.includes(key)) {
-        const t = this.normalTime(value, zone, cal);
+        const kept = !replace && value?.dateTime && !("timeZone" in value) && current[key]?.timeZone ? { ...value, timeZone: current[key].timeZone } : value;
+        const t = this.normalTime(kept, zone, cal);
         if (t.invalid) return apiError(400, "invalid", "Invalid start time.");
         if (JSON.stringify(t) !== JSON.stringify(this.normalTime(current[key], zone, cal))) timeChanged = true;
         next[key] = t;

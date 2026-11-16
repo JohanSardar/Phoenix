@@ -132,7 +132,7 @@ async function call(params) {
   const response = { jsonrpc, id: request.id, ...rest };
   const gaps = copy.takeGaps();
   if (gaps.length) return { status: "unsupported", reason: `The calendar copy does not know enough to answer: ${[...new Set(gaps)].join("; ")}` };
-  return { status: "answer", value: { body: Buffer.from(JSON.stringify(response)).toString("base64") } };
+  return { status: "answer", value: { body: Buffer.from(JSON.stringify(response) + "\n").toString("base64") } };
 }
 
 let initialized = false;
