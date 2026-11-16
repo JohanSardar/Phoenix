@@ -530,6 +530,12 @@ importers:
 
   plugins/google-calendar: {}
 
+  recipes/codex:
+    dependencies:
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+
   reference-harness:
     dependencies:
       '@modelcontextprotocol/client':

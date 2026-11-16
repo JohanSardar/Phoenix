@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { setPriority } from "node:os";
-import { httpGatewayTap, mcpStdioTap, cliTap, exitLikeCommand } from "@phoenix/taps";
+import { httpGatewayTap, mcpHttpTap, mcpStdioTap, cliTap, exitLikeCommand } from "@phoenix/taps";
 import { collect } from "./collector.ts";
 import { tee } from "./tee.ts";
 import { processBackend, httpBackend } from "./upstream.ts";
@@ -21,6 +21,17 @@ export async function captureRuntime(mode: string, args: string[]) {
       return new URL(process.env.PHOENIX_UPSTREAM!.replace(/\/$/, "") + request.url);
     }), { socket }), route: () => ({ surface: process.env.PHOENIX_GATEWAY_SURFACE === "mcp" ? "mcp" : "http", connector: process.env.PHOENIX_GATEWAY_CONNECTOR ?? "model" }) });
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(Number(args[0]), "127.0.0.1", resolve); });
+    process.send?.({ port: (server.address() as { port: number }).port }); process.disconnect?.();
+    process.once("SIGTERM", () => { server.close(); server.closeAllConnections(); });
+  } else if (mode === "mcp-http-proxy") {
+    const [name, upstream] = args;
+    const server = mcpHttpTap({ connector: name!, backend: tee(httpBackend(connection => {
+      const request = (connection.meta as { request: { url: string } }).request;
+      const target = new URL(upstream!);
+      target.search = new URL(request.url, "http://localhost").search;
+      return target;
+    }), { socket }) });
+    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
     process.send?.({ port: (server.address() as { port: number }).port }); process.disconnect?.();
     process.once("SIGTERM", () => { server.close(); server.closeAllConnections(); });
   } else if (mode === "mcp-proxy") {
