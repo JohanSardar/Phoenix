@@ -14,24 +14,37 @@ const say = output => process.stdout.write(JSON.stringify({ hookSpecificOutput: 
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 
 if (NATIVE.includes(name) || name.startsWith("mcp__")) process.exit(0);
+const ask = (method, params) => fetch(process.env.PHOENIX_TOOLS_URL + "/" + CONNECTOR, {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-phoenix-tool-call": input.tool_use_id },
+  body: JSON.stringify({ jsonrpc: "2.0", id: input.tool_use_id, method, params: { name, ...params } }),
+}).then(response => response.json());
 if (phase === "post") {
-  if (existsSync(slot + ".json")) say({ updatedToolOutput: JSON.parse(readFileSync(slot + ".json", "utf8")) });
+  if (existsSync(slot + ".ran")) {
+    const response = input.tool_response ?? null;
+    const text = typeof response === "string" ? response : [response?.stdout, response?.stderr].filter(Boolean).join("\n") || JSON.stringify(response);
+    await ask("phoenix/ran", { result: { content: [{ type: "text", text }], isError: false, structuredContent: { toolUseResult: response } } });
+  }
+  else if (existsSync(slot + ".json")) say({ updatedToolOutput: JSON.parse(readFileSync(slot + ".json", "utf8")) });
   process.exit(0);
 }
 
-const response = await fetch(process.env.PHOENIX_TOOLS_URL + "/" + CONNECTOR, {
-  method: "POST",
-  headers: { "content-type": "application/json", "x-phoenix-tool-call": input.tool_use_id },
-  body: JSON.stringify({ jsonrpc: "2.0", id: input.tool_use_id, method: "tools/call", params: { name, arguments: callArgs(name, input.tool_input) } }),
-});
-const reply = await response.json();
+const reply = await ask("tools/call", { arguments: callArgs(name, input.tool_input) });
 const log = how => appendFileSync(join(answers, "calls.jsonl"), JSON.stringify({ id: input.tool_use_id, name, how }) + "\n");
+if (reply.run_in_box) {
+  writeFileSync(slot + ".ran", "");
+  log("files-copy");
+  say({ permissionDecision: "allow" });
+  process.exit(0);
+}
 if (reply.error) {
   log("stopped");
   say({ permissionDecision: "deny", permissionDecisionReason: "Phoenix stopped this replay: " + reply.error.message });
   process.exit(0);
 }
-const { content, is_error: failed, toolUseResult } = reply.result;
+const { content } = reply.result;
+const failed = reply.result.isError ?? reply.result.is_error;
+const toolUseResult = reply.result.structuredContent?.toolUseResult ?? reply.result.toolUseResult;
 const text = typeof content === "string" ? content : (content ?? []).map(block => block.text ?? "").join("\n");
 const keep = () => { if (!failed && toolUseResult !== undefined) writeFileSync(slot + ".json", JSON.stringify(toolUseResult)); };
 const allow = updatedInput => say({ permissionDecision: "allow", ...(updatedInput ? { updatedInput } : {}) });

@@ -59,9 +59,7 @@ for (const { line, entry } of entries) {
     if (!use || NATIVE.includes(use.name)) continue;
     const { connector, op } = route(use.name);
     const tur = entry.toolUseResult;
-    const result = connector === CONNECTOR
-      ? { content: block.content ?? "", is_error: !!block.is_error, ...(tur !== undefined ? { toolUseResult: tur } : {}) }
-      : { content: Array.isArray(block.content) ? block.content : [{ type: "text", text: String(block.content ?? "") }], isError: !!block.is_error };
+    const result = { content: Array.isArray(block.content) ? block.content : [{ type: "text", text: String(block.content ?? "") }], isError: !!block.is_error, ...(connector === CONNECTOR ? { is_error: !!block.is_error, ...(tur !== undefined ? { toolUseResult: tur, structuredContent: { toolUseResult: tur } } : {}) } : {}) };
     answers.push({ id: use.id, line, tool: use.name, connector, op, args: connector === CONNECTOR ? callArgs(use.name, use.input) : use.input ?? {}, result, observed_at: entry.timestamp, before_cut: line <= cut });
     if (block.is_error || !tur || typeof tur !== "object") continue;
     const path = use.input?.file_path ?? tur.filePath ?? tur.file?.filePath;
@@ -100,4 +98,5 @@ process.stdout.write(JSON.stringify({
   loadout: { system, mcp, tools: (shape.tools ?? []).map(tool => tool.name), world: [...world].filter(([, content]) => typeof content === "string" && content.length <= 1 << 20).map(([path, content]) => ({ path, content })) },
   answers,
   read_only: { [CONNECTOR]: READ_ONLY },
+  shell: { [CONNECTOR]: { Bash: { command: "command" } } },
 }) + "\n");

@@ -48,6 +48,7 @@ const servers = new Map();
 const tools = server => servers.get(server) ?? servers.set(server, new Map()).get(server);
 const readOnly = {};
 const answers = [];
+const shellResult = (output, exit_code) => ({ output, exit_code, content: [{ type: "text", text: output }], structuredContent: { output, exit_code }, isError: exit_code !== 0 });
 const pathOf = cwd => typeof cwd === "string" && cwd.startsWith("file://") ? decodeURIComponent(new URL(cwd).pathname) : cwd;
 for (const { line, row } of rows) {
   const item = row.type === "event_msg" && row.payload?.type === "item_completed" ? row.payload.item : undefined;
@@ -60,7 +61,7 @@ for (const { line, row } of rows) {
     if (item.readOnlyHint === true && !(readOnly[item.server] ??= []).includes(item.tool)) readOnly[item.server].push(item.tool);
   }
   if (item?.type === "CommandExecution" && Array.isArray(item.command) && typeof item.command.at(-1) === "string") {
-    answers.push({ id: item.id, line, tool: "codex-shell.exec", connector: "codex-shell", op: "exec", args: { command: item.command.at(-1), cwd: pathOf(item.cwd) }, result: { output: item.aggregated_output ?? "", exit_code: item.exit_code ?? 0 }, observed_at: row.timestamp, before_cut: beforeCut });
+    answers.push({ id: item.id, line, tool: "codex-shell.exec", connector: "codex-shell", op: "exec", args: { command: item.command.at(-1), cwd: pathOf(item.cwd) }, result: shellResult(item.aggregated_output ?? "", item.exit_code ?? 0), observed_at: row.timestamp, before_cut: beforeCut });
   }
 }
 for (const { row } of rows) {
@@ -98,4 +99,5 @@ process.stdout.write(JSON.stringify({
   },
   answers,
   read_only: readOnly,
+  shell: { "codex-shell": { exec: { command: "command", cwd: "cwd" } } },
 }) + "\n");
