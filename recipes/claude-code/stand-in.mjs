@@ -37,6 +37,14 @@ if (reply.run_in_box) {
   say({ permissionDecision: "allow" });
   process.exit(0);
 }
+if (reply.command_output && name === "Bash") {
+  const { stdout, stderr, exit_code } = reply.command_output;
+  writeFileSync(slot + ".stdout", stdout);
+  writeFileSync(slot + ".stderr", stderr);
+  log("plugin-copy");
+  say({ permissionDecision: "allow", updatedInput: { ...input.tool_input, command: "cat " + quote(slot + ".stdout") + "; cat " + quote(slot + ".stderr") + " >&2; exit " + exit_code } });
+  process.exit(0);
+}
 if (reply.error) {
   log("stopped");
   say({ permissionDecision: "deny", permissionDecisionReason: "Phoenix stopped this replay: " + reply.error.message });

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { readsOnly, startToolStandIn, type SimulatorOptions, type ToolStandIn, type ToolStandInOptions } from "@phoenix/engine";
+import { readsOnly, recognizeCommand, startToolStandIn, type SimulatorOptions, type ToolStandIn, type ToolStandInOptions } from "@phoenix/engine";
 import { parse } from "yaml";
 import type { RecipeDescriptor } from "@phoenix/formats";
 import { writeClockFile, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
@@ -91,6 +91,9 @@ export async function resumeAttempt(input: {
   const plugins = new Map<string, { plugin: ResolvedPlan["runner"]["plugins"][number]; index: number }>();
   for (const [index, plugin] of plan.runner.plugins.entries()) for (const name of names)
     if (!plugins.has(name) && (name === plugin.descriptor.connector || plugin.descriptor.recognize.mcp_servers?.includes(name))) plugins.set(name, { plugin, index });
+  for (const [index, plugin] of plan.runner.plugins.entries())
+    if (plugin.descriptor.recognize.commands?.length && !plugins.has(plugin.descriptor.connector) && ![...plugins.values()].some(p => p.index === index)) plugins.set(plugin.descriptor.connector, { plugin, index });
+  const commandPlugins = [...plugins].filter(([, { plugin }]) => plugin.descriptor.serve).map(([name, { plugin }]) => ({ ...plugin.descriptor, connector: name }));
   const time = bundle.manifest.clock?.time ?? new Date().toISOString();
   const emulators: NonNullable<ToolStandInOptions["emulators"]>[number][] = [];
   for (const [name, { plugin, index }] of plugins) {
@@ -120,6 +123,13 @@ export async function resumeAttempt(input: {
       const given = args as Record<string, unknown>;
       const command = shell && given[shell.command], cwd = (shell?.cwd ? given[shell.cwd] : undefined) ?? moment.cwd;
       return typeof command === "string" && readsOnly(command, project.root, typeof cwd === "string" ? cwd : undefined, join(box, "project"));
+    },
+    pluginCommand: (connector, op, args) => {
+      const shell = moment.shell?.[connector]?.[op];
+      const given = args as Record<string, unknown>;
+      const command = shell && given[shell.command], cwd = (shell?.cwd ? given[shell.cwd] : undefined) ?? moment.cwd ?? project?.root ?? "/";
+      const found = typeof command === "string" ? recognizeCommand(command, commandPlugins) : undefined;
+      return found && { connector: found.connector, argv: found.argv, cwd: typeof cwd === "string" ? cwd : "/", ...(found.stdin === undefined ? {} : { stdin: found.stdin }) };
     },
     ...(input.simulator ? { simulator: input.simulator } : {}),
     cutTime: bundle.manifest.clock?.time ?? new Date().toISOString(),

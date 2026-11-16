@@ -1,10 +1,13 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createBashToolDefinition, createEditToolDefinition, createFindToolDefinition, createGrepToolDefinition, createLsToolDefinition, createReadToolDefinition, createWriteToolDefinition } from "@earendil-works/pi-coding-agent";
 import { adapterCall, withoutNulls } from "./adapter.mjs";
 
 const loadout = JSON.parse(readFileSync(process.env.PHOENIX_PI_LOADOUT, "utf8"));
 const url = process.env.PHOENIX_TOOLS_URL;
 const builtin = { bash: createBashToolDefinition, read: createReadToolDefinition, write: createWriteToolDefinition, edit: createEditToolDefinition, ls: createLsToolDefinition, grep: createGrepToolDefinition, find: createFindToolDefinition };
+const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 const unwrap = (name, text) => text.startsWith(`<${name}>\n`) && text.endsWith(`\n</${name}>`) ? text.slice(name.length + 3, -(name.length + 4)) : text;
 
 export default function standIn(pi) {
@@ -32,6 +35,13 @@ export default function standIn(pi) {
           await ask("phoenix/ran", { result: failure ? { content: [{ type: "text", text: failure.message }], isError: true } : { content: result.content, isError: false, details: result.details ?? {} } });
           if (failure) throw failure;
           return result;
+        }
+        if (reply.command_output && tool.name === "bash") {
+          const { stdout, stderr, exit_code } = reply.command_output;
+          const folder = mkdtempSync(join(tmpdir(), "phoenix-output-"));
+          writeFileSync(join(folder, "stdout"), stdout);
+          writeFileSync(join(folder, "stderr"), stderr);
+          return builtin.bash(process.cwd()).execute(toolCallId, { ...params, command: `cat ${quote(join(folder, "stdout"))}; cat ${quote(join(folder, "stderr"))} >&2; exit ${exit_code}` }, signal, onUpdate, ctx);
         }
         if (reply.error) throw new Error(`Phoenix stopped this replay: ${reply.error.message}`);
         if (reply.result.isError) throw new Error(reply.result.content.map(block => block.text ?? "").join("\n"));

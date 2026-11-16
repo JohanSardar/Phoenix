@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const loadout = JSON.parse(readFileSync(process.env.PHOENIX_OPENCODE_LOADOUT, "utf8"));
 const url = process.env.PHOENIX_TOOLS_URL;
@@ -9,6 +11,14 @@ const stood = loadout.tools.filter(name => !boxed.has(name));
 const native = result => {
   const extra = result.structuredContent ?? result;
   return { output: result.output ?? (result.content ?? []).map(block => block.text ?? "").join("\n"), title: extra.title ?? "", metadata: extra.metadata ?? {}, ...(extra.attachments ? { attachments: extra.attachments } : {}) };
+};
+
+const printed = ({ stdout, stderr, exit_code }) => {
+  const folder = mkdtempSync(join(tmpdir(), "phoenix-output-"));
+  const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+  writeFileSync(join(folder, "stdout"), stdout);
+  writeFileSync(join(folder, "stderr"), stderr);
+  return `cat ${quote(join(folder, "stdout"))}; cat ${quote(join(folder, "stderr"))} >&2; exit ${exit_code}`;
 };
 
 export const PhoenixStandIn = async () => {
@@ -32,6 +42,10 @@ export const PhoenixStandIn = async () => {
     async execute(args, ctx) {
       const reply = await ask("tools/call", name, args, ctx.callID, {}, ctx.abort);
       if (reply.error) throw new Error("Phoenix stopped this replay: " + reply.error.message);
+      if (reply.command_output) {
+        const output = reply.command_output.stdout + reply.command_output.stderr;
+        return { output, title: args.description ?? "", metadata: { output, exit: reply.command_output.exit_code, description: args.description ?? "" } };
+      }
       if (reply.result.isError) throw new Error(reply.result.error ?? native(reply.result).output);
       return native(reply.result);
     },
@@ -43,6 +57,7 @@ export const PhoenixStandIn = async () => {
       const reply = await ask("tools/call", name, output.args, callID);
       if (reply.error) throw new Error("Phoenix stopped this replay: " + reply.error.message);
       if (reply.run_in_box) { pending.set(callID, output.args); return; }
+      if (reply.command_output) { output.args.command = printed(reply.command_output); return; }
       if (reply.result.isError) throw new Error(reply.result.error ?? native(reply.result).output);
       output.result = native(reply.result);
     },

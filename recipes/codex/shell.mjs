@@ -23,6 +23,10 @@ if (reply.run_in_box) {
   process.stdout.write(ran.stdout ?? "");
   process.stderr.write(ran.stderr ?? "");
   process.exitCode = ran.status ?? 1;
+} else if (reply.command_output) {
+  process.stdout.write(reply.command_output.stdout);
+  process.stderr.write(reply.command_output.stderr);
+  process.exitCode = reply.command_output.exit_code;
 } else if (reply.error) {
   process.stderr.write(`Phoenix stopped this replay: ${reply.error.message}\n`);
   process.exitCode = 1;

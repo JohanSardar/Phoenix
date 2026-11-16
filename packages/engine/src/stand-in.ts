@@ -1,8 +1,9 @@
 import { createServer } from "node:http";
 import type { Duplex } from "node:stream";
 import { text } from "node:stream/consumers";
-import { answerCall, answeredOutside, Emulators, replayCtx, toCall, type ConnectorPolicy, type EmulatorConfig, type Divergence, type Exchange, type ExchangeIndex, type SimulatorOptions } from "@phoenix/answer";
+import { answerCall, answeredOutside, cliShape, Emulators, replayCtx, toCall, type CliReplayFrame, type ConnectorPolicy, type EmulatorConfig, type Divergence, type Exchange, type ExchangeIndex, type SimulatorOptions } from "@phoenix/answer";
 import type { CaptureMetadata } from "@phoenix/store";
+import { CLI_STREAM } from "@phoenix/taps";
 import { VirtualClock } from "./clock.ts";
 import { SampleTrace, streamName } from "./trace.ts";
 
@@ -22,6 +23,7 @@ export interface ToolStandInOptions {
   answers: readonly RecordedToolAnswer[];
   policy(connector: string): ConnectorPolicy;
   inBox?(connector: string, op: string, args: unknown): boolean;
+  pluginCommand?(connector: string, op: string, args: unknown): { connector: string; argv: string[]; cwd: string; stdin?: string } | undefined;
   simulator?: Omit<SimulatorOptions, "clock">;
   emulators?: readonly EmulatorConfig[];
   cutTime?: string;
@@ -75,7 +77,31 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
       const call = toCall({ surface: "mcp", connector, op: `tools/call:${message.params.name}`, args: message.params.arguments ?? {}, raw: { body } }, policy(connector));
       await trace.append(stream, { kind: "call", surface: "mcp", layer: "agent", connector, op: call.op, body });
       const inBox = options.inBox?.(connector, message.params.name, message.params.arguments ?? {}) ?? false;
-      const answered = await answerCall(call, ctx, inBox ? ["simulator"] : []);
+      const command = options.pluginCommand?.(connector, message.params.name, message.params.arguments ?? {});
+      const routed = command && emulators.has(command.connector) ? command : undefined;
+      let answered = await answerCall(call, ctx, inBox || routed ? ["simulator"] : []);
+      if ("divergence" in answered && routed) {
+        const invocation = { argv: routed.argv, cwd: routed.cwd, env: {}, terminals: { stdin: null, stdout: null, stderr: null } };
+        const cliBody = Buffer.from(JSON.stringify(invocation));
+        const cliStream = streamName("stand-in", routed.connector);
+        const cli = { ...toCall({ surface: "cli", connector: routed.connector, ...cliShape(invocation), raw: { body: cliBody } }, policy(routed.connector)), stdin: async () => Buffer.from(routed.stdin ?? "") };
+        await trace.append(cliStream, { kind: "call", surface: "cli", layer: "agent", connector: routed.connector, op: cli.op, body: cliBody });
+        const copied = await emulators.resolve(cli);
+        if (!("miss" in copied)) {
+          const frames = JSON.parse(Buffer.from(copied.raw.body).toString()) as CliReplayFrame[];
+          const bytes = (stream: number) => Buffer.concat(frames.filter(f => f.dir === "back" && f.stream === stream).map(f => Buffer.from(f.bytes, "base64"))).toString();
+          const exit = JSON.parse(bytes(CLI_STREAM.control) || "{}") as { code?: number | null };
+          const reply = rpc(message.id, { command_output: { stdout: bytes(CLI_STREAM.stdout), stderr: bytes(CLI_STREAM.stderr), exit_code: exit.code ?? 1 } });
+          answeredOutside(call, { raw: { body: reply }, provenance: copied.provenance, resolver: copied.resolver }, ctx);
+          served++;
+          await trace.append(cliStream, { kind: "result", surface: "cli", layer: "agent", connector: routed.connector, op: cli.op, body: copied.raw.body, provenance: copied.provenance, resolver: copied.resolver });
+          await trace.append(stream, { kind: "result", surface: "mcp", layer: "agent", connector, op: call.op, body: reply, provenance: copied.provenance, resolver: copied.resolver });
+          response.end(reply);
+          return;
+        }
+        await trace.append(cliStream, { kind: "meta", connector: routed.connector, op: "plugin-copy.miss", body: Buffer.from(copied.why) });
+        if (!inBox) answered = await answerCall(call, ctx);
+      }
       if ("divergence" in answered && inBox) {
         const reply = rpc(message.id, { run_in_box: true });
         answeredOutside(call, { raw: { body: reply }, provenance: "real", resolver: "files-copy" }, ctx);
