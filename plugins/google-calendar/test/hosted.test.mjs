@@ -137,3 +137,27 @@ test("S3: a capped search answer cannot establish the complete search result", {
   const reply = await call("search_events", { query: "standing", pageSize: 100 });
   assert.equal(reply.status, "unsupported", JSON.stringify(reply));
 });
+
+test("S2: a same-second edit also invalidates an observed semantic search", { timeout: 30000 }, async t => {
+  const call = await start(t, [calendars, listed, seen("search_events", { query: "standing" }, {
+    events: [listedEvent("abcdefgh0001", "2026-12-15T08:15:00-06:00", "2026-12-15T08:40:00-06:00")],
+  }, "2026-11-16T12:00:00.100Z")]);
+  value(await call("update_event", { eventId: "abcdefgh0001", summary: "[phoenix-test] unrelated project" }, "2026-11-16T12:00:00.900Z"));
+  const reply = await call("search_events", { query: "standing" }, "2026-11-16T12:00:01Z");
+  assert.equal(reply.status, "unsupported", JSON.stringify(reply));
+});
+
+test("S6: later lists cannot make an old ambiguous suggestion identify which event was busy", { timeout: 30000 }, async t => {
+  const a = listedEvent("abcdefgh0001", "2026-12-15T08:15:00-06:00", "2026-12-15T08:40:00-06:00");
+  const b = listedEvent("abcdefgh0002", "2026-12-15T08:15:00-06:00", "2026-12-15T08:40:00-06:00");
+  const ask = { attendeeEmails: [me], startTime: "2026-12-15T08:00:00", endTime: "2026-12-15T10:00:00", timeZone: "America/Chicago", durationMinutes: 30 };
+  const call = await start(t, [
+    calendars,
+    seen("list_events", day, { ...header, events: [a, b] }),
+    seen("suggest_time", ask, { timeSlots: [slot("2026-12-15T08:40:00-06:00", "2026-12-15T10:00:00-06:00", 80)] }, "2026-11-16T10:30:00Z"),
+    seen("delete_event", { eventId: a.id }, { id: a.id, status: "cancelled" }, "2026-11-16T10:45:00Z"),
+    seen("list_events", day, { ...header, updated: "2026-11-16T10:45:00Z", events: [b] }, "2026-11-16T11:00:00Z"),
+  ]);
+  const reply = await call("suggest_time", { ...ask, endTime: "2026-12-15T09:00:00" });
+  assert.equal(reply.status, "unsupported", JSON.stringify(reply));
+});

@@ -36,6 +36,7 @@ export class Hosted {
     this.order = undefined;
     this.searches = [];
     this.suggested = [];
+    this.changes = [];
   }
 
   gap(why) { this.copy.gap(why); }
@@ -57,7 +58,10 @@ export class Hosted {
     if (write && (event.recurringEventId || event.recurrence)) this.gap(`the copy has not seen the hosted server change a repeating event`);
     return event;
   }
-  wrote(cal, ms) { if (cal.hosted) cal.hosted.updated = upSeconds(ms); }
+  wrote(cal, ms, event) {
+    if (cal.hosted) cal.hosted.updated = upSeconds(ms);
+    this.changes.push({ id: event.id, at: ms, created: Date.parse(event.created) });
+  }
 
   readView(event, zone, ctz) {
     const { kind: _k, etag: _e, availability: _a, visibility: _v, ...shown } = event;
@@ -133,6 +137,7 @@ export class Hosted {
       if (Date.parse(event.updated) > seen.at) this.gap(`event ${event.id} changed after the search ${JSON.stringify(args.query)} was seen, and the copy cannot tell whether it matches now`);
       if (seen.ids.includes(event.id)) events.push(event);
     }
+    for (const change of this.changes) if (change.at > seen.at && cal.events.get(change.id)?.status !== "cancelled") this.gap(`event ${change.id} changed after the search ${JSON.stringify(args.query)} was seen, and the copy cannot tell whether it matches now`);
     if (events.length !== seen.ids.filter(id => cal.events.get(id)?.status !== "cancelled").length) this.gap("the copy has lost an event of a search it saw");
     if (events.length > (args.pageSize ?? 100)) this.gap("the copy has not seen the hosted server page a search");
     const order = new Map(seen.ids.map((id, i) => [id, i]));
@@ -170,6 +175,7 @@ export class Hosted {
     for (const seen of this.suggested) {
       if (seen.emails.length !== 1 || seen.emails[0] !== this.copy.primary || !this.copy.covered(cal, seen.a, seen.b)) continue;
       if (events.some(e => Date.parse(e.updated) > seen.at && !(Date.parse(e.created) > seen.at))) continue;
+      if (this.changes.some(change => change.at > seen.at && !(change.created > seen.at))) continue;
       const present = events.filter(e => e.status !== "cancelled" && !(Date.parse(e.created) > seen.at) && parseInstant(e.end?.dateTime ?? "") > seen.a && parseInstant(e.start?.dateTime ?? "") < seen.b);
       if (this.copy.expanded(cal, seen.a, seen.b).some(e => !e.start?.dateTime)) continue;
       const fixed = present.filter(e => e.availability), open = present.filter(e => !e.availability);
@@ -206,7 +212,7 @@ export class Hosted {
       organizer: me, start: { dateTime: formatInZone(s, args.timeZone), timeZone: args.timeZone }, status: "confirmed", summary: args.summary, updated: seconds(now), visibility: "default",
     });
     cal.events.set(id, event);
-    this.wrote(cal, now);
+    this.wrote(cal, now, event);
     return this.writeView(event);
   }
 
@@ -229,7 +235,7 @@ export class Hosted {
     const now = this.copy.now();
     next.updated = seconds(now);
     cal.events.set(next.id, next);
-    this.wrote(cal, now);
+    this.wrote(cal, now, next);
     return this.writeView(next);
   }
 
@@ -239,7 +245,7 @@ export class Hosted {
     const current = this.event(cal, args.eventId);
     const now = this.copy.now();
     cal.events.set(current.id, { ...current, status: "cancelled", updated: seconds(now) });
-    this.wrote(cal, now);
+    this.wrote(cal, now, current);
     return { id: current.id, status: "cancelled" };
   }
 
@@ -269,7 +275,9 @@ export class Hosted {
       const zone = args.timeZone ?? value.timeZone;
       const a = typeof args.startTime === "string" && zone ? naiveToMs(args.startTime, zone) : NaN, b = typeof args.endTime === "string" && zone ? naiveToMs(args.endTime, zone) : NaN;
       if (!Number.isFinite(a) || !Number.isFinite(b) || !(b > a)) return;
-      copy.dropWindowEvents(cal, a, b, new Set(events.map(e => e.id)));
+      const at = Date.parse(observedAt ?? "") || 0, listed = new Set(events.map(e => e.id));
+      for (const event of copy.expanded(cal, a, b, true)) if (!listed.has(event.id)) this.changes.push({ id: event.id, at, created: Date.parse(event.created) });
+      copy.dropWindowEvents(cal, a, b, listed);
       copy.addWindow(cal, a, b);
       return;
     }
@@ -294,7 +302,10 @@ export class Hosted {
     } else return;
     const at = Date.parse(observedAt ?? "");
     const cal = copy.cal(args.calendarId ?? "primary");
-    if (Number.isFinite(at) && cal.hosted && !(Date.parse(cal.hosted.updated) > at)) this.wrote(cal, at);
+    const event = cal.events.get(value.id ?? args.eventId);
+    if (!Number.isFinite(at) || !event) return;
+    this.changes.push({ id: event.id, at, created: Date.parse(event.created) });
+    if (cal.hosted && !(Date.parse(cal.hosted.updated) > at)) cal.hosted.updated = upSeconds(at);
   }
   put(cal, event) {
     if (!event?.id) return;
