@@ -99,7 +99,7 @@ async function main() {
     const descriptor = parse(await readFile(join(recipe, "recipe.yaml"), "utf8")) as Config;
     delete descriptor.mcp;
     delete descriptor.transcript_reader;
-    const contract = { phoenix_harness: 1, name: "codex", run: { command: ["codex", ...args], output: "stdout" }, editable: ["AGENTS.md"] };
+    const contract = { phoenix_harness: 1, name: "codex", run: { command: ["codex", ...args], output: "stdout" }, endpoints: { model: { env: "OPENAI_BASE_URL" } }, editable: ["AGENTS.md"] };
     const routedServers = Object.fromEntries(Object.entries(servers).map(([name, server]) => {
       const value = server as Config;
       return [name, { ...Object.fromEntries(["enabled", "command", "args", "url"].filter(key => value[key] !== undefined).map(key => [key, value[key]])), ...(typeof value.env?.PATH === "string" ? { path: value.env.PATH } : {}) }];
@@ -109,7 +109,7 @@ async function main() {
     const captureId = JSON.parse(await readFile(join(root, "capture.json"), "utf8")).capture as string;
     const canonicalRoot = join(home, "captures", captureId);
     if (canonicalRoot !== root) { await rename(root, canonicalRoot); root = canonicalRoot; }
-    await appendFile(join(root, "coverage.jsonl"), JSON.stringify({ recipe: "codex", version, login_mode: values["login-mode"], provider: projectConfig ? "project-config-not-resolved" : provider, routes, remote_mcp_fallback: Object.keys(servers).filter(n => servers[n].enabled !== false && servers[n].url && !reverse.includes(n)), limitations: ["Only PATH-resolved ls is shimmed; absolute paths, builtins and reset PATH bypass it", "Transcript items are not wire exchanges; no HTTP model bodies or MCP/CLI envelopes are invented", "Direct HTTP and plugin/dynamic MCP servers are not intercepted", "Filesystem side effects are not captured by CLI shims", "The harness's LLM traffic is not recorded"] }) + "\n");
+    await appendFile(join(root, "coverage.jsonl"), JSON.stringify({ recipe: "codex", version, login_mode: values["login-mode"], provider: projectConfig ? "project-config-not-resolved" : provider, routes, remote_mcp_fallback: Object.keys(servers).filter(n => servers[n].enabled !== false && servers[n].url && !reverse.includes(n)), limitations: ["Only PATH-resolved ls is shimmed; absolute paths, builtins and reset PATH bypass it", "Transcript items are not wire exchanges; no HTTP model bodies or MCP/CLI envelopes are invented", "Direct HTTP and plugin/dynamic MCP servers are not intercepted", "Filesystem side effects are not captured by CLI shims", "The harness's LLM traffic is not recorded", "A replay of a capture alone points Codex at its LLM through OPENAI_BASE_URL, which only the built-in OpenAI provider reads"] }) + "\n");
     let imported = false, incomplete = false;
     const importDescriptor = parse(await readFile(join(recipe, "recipe.yaml"), "utf8")) as Config;
     importDescriptor.transcript_reader.command = [process.execPath, join(recipe, "transcript-reader.ts"), "--single-run"];

@@ -91,7 +91,7 @@ async function main() {
     await save(join(temp, "recipe.json"), { phoenix_recipe: 1, name: "claude-code", harness_versions: ["2.1.325"], routes: [{ versions: "2.1.325", login_mode: mode, surfaces: { all: routes } }], shim });
     await save(join(temp, "harness.json"), { phoenix_harness: 1, name: "claude-code", run: { command }, endpoints: { model: { env: setting } }, editable: ["prompts/**"] });
     const live = routes.filter(route => route !== "transcript");
-    const result = await run([...JSON.parse(values.phoenix ?? '["phoenix"]'), "capture", "--recipe", join(temp, "recipe.json"), "--contract", join(temp, "harness.json"), "--cwd", cwd, "--routes", live.join(","), "--", process.execPath, self, "--inside", join(temp, "config.json")], { env: { ...process.env, PHOENIX_HOME: home, ...(upstream ? { [setting]: upstream } : {}) } });
+    const result = await run([...JSON.parse(values.phoenix ?? '["phoenix"]'), "capture", "--recipe", join(temp, "recipe.json"), "--contract", join(temp, "harness.json"), "--cwd", cwd, "--routes", live.join(","), "--", process.execPath, self, "--inside", join(temp, "config.json")], { env: { ...process.env, PHOENIX_HOME: home } });
     const { root } = await json(join(temp, "capture.json"));
     if (routes.includes("transcript")) {
       const source = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${session}.jsonl`);
