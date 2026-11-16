@@ -27,7 +27,7 @@ async function record(bytes) {
   const timestamp = typeof entry.timestamp === "string" && Number.isFinite(Date.parse(entry.timestamp));
   if (timestamp) wall = entry.timestamp;
   else await unread("missing or invalid wall timestamp; previous wall time used only for ordering");
-  const source = { source_line: line, ...(entry.id ? { session_entry_id: entry.id } : {}), ...(header?.id ? { task: header.id } : {}) };
+  const source = { source_line: line, ...(entry.id ? { session_entry_id: entry.id } : {}), ...(header?.id ? { session_id: header.id } : {}) };
   const original = ["body.inline", ...(timestamp ? ["ts.wall"] : [])];
   if (entry.type === "session") {
     header = entry;
