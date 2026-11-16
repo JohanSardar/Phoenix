@@ -20,7 +20,11 @@ const ask = (method, params) => fetch(process.env.PHOENIX_TOOLS_URL + "/" + CONN
   body: JSON.stringify({ jsonrpc: "2.0", id: input.tool_use_id, method, params: { name, ...params } }),
 }).then(response => response.json());
 if (phase === "post") {
-  if (existsSync(slot + ".ran")) await ask("phoenix/ran", { result: input.tool_response ?? null });
+  if (existsSync(slot + ".ran")) {
+    const response = input.tool_response ?? null;
+    const text = typeof response === "string" ? response : [response?.stdout, response?.stderr].filter(Boolean).join("\n") || JSON.stringify(response);
+    await ask("phoenix/ran", { result: { content: [{ type: "text", text }], isError: false, structuredContent: { toolUseResult: response } } });
+  }
   else if (existsSync(slot + ".json")) say({ updatedToolOutput: JSON.parse(readFileSync(slot + ".json", "utf8")) });
   process.exit(0);
 }
@@ -38,7 +42,9 @@ if (reply.error) {
   say({ permissionDecision: "deny", permissionDecisionReason: "Phoenix stopped this replay: " + reply.error.message });
   process.exit(0);
 }
-const { content, is_error: failed, toolUseResult } = reply.result;
+const { content } = reply.result;
+const failed = reply.result.isError ?? reply.result.is_error;
+const toolUseResult = reply.result.structuredContent?.toolUseResult ?? reply.result.toolUseResult;
 const text = typeof content === "string" ? content : (content ?? []).map(block => block.text ?? "").join("\n");
 const keep = () => { if (!failed && toolUseResult !== undefined) writeFileSync(slot + ".json", JSON.stringify(toolUseResult)); };
 const allow = updatedInput => say({ permissionDecision: "allow", ...(updatedInput ? { updatedInput } : {}) });
