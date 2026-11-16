@@ -19,7 +19,7 @@ export async function captureRuntime(mode: string, args: string[]) {
     const server = httpGatewayTap({ backend: tee(httpBackend(connection => {
       const request = (connection.meta as { request: { url: string } }).request;
       return new URL(process.env.PHOENIX_UPSTREAM!.replace(/\/$/, "") + request.url);
-    }), { socket }), route: () => ({ surface: "http", connector: "model" }) });
+    }), { socket }), route: () => ({ surface: process.env.PHOENIX_GATEWAY_SURFACE === "mcp" ? "mcp" : "http", connector: process.env.PHOENIX_GATEWAY_CONNECTOR ?? "model" }) });
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(Number(args[0]), "127.0.0.1", resolve); });
     process.send?.({ port: (server.address() as { port: number }).port }); process.disconnect?.();
     process.once("SIGTERM", () => { server.close(); server.closeAllConnections(); });
