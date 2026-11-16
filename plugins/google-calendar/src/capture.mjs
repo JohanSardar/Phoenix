@@ -18,6 +18,16 @@ async function plan(segments) {
   const pending = new Map();
   const reads = new Map();
   const add = call => reads.set(JSON.stringify(call), call);
+  // The local server (cocal): read the calendar list, each window it listed or searched in full (a list with `fields` returns
+  // only some event fields), and each event named in a call.
+  const scope = args => (typeof args.account === "string" ? { account: args.account } : {});
+  const cocalCall = (op, args) => {
+    if (!/^tools\/call:[a-z]+-[a-z-]+$/.test(op)) return;
+    add({ op: "tools/call:list-calendars", args: scope(args) });
+    if ((op === "tools/call:list-events" || op === "tools/call:search-events") && typeof args.timeMin === "string" && typeof args.timeMax === "string")
+      add({ op: "tools/call:list-events", args: { ...scope(args), calendarId: args.calendarId ?? "primary", timeMin: args.timeMin, timeMax: args.timeMax, ...(typeof args.timeZone === "string" ? { timeZone: args.timeZone } : {}) } });
+    if (typeof args.eventId === "string" && args.eventId) add({ op: "tools/call:get-event", args: { ...scope(args), calendarId: typeof args.calendarId === "string" ? args.calendarId : "primary", eventId: args.eventId } });
+  };
   const get = id => { if (typeof id === "string" && id) add({ op: "tools/call:get_event", args: { id } }); };
   for (const { event, segment } of events) {
     if (!event.body || event.body.content_encoding) continue;
@@ -39,6 +49,7 @@ async function plan(segments) {
       pending.set(key, { op, args });
       get(args.id);
       if (op === "tools/call:list_events") add({ op, args });
+      cocalCall(op, args);
       continue;
     }
     const call = pending.get(key);
@@ -50,6 +61,7 @@ async function plan(segments) {
       try { value = JSON.parse(result.content[0].text); } catch { continue; }
     }
     for (const entity of Array.isArray(value) ? value : [value]) get(entity?.id);
+    if (/^tools\/call:(list-events|search-events)$/.test(call.op)) for (const ev of value?.events ?? []) if (typeof ev?.recurringEventId === "string") add({ op: "tools/call:get-event", args: { ...scope(call.args), calendarId: ev.calendarId ?? call.args.calendarId ?? "primary", eventId: ev.recurringEventId } });
   }
   return [...reads.values()];
 }
