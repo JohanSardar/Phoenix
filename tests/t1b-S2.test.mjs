@@ -48,7 +48,7 @@ export default function (pi) {
     ...mounted, '--workdir', '/worktree', '--env', 'PHOENIX_TOOLS_URL=http://phoenix-tools',
     'phoenix-pi-resume:1.5.2', 'node', '/phoenix/recipe/resume.mjs'], {
     encoding: 'utf8', timeout: 30_000,
-    env: { ...process.env, DOCKER_HOST: process.env.DOCKER_HOST ?? 'unix:///Users/johansardar/.colima/default/docker.sock' },
+    env: process.env,
   });
   assert.equal(run.status, 0, run.stderr);
   const probe = JSON.parse(await readFile(join(root, 'out/probe.json'), 'utf8'));

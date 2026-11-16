@@ -17,13 +17,13 @@ async function helloFor(servername: string): Promise<Buffer> {
 }
 
 test("the server name is read from a real TLS client hello", async () => {
-  assert.deepEqual(serverName(await helloFor("chatgpt.com")), { name: "chatgpt.com" });
-  assert.deepEqual(serverName(await helloFor("Discord.com")), { name: "discord.com" });
+  assert.deepEqual(serverName(await helloFor("llm.example.com")), { name: "llm.example.com" });
+  assert.deepEqual(serverName(await helloFor("Other.Example.org")), { name: "other.example.org" });
 });
 
 test("a connection that is not a whole TLS client hello names no server", async () => {
-  assert.equal(serverName(Buffer.from("GET / HTTP/1.1\r\nHost: chatgpt.com\r\n\r\n")).name, null);
-  const hello = await helloFor("chatgpt.com");
+  assert.equal(serverName(Buffer.from("GET / HTTP/1.1\r\nHost: llm.example.com\r\n\r\n")).name, null);
+  const hello = await helloFor("llm.example.com");
   const split = Buffer.from(hello.subarray(0, 64));
   split.writeUInt16BE(59, 3);
   assert.equal(serverName(split).name, null);
