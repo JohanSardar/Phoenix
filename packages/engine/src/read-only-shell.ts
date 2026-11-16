@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 
 type Operands = "paths" | "text" | "pattern" | "sed" | "find" | "none" | "dir";
 type Spec = { flags?: string; valued?: string; long?: string[]; numeric?: boolean; operands: Operands; max?: number };
@@ -119,7 +119,7 @@ export function readsOnly(command: string, root: string, cwd: string = root, cop
   const top = existsSync(copy) ? realpathSync(copy) : copy;
   const real = (path: string) => existsSync(path) ? realpathSync(path) : path;
   const under = (path: string) => { const rest = relative(top, path); return rest === "" || (!rest.startsWith("..") && !isAbsolute(rest)); };
-  const locate = (from: string, path: string): string | undefined => {
+  const locate = (from: string, path: string, links = true): string | undefined => {
     let at = from, rest = path;
     if (isAbsolute(path)) {
       if (path !== root && !path.startsWith(root.endsWith("/") ? root : root + "/")) return undefined;
@@ -128,12 +128,13 @@ export function readsOnly(command: string, root: string, cwd: string = root, cop
     }
     for (const part of rest.split("/")) {
       if (!part || part === ".") continue;
-      at = part === ".." ? dirname(at) : real(join(at, part));
-      if (!under(at)) return undefined;
+      const next = part === ".." ? dirname(at) : join(at, part);
+      at = part === ".." ? next : real(next);
+      if (!under(at) || (!links && at !== next)) return undefined;
     }
     return at;
   };
-  let here = locate(top, resolve(root, cwd));
+  let here = locate(top, isAbsolute(cwd) ? cwd : root + "/" + cwd, false);
   if (!here) return false;
   const commands: { words: string[]; before?: string; after?: string }[] = [{ words: [] }];
   for (let at = 0; at < tokens.length; at++) {
@@ -182,7 +183,7 @@ export function readsOnly(command: string, root: string, cwd: string = root, cop
     }
     if (spec.max !== undefined && operands.length > spec.max) return false;
     if (!paths.every(path => path === "/dev/null" || locate(here!, path))) return false;
-    if (name === "cd") here = locate(here, operands[0]!)!;
+    if (name === "cd") { here = locate(here, operands[0]!, false); if (!here) return false; }
   }
   return true;
 }
