@@ -3,10 +3,12 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { startToolStandIn, type ToolStandIn } from "@phoenix/engine";
-import { writeClockFile, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
+import { parse } from "yaml";
+import type { RecipeDescriptor } from "@phoenix/formats";
+import { passToLlm, writeClockFile, type LlmConnection, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
 import type { MomentBundle } from "@phoenix/store";
 import type { ResolvedPlan } from "./plan.ts";
-import { optional } from "./files.ts";
+import { optional, save } from "./files.ts";
 
 const execute = promisify(execFile);
 const TOOLS_HOST = "phoenix-tools";
@@ -50,11 +52,14 @@ export async function resumeAttempt(input: {
     hmacKey: input.hmacKey,
   });
   let process: SandboxProcess | undefined;
+  const llm: LlmConnection[] = [];
   let outcome: Outcome;
   try {
     const [login, ...loginArgs] = recipe.resume.login;
     await execute(login!, [...loginArgs, join(box, "agent"), moment.model.provider], { cwd: recipeDirectory });
-    await writeClockFile(join(root, "clock"), new Date());
+    const time = bundle.manifest.clock?.time ?? new Date().toISOString();
+    await writeClockFile(join(root, "clock"), time);
+    const { clock } = parse(await readFile(join(recipeDirectory, recipe.file), "utf8")) as RecipeDescriptor;
     const running = await sandbox.start({
       image: plan.harness_image, argv: recipe.resume.command, env: { PHOENIX_TOOLS_URL: `http://${TOOLS_HOST}`, TZ: bundle.manifest.clock?.timezone ?? "UTC" },
       mounts: [
@@ -64,21 +69,24 @@ export async function resumeAttempt(input: {
         { source: join(box, "out"), target: "/phoenix/out" },
         { source: join(directory, "inputs/candidate"), target: "/worktree", readOnly: true },
       ],
-      clockFile: join(root, "clock"), workdir: "/worktree", dontFakeMonotonic: true, directHosts: hosts,
+      clockFile: join(root, "clock"), virtualTime: time, ...(clock ? { clockProbe: clock.probe } : {}), workdir: "/worktree", dontFakeMonotonic: true,
     });
     process = running.process;
+    await save(join(root, "clock-report.json"), process.clock);
     await input.started(process.id);
     process.stdin.end();
     process.stdout.resume(); process.stderr.resume();
-    const connections = (async () => { for await (const connection of running.channel) standIn.accept(connection); })().then(() => ({ kind: "interrupted" as const, why: "engine channel closed" }), () => ({ kind: "interrupted" as const, why: "engine channel closed" }));
+    const connections = (async () => { for await (const connection of running.channel) {
+      if (connection.destination.port === 443 && hosts.includes(connection.destination.host.toLowerCase())) passToLlm(connection, llm);
+      else standIn.accept(connection);
+    } })().then(() => ({ kind: "interrupted" as const, why: "engine channel closed" }), () => ({ kind: "interrupted" as const, why: "engine channel closed" }));
     outcome = await Promise.race([
       process.exited.then(({ code }) => ({ kind: "finished" as const, code })),
       process.interrupted.then(error => ({ kind: "interrupted" as const, why: error.message })),
       standIn.stopped.then(divergence => ({ kind: "diverged" as const, trigger: divergence.trigger, detail: divergence.detail })),
       connections,
     ]);
-    const egress = await process.egress?.();
-    await standIn.note("sandbox.egress", { llm_hosts: hosts, direct_rules: egress?.stdout ?? null, tool_answers_from_phoenix: standIn.served() });
+    await standIn.note("sandbox.egress", { llm_hosts: hosts, llm_connections: llm, tool_answers_from_phoenix: standIn.served() });
     const result = await optional<{ session: string | null; final_text: string }>(join(box, "out/result.json"));
     if (result?.final_text) await standIn.note("final_text", result.final_text);
     if (result?.session) {

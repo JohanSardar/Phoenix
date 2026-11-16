@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { adapterCall } from "./adapter.mjs";
 
 const loadout = JSON.parse(readFileSync(process.env.PHOENIX_PI_LOADOUT, "utf8"));
 const url = process.env.PHOENIX_TOOLS_URL;
@@ -14,10 +15,11 @@ export default function standIn(pi) {
       parameters: tool.parameters,
       ...(tool.constrainedSampling ? { constrainedSampling: tool.constrainedSampling } : {}),
       async execute(toolCallId, params, signal) {
-        const response = await fetch(`${url}/${encodeURIComponent(tool.connector)}`, {
+        const { connector, op, args } = tool.adapter?.proxy ? adapterCall(tool.name, params, loadout.adapter) : { connector: tool.connector, op: tool.op, args: params };
+        const response = await fetch(`${url}/${encodeURIComponent(connector)}`, {
           method: "POST",
           headers: { "content-type": "application/json", "x-phoenix-tool-call": toolCallId },
-          body: JSON.stringify({ jsonrpc: "2.0", id: next++, method: "tools/call", params: { name: tool.op, arguments: params } }),
+          body: JSON.stringify({ jsonrpc: "2.0", id: next++, method: "tools/call", params: { name: op, arguments: args } }),
           signal,
         });
         const reply = await response.json();

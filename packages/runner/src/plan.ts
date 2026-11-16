@@ -100,15 +100,15 @@ export async function resolvePlan(root: string, ledger: string, request: ReplayR
   await mkdir(join(root, "replays"), { recursive: true, mode: 0o700 });
   const stage = await mkdtemp(join(root, "replays/.resolve-"));
   await mkdir(join(stage, "inputs"));
-  await cp(request.moment, join(stage, "inputs/bundle"), { recursive: true, errorOnExist: true, force: false });
-  await cp(request.base.directory, join(stage, "inputs/base"), { recursive: true, errorOnExist: true, force: false });
-  await cp(request.candidate.directory, join(stage, "inputs/candidate"), { recursive: true, errorOnExist: true, force: false });
+  await cp(request.moment, join(stage, "inputs/bundle"), { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+  await cp(request.base.directory, join(stage, "inputs/base"), { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+  await cp(request.candidate.directory, join(stage, "inputs/candidate"), { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
   if (request.recipe && recipe) {
-    await cp(dirname(request.recipe), join(stage, "inputs/recipe"), { recursive: true, errorOnExist: true, force: false });
+    await cp(dirname(request.recipe), join(stage, "inputs/recipe"), { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
     if (await treeDigest(join(stage, "inputs/recipe")) !== recipe.tree) throw new Error("Recipe changed while resolving the plan");
   }
   for (const [index, plugin] of (request.plugins ?? []).entries()) {
-    await cp(plugin.directory, join(stage, "inputs/plugins", String(index)), { recursive: true, errorOnExist: true, force: false });
+    await cp(plugin.directory, join(stage, "inputs/plugins", String(index)), { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
     if (await treeDigest(join(stage, "inputs/plugins", String(index))) !== plugins[index]!.tree) throw new Error("Plugin changed while resolving the plan");
   }
   for (const [name, hash] of [["base", plan.base_tree], ["candidate", plan.candidate_tree]] as const) if (await treeDigest(join(stage, "inputs", name)) !== hash) throw new Error("Tree changed while resolving the plan");

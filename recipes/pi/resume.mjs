@@ -4,10 +4,12 @@ import { join } from "node:path";
 
 const moment = JSON.parse(readFileSync("/phoenix/moment/moment.json", "utf8"));
 const append = join(process.cwd(), "APPEND_SYSTEM.md");
+const extensions = existsSync("extensions") ? readdirSync("extensions").filter(name => /\.(ts|js|mjs)$/.test(name)).sort().flatMap(name => ["-e", join(process.cwd(), "extensions", name)]) : [];
+const { LD_PRELOAD: _, ...env } = process.env;
 const args = [
   "--fork", "/phoenix/moment/cut.jsonl", "--session-dir", "/phoenix/out",
   "--no-extensions", "--no-mcp", "--no-skills", "--no-context-files", "--no-prompt-templates", "--no-themes", "--offline",
-  "-e", "/phoenix/recipe/stand-in.mjs",
+  "-e", "/phoenix/recipe/stand-in.mjs", ...extensions,
   "--provider", moment.model.provider, "--model", moment.model.id,
   ...(moment.model.thinking ? ["--thinking", moment.model.thinking] : []),
   ...(existsSync(append) ? ["--append-system-prompt", append] : []),
@@ -15,7 +17,7 @@ const args = [
 ];
 const child = spawn("pi", args, {
   stdio: ["ignore", "inherit", "inherit"],
-  env: { ...process.env, PI_CODING_AGENT_DIR: "/phoenix/agent", PHOENIX_PI_LOADOUT: "/phoenix/moment/loadout.json" },
+  env: { ...env, NODE_OPTIONS: `${env.NODE_OPTIONS ?? ""} --import /phoenix/recipe/clock.mjs`.trim(), PHOENIX_CLOCK_FILE: env.FAKETIME_TIMESTAMP_FILE ?? "/phoenix-clock", PI_CODING_AGENT_DIR: "/phoenix/agent", PHOENIX_PI_LOADOUT: "/phoenix/moment/loadout.json" },
 });
 const code = await new Promise(resolve => child.once("close", code => resolve(code ?? 1)));
 const file = readdirSync("/phoenix/out").find(name => name.endsWith(".jsonl"));

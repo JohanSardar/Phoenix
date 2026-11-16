@@ -76,8 +76,7 @@ export class ContainerSandbox implements Sandbox {
     })();
     try {
       const isolation = ["--cap-drop=ALL", "--security-opt=no-new-privileges", "--init"];
-      const direct = spec.directHosts?.length ? ["--network", "bridge", "--cap-add=NET_ADMIN", "--env", `PHOENIX_DIRECT_HOSTS=${JSON.stringify(spec.directHosts)}`] : ["--network", "none"];
-      await this.require(["run", "-d", "--name", relay, ...direct, ...isolation, "--cap-add=NET_BIND_SERVICE", "--env", `PHOENIX_RELAY_PORTS=${JSON.stringify(this.relayPorts)}`, this.relayImage]);
+      await this.require(["run", "-d", "--name", relay, "--network", "none", ...isolation, "--cap-add=NET_BIND_SERVICE", "--env", `PHOENIX_RELAY_PORTS=${JSON.stringify(this.relayPorts)}`, this.relayImage]);
       await this.require(["exec", relay, "node", "-e", "const f=require('fs');let tries=0;function ready(){if(f.existsSync('/run/phoenix/engine.sock'))process.exit(0);if(++tries>100)process.exit(1);setTimeout(ready,20)}ready()"]);
       const bridge = this.spawn(["exec", "-i", relay, "node", "/relay.mjs", "bridge"]);
       children.push(bridge);
@@ -124,8 +123,7 @@ export class ContainerSandbox implements Sandbox {
         child.once("error", (error) => { interrupt(error); resolve({ code: null, signal: null }); });
         child.once("close", (code, signal) => resolve({ code, signal }));
       });
-      const egress = () => this.command(["exec", relay, "iptables", "-L", "PHOENIX_DIRECT", "-v", "-n", "-x"]);
-      return { process: { id: workload, stdin: child.stdin, stdout: child.stdout, stderr: child.stderr, exited, interrupted, clock, exec, egress, stop }, channel };
+      return { process: { id: workload, stdin: child.stdin, stdout: child.stdout, stderr: child.stderr, exited, interrupted, clock, exec, stop }, channel };
     } catch (error) {
       await stop();
       throw error;
