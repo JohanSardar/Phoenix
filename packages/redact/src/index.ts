@@ -98,7 +98,7 @@ async function transformJson(text: string, scan: (value: string, at: string) => 
       else if (ch === '"') break;
     }
   };
-  const value = async (at: string, hide = false): Promise<void> => {
+  const value = async (at: string, hide = false, propertyNames = false): Promise<void> => {
     space();
     const start = offset;
     if (text[offset] === "{") {
@@ -109,8 +109,9 @@ async function transformJson(text: string, scan: (value: string, at: string) => 
         const keyEnd = offset;
         const nextKey = secret ? key : await scan(key, `body${at}/$key:${keyIndex++}`);
         if (nextKey !== key) spans.push({ start: keyStart, end: keyEnd, replacement: JSON.stringify(nextKey), rule: at });
-        space(); offset++;
-        await value(`${at}/${nextKey.replace(/~/g, "~0").replace(/\//g, "~1")}`, !hide && !!secret && secretName(key));
+        space(); offset++; space();
+        const schemaProperty = propertyNames && text[offset] === "{";
+        await value(`${at}/${nextKey.replace(/~/g, "~0").replace(/\//g, "~1")}`, !hide && !!secret && secretName(key) && !schemaProperty, key === "properties");
         space(); if (text[offset] !== ",") break; offset++; space();
       }
       offset++;
