@@ -22,6 +22,8 @@ phoenix moment create --session ~/.fx/sessions/v2/SESSION_ID/log.jsonl \
   --recipe recipes/fx/recipe.yaml --at LINE --id ID --check check.yaml OUT
 ```
 
+Use `--from-beginning` instead of `--at LINE` to start at the session's first message, with its original prompt. fx then starts from an empty session in the box. `--change` isn't supported for fx yet.
+
 Phoenix also copies the session's `blobs/` folder, which holds the full tool outputs, with secrets stripped. Blobs it can't scan, such as fx's binary command replays, are left out. A tool call whose full output was left out has no session answer, so a replay that makes that call again gets it answered like a new call. The original session is never changed.
 
 The harness is a folder with `run: { resume: {} }` in its `phoenix.harness.yaml`. Three files in it change how fx acts:
