@@ -20,8 +20,10 @@ resume:
   command: [python3, /phoenix/recipe/resume.py]
   llm_hosts:
     opencode-go: [opencode.ai]
+    openai-codex: [chatgpt.com]
 limitations:
   - "The demo keeps no session, so every replay starts at the first message with the moment's prompt."
   - "The harness is the demo's python-backend folder. Its ChatKit web server does not run; resume.py runs the triage agent once with the prompt."
   - "Phoenix answers every function tool. The guardrail agents and handoffs run in the box against the moment's LLM."
-  - "Every agent, the guardrails included, uses the moment's LLM in place of the LLM named in the code. Only OpenCode Go (opencode.ai) is wired up."
+  - "Every agent, the guardrails included, uses the moment's LLM in place of the LLM named in the code. Two LLM routes are wired up: OpenCode Go (opencode.ai) and pi's ChatGPT login (chatgpt.com)."
+  - "If the LLM refuses the login before the run, the replay does not run and gives no verdict. A refusal partway through the run fails the sample."
