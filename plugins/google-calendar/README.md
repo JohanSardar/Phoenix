@@ -41,7 +41,7 @@ The adapter tools only show Google's events, not the calendar list, so a session
 Known differences from the real service, measured side by side against real answers:
 
 - `created` and `updated` come from the replay clock, so they differ from the real ones by up to about one second.
-- Ids that Google makes up (events created without an id) are new ids, not the real ones.
+- Ids that Google makes up (events created without an id) are new ids, not the real ones, except for a recorded write the engine runs against the copy: the engine sends the recorded answer with it, so the event keeps the id the agent was given and later calls by that id reach the copy. This holds for both servers.
 - `get-current-time` follows the replay clock. In the sandbox that clock is the recorded time, so it was 75 ms off.
 - `manage-accounts` reports a login that expires in 2099, so the server never tries to refresh it.
 
@@ -59,7 +59,7 @@ Claude Code names the claude.ai Google Calendar connector `claude_ai_Google_Cale
 
 The copy learns from the hosted server's own answers in the snapshot: the calendar list, every event of a `list_events` window (without `fullText` and without a next page), events from reads and writes, deletions, and each search with the events it found. It answers `unsupported` for what it has not seen answered live: a window it never saw listed, a search it never saw (the server searches by meaning, so the copy repeats only a search it saw with less than a full page, and only while no event has changed since), guests, Google Meet, repeating or all-day writes, a time with an offset or without `timeZone`, `suggest_time` for anyone but the user, paging, and a recorded response to an invitation.
 
-Compared call by call with four recorded sessions (each call asked after teaching the copy every real answer before it), every call the copy answered matched, apart from ids Google makes up, the links built from them, and `created` and `updated`, which follow the replay clock and differ by up to a second. The calls it did not answer were ones nothing before them could tell it about, such as a session's first `list_calendars`.
+Compared call by call with four recorded sessions (each call asked after teaching the copy every real answer before it), every call the copy answered matched, apart from ids Google makes up for events the agent creates live in a replay, the links built from them, and `created` and `updated`, which follow the replay clock and differ by up to a second. The calls it did not answer were ones nothing before them could tell it about, such as a session's first `list_calendars`.
 
 Install for a replay with `npm install --omit=dev` inside the unpacked package, so its `node_modules` sits in the plugin folder. The runner mounts only that folder.
 

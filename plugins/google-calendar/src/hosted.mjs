@@ -203,7 +203,7 @@ export class Hosted {
     const s = this.time(args.startTime, args.timeZone, "startTime"), e = this.time(args.endTime, args.timeZone, "endTime");
     if (!(e > s)) this.gap("the copy has not seen the hosted server create an event that ends before it starts");
     const now = this.copy.now(), me = { email: this.me(), self: true };
-    const id = Array.from(randomBytes(26), byte => B32[byte % 32]).join("");
+    const id = this.copy.nextIds.shift() ?? Array.from(randomBytes(26), byte => B32[byte % 32]).join("");
     const event = keep({
       availability: "AVAILABILITY_BUSY", conferenceData: {}, created: seconds(now), creator: me,
       ...(args.description !== undefined ? { description: args.description } : {}),

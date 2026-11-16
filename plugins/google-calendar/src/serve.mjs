@@ -129,6 +129,7 @@ async function call(params) {
   const kind = dialect(op, args);
   if (!kind) return { status: "unsupported", reason: `${op} is not a Google Calendar tool the copy knows` };
   copy.takeGaps();
+  copy.nextIds = createdIds(params.recorded);
   if (kind === "google") {
     let value;
     try { value = copy.hosted.call(op, args); } catch (error) {
@@ -144,6 +145,15 @@ async function call(params) {
   const gaps = copy.takeGaps();
   if (gaps.length) return { status: "unsupported", reason: `The calendar copy does not know enough to answer: ${[...new Set(gaps)].join("; ")}` };
   return { status: "answer", value: { body: Buffer.from(JSON.stringify(response) + "\n").toString("base64") } };
+}
+
+// When the engine runs a recorded write against the copy, it also sends the recorded answer. Events that write created
+// then take the ids the agent was given, so later calls by those ids reach them.
+function createdIds(recorded) {
+  let value;
+  try { value = payload(JSON.parse(Buffer.from(recorded?.body ?? "", "base64").toString("utf8")).result); } catch { return []; }
+  const events = value?.event ? [value.event] : Array.isArray(value?.created) ? value.created : value?.id && value.created ? [value] : [];
+  return events.map(e => e?.id).filter(id => typeof id === "string");
 }
 
 let initialized = false;
