@@ -44,7 +44,7 @@ test('S1: plugin CLI stdout is secret-stripped in every persisted trace represen
     host: 'phoenix-tools', answers: [], policy: () => ({}),
     pluginCommand: (_connector, _op, args) => {
       const found = recognizeCommand(args.command, [descriptor]);
-      return found && { calls: found.calls.map(call => ({ ...call, cwd: '/project' })), around: found.around };
+      return found && { calls: found.calls.map(call => ({ ...call, env: call.env ?? {}, cwd: '/project' })), around: found.around };
     },
     emulators: [{ plugin: { directory: root, descriptor }, options: {
       context: {}, replay: { sandbox, spec: { image: 'unused', mounts: [], clockFile: join(root, 'clock') } },

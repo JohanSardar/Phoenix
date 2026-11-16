@@ -137,12 +137,12 @@ export async function resumeAttempt(input: {
       const shell = moment.shell?.[connector]?.[op];
       const given = args as Record<string, unknown>;
       const command = shell && given[shell.command], givenCwd = (shell?.cwd ? given[shell.cwd] : undefined) ?? moment.cwd;
-      const found = typeof command === "string" ? recognizeCommand(command, commandPlugins) : undefined;
+      const found = typeof command === "string" ? recognizeCommand(command, commandPlugins, project?.home) : undefined;
       if (!found || found.calls.some(c => c.conditional)) return undefined;
       const cwd = typeof givenCwd === "string" ? givenCwd : undefined;
       const rest = found.around.replace(/\u0000\d+\u0000/g, "true");
       const guarded = project ? readsOnly(rest, project.root, cwd, join(box, "project")) : /^true(?: [12]>& '[12]'| (?:[12]?>>?|&>) '\/dev\/null')*$/.test(rest);
-      return guarded ? { calls: found.calls.map(c => ({ connector: c.connector, argv: c.argv, cwd: cwd ?? project?.root ?? "/", ...(c.stdin === undefined ? {} : { stdin: c.stdin }) })), around: found.around } : undefined;
+      return guarded ? { calls: found.calls.map(c => ({ connector: c.connector, argv: c.argv, env: c.env ?? {}, cwd: cwd ?? project?.root ?? "/", ...(c.stdin === undefined ? {} : { stdin: c.stdin }) })), around: found.around } : undefined;
     },
     ...(input.simulator ? { simulator: input.simulator } : {}),
     cutTime: bundle.manifest.clock?.time ?? new Date().toISOString(),

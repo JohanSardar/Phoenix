@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -24,7 +24,9 @@ export async function shellCase(t, command, { unsupportedRead = false } = {}) {
   const directory = join(root, 'run'), sample = join(root, 'sample');
   const recipeDirectory = join(directory, 'inputs/recipe');
   const answers = join(root, 'answers');
-  for (const path of [recipeDirectory, answers]) await mkdir(path, { recursive: true });
+  const runtimeHome = join(root, 'runtime-home');
+  for (const path of [recipeDirectory, answers, join(runtimeHome, 'original-project')]) await mkdir(path, { recursive: true });
+  await writeFile(join(runtimeHome, 'original-project/value.txt'), 'OUTSIDE-COPY\n');
   await writeFile(join(recipeDirectory, 'recipe.yaml'), '{}');
   const script = join(root, 'serve.mjs');
   await writeFile(script, String.raw`
@@ -44,6 +46,7 @@ export async function shellCase(t, command, { unsupportedRead = false } = {}) {
         if (args[0] === 'message' && args[1] === 'delete') messages = 0;
         if (args[0] === 'envelope') stdout = String(messages) + '\n';
         if (args[0] === 'template') stdout = Buffer.from(request.params.raw.stdin, 'base64').toString();
+        if (args[0] === 'pwd') stdout = request.params.args.cwd.endsWith('/child') ? 'child\n' : 'parent\n';
         const frame = (stream, text) => ({ dir: 'back', stream, bytes: Buffer.from(text).toString('base64'), last: true });
         value = { body: Buffer.from(JSON.stringify([
           frame(1, stdout), frame(2, stderr), frame(3, JSON.stringify({ type: 'exit', code, signal: null })),
@@ -82,6 +85,9 @@ export async function shellCase(t, command, { unsupportedRead = false } = {}) {
       return { process: { stdin: child.stdin, stdout: child.stdout, stderr: child.stderr,
         exited: done, interrupted: new Promise(() => {}), async stop() { child.stdin.end(); await done; } } };
     }
+    await mkdir(join(sample, 'box/project/child'), { recursive: true });
+    await writeFile(join(sample, 'box/project/value.txt'), 'FILES-COPY\n');
+    await symlink(join(sample, 'box/project'), original);
     return { channel, process: {
       id: 'unit-shell', stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
       exited, interrupted: new Promise(() => {}), clock: { clock: 'real', binaries: [] },
@@ -98,7 +104,7 @@ export async function shellCase(t, command, { unsupportedRead = false } = {}) {
     } },
     bundle: {
       manifest: { resume: { moment: 'moment.json', session: 'session.jsonl', project: {
-        root: original, tar: 'project.tar', source: 'current', taken_at: time,
+        root: original, home: root, tar: 'project.tar', source: 'current', taken_at: time,
       } }, clock: { time }, connectors: { 'claude-code': {} } },
       files: new Map([
         ['moment.json', Buffer.from(JSON.stringify(moment))], ['session.jsonl', Buffer.from('')],
@@ -113,8 +119,8 @@ export async function shellCase(t, command, { unsupportedRead = false } = {}) {
         }, JSON.stringify({ tool_name: 'Bash', tool_use_id: 'unit-call', tool_input: { command } }));
         if (hooked.code !== 0) throw new Error(hooked.stderr);
         const hook = JSON.parse(hooked.stdout).hookSpecificOutput;
-        return hook.updatedInput ? run('/bin/sh', ['-c', hook.updatedInput.command], {
-          cwd: join(sample, 'box/project'), env: { PATH: process.env.PATH },
+        return hook.permissionDecision === 'allow' ? run('/bin/sh', ['-c', hook.updatedInput?.command ?? command], {
+          cwd: join(sample, 'box/project'), env: { PATH: process.env.PATH, HOME: runtimeHome },
         }) : { denied: hook.permissionDecisionReason, decision: hook.permissionDecision };
       })().then(value => observed = value, error => failed = error).finally(() => finish({ code: 0, signal: null }));
     },
