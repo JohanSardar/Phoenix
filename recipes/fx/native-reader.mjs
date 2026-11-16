@@ -19,9 +19,9 @@ export function readNative(bytes, emit, unread) {
       if (row.v !== 1 || row.seq !== expected++ || !Number.isFinite(row.ts)) throw new Error("Unsupported or out-of-order native record");
       if (lineNumber === 1 && row.kind !== "session_created") throw new Error("Missing session_created");
       if (row.kind === "session_created") task = row.id;
-      const fields = { ts: { wall: new Date(row.ts).toISOString() }, task };
+      const fields = { ts: { wall: new Date(row.ts).toISOString() }, task, source_line: lineNumber };
       if (row.kind === "item") {
-        if (!["user", "runtime_context", "context_note", "assistant_running", "assistant", "tool_running", "tool_call", "tool_result", "steering", "turn_end", "interrupted", "context_checkpoint", "file_review"].includes(row.type)) {
+        if (!["user", "runtime_context", "context_note", "assistant_running", "assistant", "tool_running", "tool_call", "tool_result", "steering", "turn_end", "interrupted", "context_checkpoint", "file_review", "interruption", "superseded"].includes(row.type)) {
           unread(row.type, "Unknown native item type", lineNumber);
           continue;
         }

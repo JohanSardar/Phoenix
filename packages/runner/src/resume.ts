@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { startToolStandIn, type ToolStandIn } from "@phoenix/engine";
 import { parse } from "yaml";
@@ -38,8 +38,15 @@ export async function resumeAttempt(input: {
   const box = join(root, "box");
   for (const part of ["moment", "agent", "out"]) await mkdir(join(box, part), { recursive: true, mode: 0o700 });
   await writeFile(join(box, "moment/cut.jsonl"), session.slice(0, moment.cut_lines).join("\n") + "\n", { mode: 0o600 });
-  await writeFile(join(box, "moment/moment.json"), JSON.stringify({ prompt: moment.prompt, model: moment.model }), { mode: 0o600 });
-  await writeFile(join(box, "moment/loadout.json"), JSON.stringify(moment.loadout), { mode: 0o600 });
+  const { answers: _answers, loadout, ...reading } = moment;
+  await writeFile(join(box, "moment/moment.json"), JSON.stringify(reading), { mode: 0o600 });
+  await writeFile(join(box, "moment/loadout.json"), JSON.stringify(loadout), { mode: 0o600 });
+  if (resume.files) for (const [path, bytes] of bundle.files) {
+    if (!path.startsWith(`${resume.files}/`)) continue;
+    const target = join(box, "moment/files", path.slice(resume.files.length + 1));
+    await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+    await writeFile(target, bytes, { mode: 0o600 });
+  }
   const plugins = new Map(plan.runner.plugins.map(plugin => [plugin.descriptor.connector, plugin.descriptor]));
   const standIn: ToolStandIn = await startToolStandIn({
     host: TOOLS_HOST,
@@ -74,7 +81,9 @@ export async function resumeAttempt(input: {
     await save(join(root, "clock-report.json"), process.clock);
     await input.started(process.id);
     process.stdin.end();
-    process.stdout.resume(); process.stderr.resume();
+    process.stdout.resume();
+    let stderr = "";
+    process.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-4096); });
     const connections = (async () => { for await (const connection of running.channel) standIn.accept(connection); })().then(() => ({ kind: "interrupted" as const, why: "engine channel closed" }), () => ({ kind: "interrupted" as const, why: "engine channel closed" }));
     outcome = await Promise.race([
       process.exited.then(({ code }) => ({ kind: "finished" as const, code })),
@@ -85,6 +94,7 @@ export async function resumeAttempt(input: {
     const egress = await process.egress?.();
     await standIn.note("sandbox.egress", { llm_hosts: hosts, direct_rules: egress?.stdout ?? null, tool_answers_from_phoenix: standIn.served() });
     const result = await optional<{ session: string | null; final_text: string }>(join(box, "out/result.json"));
+    if (stderr) await standIn.note("harness.stderr", stderr);
     if (result?.final_text) await standIn.note("final_text", result.final_text);
     if (result?.session) {
       const entries = (await readFile(join(box, "out", result.session), "utf8")).split("\n").filter(Boolean);
