@@ -64,6 +64,7 @@ export interface Answer {
   resolver: string;
   note?: string;
   exchange?: Exchange;
+  afterUntakenWrite?: boolean;
 }
 export type Miss = { miss: true; why: string };
 
