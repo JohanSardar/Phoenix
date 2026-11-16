@@ -29,6 +29,8 @@ A write through one is seen by the other. If the agent stars a message with hima
 | `labels` | A `list_labels` answer |
 | `messages`, `drafts` | Messages and drafts already known |
 | `answers` | Recorded connector answers `{ op, args, result, observed_at }` |
+
+The snapshot can also be capture events, one JSON line per call and per result. That is what the resume path writes; each `tools/call` is paired with its result to make `answers`.
 | `cut_at` | Answers observed at or before this time are the moment's past |
 | `himalaya` | `{ top, accounts: [{ name, lines, default }] }`: the person's himalaya settings without connection or login lines |
 
@@ -38,13 +40,15 @@ The copy learns the mailbox from the answers in time order. A recorded send, rep
 
 The seven read tools are declared read-only: `search_threads`, `get_thread`, `get_message`, `list_labels`, `list_drafts`, `get_draft`, `download_gmail_attachment`.
 
-himalaya is not declared read-only. The plugin interface keys read-only by op, and every himalaya command has the same op, `himalaya`. So `envelope list` and `message delete` cannot be told apart there.
+For himalaya, read-only entries are the first words of a command: `himalaya folder list`, `himalaya envelope list` and `himalaya message read --preview`. A plain `message read` marks the message seen, so it counts as a write.
 
 ## Capture
 
 `src/capture.mjs` plans reads of everything the session touched through the connector: `list_labels`, then `get_thread` (FULL_CONTENT) for each thread, `get_message` (RAW) for each message, and `get_draft` for each draft. Every planned read is a declared read-only tool. The sidecar makes no network calls.
 
-The claude.ai connector runs inside claude.ai. There is no local MCP command for the host to read through, so a mark reports the connector as not saved, and the copy starts from the answers the session recorded. The host has no CLI capture target, so himalaya reads are not planned either.
+For a command-line target it plans `himalaya folder list`, plus the session's own `envelope list` and `message read` calls, with `--preview` added and any leading options moved after the subcommand. It never plans a send or another write.
+
+The claude.ai connector runs inside claude.ai. There is no local MCP command for the host to read through, so a mark reports the connector as not saved, and the copy starts from the answers the session recorded.
 
 ## Box
 
@@ -68,8 +72,16 @@ The plugin test kit was run on 38 answers recorded from the real connector. Thes
 
 ## Limits
 
-- himalaya's stdin is not passed. The CLI call reaches the plugin before any stdin is sent, so `himalaya message send` with the message on stdin gets an empty message. Passing the message as an argument works.
+Merged with a gap (JOH-57 stays open). Not proven or not built yet:
+
+- himalaya against the real Gmail. Its output is compared only with the copy's own IMAP so far. This waits for Johan's app password.
+- pi on the resume path, the pi half of steps 2 to 4 and 6. pi reaches email only through himalaya.
+- The copy does not yet build its snapshot from what a command-line capture read. The reads are stored, but serve does not use them. The same is true for MCP prefetch.
+- The resume path does not yet send a new shell command, one the session never made, to a plugin's copy.
+
+Other limits:
+
 - Attachment bytes are not held.
+- With no himalaya settings from the person, a himalaya send saves its copy to "Sent", which the copy doesn't have. The message is still delivered.
 - `create_label` and `update_label` answer only plain labels: a color or a nested name (with `/`) falls through, because no real answer for those has been recorded.
 - A search with plain words falls through when any message the copy holds has content it never saw, because the copy can't tell whether those words are in it.
-- himalaya output is compared only with the copy's own IMAP so far, not with himalaya against real Gmail.
