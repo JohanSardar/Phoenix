@@ -18,7 +18,7 @@ export async function runMomentSessionCommand(args: string[]): Promise<number> {
   const capture = await transcriptCapture(v.home ? { "--home": v.home } : {}, identity, reader.recipe.name, reader.recipe.name);
   const imported = await importTranscript({ ...capture, source: v.session, reader });
   if (!imported.complete) throw new Error(`The ${reader.recipe.name} transcript reader could not read all of the session: ${imported.issues.map(i => i.reason).join("; ")}`);
-  const manifest = await createSessionMoment({ recipe: { directory: reader.directory, descriptor: reader.recipe }, session: v.session, capture: capture.root, at: Number(v.at), id: v.id, check: v.check, out, ...(v.timezone ? { timezone: v.timezone } : {}) });
+  const manifest = await createSessionMoment({ recipe: { directory: reader.directory, descriptor: reader.recipe }, session: v.session, capture: capture.root, at: Number(v.at), id: v.id, check: v.check, out, policy: capture.policy, ...(v.timezone ? { timezone: v.timezone } : {}) });
   process.stdout.write(JSON.stringify({ moment: manifest.id, bundle: out, resumes: manifest.resume, next: `Read ${out}/check.draft.yaml, then run phoenix check approve ${out}` }) + "\n");
   return 0;
 }

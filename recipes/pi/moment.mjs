@@ -62,4 +62,5 @@ process.stdout.write(JSON.stringify({
   model: { provider, id: model, ...(thinking ? { thinking } : {}) },
   loadout: { sections, harness_sections: ["addendum"], tools: [...tools.values()].map(tool => ({ ...tool, ...route(tool.name) })) },
   answers,
+  read_only: { pi: ["read", "grep", "find", "ls"] },
 }) + "\n");
