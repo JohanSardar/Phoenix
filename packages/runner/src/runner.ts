@@ -83,6 +83,25 @@ export class Runner {
     return await optional<ReplayStatus>(join(directory, "journal.json")) ?? { id, state: "pending", samples: [] };
   }
 
+  async judge(id: string, sample: number, intent: { met: boolean; reason: string }): Promise<void> {
+    const directory = this.directory(id);
+    const release = await claim(join(directory, "run.lock"));
+    try {
+      const status = await this.status(id);
+      const state = status.samples.find(s => s.sample === sample);
+      const attempt = state?.attempts.at(-1);
+      if (!state?.complete || !attempt) throw new Error(`Sample ${sample} has not finished`);
+      const root = join(directory, "samples", String(sample), String(attempt.attempt));
+      const assessment = await load<Awaited<ReturnType<typeof evaluateCheck>>>(join(root, "assessment.json"));
+      const outcome = await load<{ kind: string; code?: number | null }>(join(root, "outcome.json"));
+      if (!assessment.intentRequired) throw new Error("This check has no intent to judge");
+      Object.assign(state, sampleVerdict({ ...assessment, intent, diverged: outcome.kind === "diverged" }), { intent });
+      if (outcome.kind === "finished" && outcome.code !== 0) state.status = "fail";
+      status.state = "pending";
+      await save(join(directory, "journal.json"), status);
+    } finally { await release(); }
+  }
+
   async resume(id: string): Promise<ReplayResult> {
     const directory = this.directory(id);
     const release = await claim(join(directory, "run.lock"));
