@@ -51,6 +51,7 @@ test("a line with no plugin command, or one that cannot be taken apart exactly, 
 test("an environment assignment goes with the plugin command, ~ means the given home, and sh -c is read as its body", () => {
   assert.deepEqual(recognizeCommand("MAILER_CONFIG=x LANG=C mailer envelope list 2>&1 | head", plugins), { calls: [{ connector: "mail", argv: ["mailer", "envelope", "list"], env: { MAILER_CONFIG: "x", LANG: "C" }, readOnly: true, conditional: false }], around: `${M0} 2>& '1' | 'head'` });
   assert.equal(recognizeCommand("cd ~/app; errs issue list | head", plugins, "/Users/j")?.around, `'cd' '/Users/j/app' ; ${M0} | 'head'`);
+  assert.deepEqual(recognizeCommand("cd ~/app; cd sub; errs issue list | head", plugins, "/Users/j")?.calls[0]?.cd, ["/Users/j/app", "sub"]);
   assert.equal(recognizeCommand("cd ~/app; errs issue list", plugins), undefined);
   assert.equal(recognizeCommand("cd ~other/app; errs issue list", plugins, "/Users/j"), undefined);
   assert.deepEqual(recognizeCommand("/bin/bash -lc 'cd app; errs issue list 2>&1 | head -5' < /dev/null", plugins), recognizeCommand("cd app; errs issue list 2>&1 | head -5", plugins));

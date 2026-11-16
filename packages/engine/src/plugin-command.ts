@@ -3,10 +3,10 @@ import { isReadOnly } from "@phoenix/answer";
 import { lex } from "./read-only-shell.ts";
 
 export type CommandPlugin = Pick<PluginDescriptor, "connector" | "recognize" | "read_only">;
-export interface RecognizedCommand { connector: string; argv: string[]; env?: Record<string, string>; stdin?: string; readOnly: boolean; conditional: boolean }
+export interface RecognizedCommand { connector: string; argv: string[]; env?: Record<string, string>; stdin?: string; cd?: string[]; readOnly: boolean; conditional: boolean }
 /**
  * calls are the plugin commands in the line, in order; a conditional one runs only if an earlier && or || in its
- * ;-separated part of the line lets it.
+ * ;-separated part of the line lets it, and cd lists the folders the line moved into before it, as written.
  * around is the line with the i-th plugin command written as
  * a NUL, i, NUL marker and every other word single-quoted, so it reads as the same shell line once each marker is
  * replaced by something that prints that command's output; a line that is one plugin command alone is just its marker.
@@ -97,11 +97,16 @@ export function recognizeCommand(command: string, plugins: readonly CommandPlugi
   const calls: RecognizedCommand[] = [];
   const parts: string[] = [];
   let conditional = false;
+  const dirs: string[] = [];
   for (const [i, { words, redirects, before }] of simple.entries()) {
     const plugin = owner(words);
     conditional = before === "&&" || before === "||" || (conditional && before === "|");
     if (before) parts.push(before);
-    if (!plugin) { parts.push([...words.map(quote), ...redirects].join(" ")); continue; }
+    if (!plugin) {
+      if (words[0] === "cd" && words.length === 2 && before !== "|" && simple[i + 1]?.before !== "|") dirs.push(words[1]!);
+      parts.push([...words.map(quote), ...redirects].join(" "));
+      continue;
+    }
     let stdin = split!.stdin;
     if (stdin !== undefined && simple.length > 1) return undefined;
     if (before === "|") {
@@ -114,7 +119,7 @@ export function recognizeCommand(command: string, plugins: readonly CommandPlugi
     const argv = words.slice(assigned);
     const env = Object.fromEntries(words.slice(0, assigned).map(word => [word.slice(0, word.indexOf("=")), word.slice(word.indexOf("=") + 1)]));
     const readOnly = isReadOnly({ read_only: (plugin.read_only ?? []).map(op => ({ op, source: "plugin" as const })) }, "cli", argv[0]!, { argv });
-    calls.push({ connector: plugin.connector, argv, ...(assigned ? { env } : {}), ...(stdin === undefined ? {} : { stdin }), readOnly, conditional });
+    calls.push({ connector: plugin.connector, argv, ...(assigned ? { env } : {}), ...(stdin === undefined ? {} : { stdin }), ...(dirs.length ? { cd: [...dirs] } : {}), readOnly, conditional });
     parts.push([marker(calls.length - 1), ...redirects].join(" "));
   }
   return calls.length ? { calls, around: parts.join(" ") } : undefined;

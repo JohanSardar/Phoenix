@@ -111,11 +111,11 @@ function parse(spec: Spec, args: string[]): { operands: string[]; values: Map<st
 /**
  * Whether a shell command only reads files and folders under root, so it can run for real on a copy of them.
  * root is the folder as the session saw it; copy is where those files are on this machine (root itself by default),
- * used to refuse paths that leave the copy through a symlink. home, when given, is what a leading ~ means.
+ * used to refuse paths that leave the copy through a symlink.
  * After a cd followed by ;, a later path must stay inside the copy from both folders, since a failed cd leaves the old one.
  */
-export function readsOnly(command: string, root: string, cwd: string = root, copy: string = root, home?: string): boolean {
-  const tokens = lex(command, home);
+export function readsOnly(command: string, root: string, cwd: string = root, copy: string = root): boolean {
+  const tokens = lex(command);
   const last = tokens?.at(-1);
   if (!tokens?.some(token => "text" in token) || (last && "op" in last && last.op !== ";")) return false;
   const top = existsSync(copy) ? realpathSync(copy) : copy;
