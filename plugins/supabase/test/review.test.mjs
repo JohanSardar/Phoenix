@@ -186,3 +186,25 @@ test("S7: a missed statement must not consume sequence values used by later writ
       `The unsupported statement changed the next successful write: ${answer.body}`);
   } finally { await real.end(); }
 });
+
+test("S7: a miss must preserve an uncalled sequence set by an earlier replay write", async () => {
+  const { real, copy } = await fixture(
+    "CREATE TABLE items (id int); INSERT INTO items VALUES (1), (2); " +
+    "CREATE TABLE events (id serial PRIMARY KEY)",
+    { tables: ["items", "events"], rowLimit: 1 });
+  try {
+    const reset = "SELECT setval('events_id_seq', 41, false)";
+    await real.query(reset);
+    copy.begin();
+    assert.equal((await sql(copy, reset)).status, 201);
+    const partial = "SELECT count(*) FROM items";
+    await real.query(partial);
+    assert.equal((await sql(copy, partial)).status, 501);
+    const query = "INSERT INTO events DEFAULT VALUES RETURNING id";
+    const expected = (await real.query(query)).rows;
+    const answer = await sql(copy, query);
+    assert.equal(answer.status, 201);
+    assert.deepEqual(JSON.parse(answer.body.toString()), expected,
+      `A miss reset a previous replay write's sequence state: ${answer.body}`);
+  } finally { await real.end(); }
+});

@@ -93,7 +93,8 @@ export function createCopy({ snapshot, replies, socket, database }) {
     let result, error;
     await c.query("BEGIN");
     await c.query("SAVEPOINT phoenix_statement");
-    const sequences = await admin("select format('%I.%I', schemaname, sequencename) as name, coalesce(last_value, start_value) as value, last_value is not null as called from pg_sequences");
+    const names = (await admin("select format('%I.%I', n.nspname, c.relname) as name from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind = 'S'")).map(row => row.name);
+    const sequences = names.length ? await admin(names.map(name => "select " + pg.Client.prototype.escapeLiteral(name) + " as name, last_value as value, is_called as called from " + name).join(" union all ")) : [];
     try { result = await c.query(parameters?.length ? { text, values: parameters } : text); await c.query("SET CONSTRAINTS ALL IMMEDIATE"); await c.query("RELEASE SAVEPOINT phoenix_statement"); }
     catch (thrown) { if (!thrown.code) throw thrown; error = thrown; await c.query("ROLLBACK TO SAVEPOINT phoenix_statement"); }
     const partial = (await c.query({ text: "select relid::int as oid from pg_stat_xact_all_tables where relid = any($1::oid[]) and seq_scan + coalesce(idx_scan, 0) + n_tup_ins + n_tup_upd + n_tup_del > 0", values: [[...watched.keys()]] })).rows.map(row => watched.get(row.oid));
