@@ -73,9 +73,8 @@ async function folderEntries(root: string): Promise<{ entries: CopyEntry[]; left
       if (entry.isSymbolicLink()) { entries.push({ path, bytes: Buffer.from(await readlink(join(root, path))), link: true }); continue; }
       if (!entry.isFile()) continue;
       const info = await stat(join(root, path));
-      if (info.size > FILE_LIMIT) { left_out.push(path); continue; }
-      const bytes = await readFile(join(root, path));
-      if (kept(bytes)) entries.push({ path, bytes, executable: (info.mode & 0o100) !== 0 }); else left_out.push(path);
+      const bytes = info.size > FILE_LIMIT ? undefined : await readFile(join(root, path)).catch(() => undefined);
+      if (bytes && kept(bytes)) entries.push({ path, bytes, executable: (info.mode & 0o100) !== 0 }); else left_out.push(path);
     }
   };
   await walk("");

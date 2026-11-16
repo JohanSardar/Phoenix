@@ -21,10 +21,10 @@ export interface ToolStandInOptions {
   host: string;
   answers: readonly RecordedToolAnswer[];
   policy(connector: string): ConnectorPolicy;
-  inBox(connector: string, op: string): boolean;
+  inBox?(connector: string, op: string): boolean;
   simulator?: Omit<SimulatorOptions, "clock">;
   emulators?: readonly EmulatorConfig[];
-  cutTime: string;
+  cutTime?: string;
   sample: { root: string; metadata: CaptureMetadata };
   hmacKey: Uint8Array;
 }
@@ -40,9 +40,10 @@ export interface ToolStandIn {
 const rpc = (id: unknown, body: object) => Buffer.from(JSON.stringify({ jsonrpc: "2.0", id, ...body }));
 
 export async function startToolStandIn(options: ToolStandInOptions): Promise<ToolStandIn> {
+  const cutTime = options.cutTime ?? new Date().toISOString();
   const policy = (connector: string): ConnectorPolicy => ({ allow_synthesized: true, ...options.policy(connector) });
   const started = Date.now();
-  const emulators = await Emulators.start((options.emulators ?? []).filter(c => !policy(c.plugin.descriptor.connector).skip_resolvers?.includes("emulator")), () => new Date(Date.parse(options.cutTime) + Date.now() - started));
+  const emulators = await Emulators.start((options.emulators ?? []).filter(c => !policy(c.plugin.descriptor.connector).skip_resolvers?.includes("emulator")), () => new Date(Date.parse(cutTime) + Date.now() - started));
   const clock = new VirtualClock(new Date());
   const trace = await SampleTrace.create(options.sample.root, options.sample.metadata, clock, options.hmacKey);
   const exchanges: Exchange[] = options.answers.map((answer, position) => {
@@ -53,8 +54,8 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
     return { ...call, id: answer.id, history: [], frozen: answer.beforeCut, position, completed: position, observedAt: answer.observedAt, request, response: { body: rpc(position, { result: answer.result }) }, during: [], after: [], ...world };
   });
   for (const exchange of exchanges) exchange.history = exchanges.filter(w => w.connector === exchange.connector && !w.readOnly && w.completed < exchange.position).map(w => w.key);
-  const index: ExchangeIndex = { exchanges, prefetch: [], frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), notifications: new Map(), startTime: options.cutTime, cutTime: options.cutTime };
-  const ctx = replayCtx(index, policy, emulators, options.simulator ? { ...options.simulator, clock: () => options.cutTime } : undefined);
+  const index: ExchangeIndex = { exchanges, prefetch: [], frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), notifications: new Map(), startTime: cutTime, cutTime: cutTime };
+  const ctx = replayCtx(index, policy, emulators, options.simulator ? { ...options.simulator, clock: () => cutTime } : undefined);
   for (const exchange of index.frozen) if (!exchange.readOnly) ctx.histories = { ...ctx.histories, [exchange.connector]: [...(ctx.histories[exchange.connector] ?? []), exchange.key] };
   let served = 0;
   let stop!: (divergence: Divergence) => void;
@@ -73,7 +74,7 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
       }
       const call = toCall({ surface: "mcp", connector, op: `tools/call:${message.params.name}`, args: message.params.arguments ?? {}, raw: { body } }, policy(connector));
       await trace.append(stream, { kind: "call", surface: "mcp", layer: "agent", connector, op: call.op, body });
-      const inBox = options.inBox(connector, message.params.name);
+      const inBox = options.inBox?.(connector, message.params.name) ?? false;
       const answered = await answerCall(call, ctx, inBox ? ["simulator"] : []);
       if ("divergence" in answered && inBox) {
         const reply = rpc(message.id, { run_in_box: true });
