@@ -1,5 +1,5 @@
 import type { TraceEvent } from "@phoenix/formats";
-import { decodeHttpHead, decodeJson, header, modelStreamComplete, type HttpRequest, type ModelDialectName, type Surface } from "@phoenix/wire";
+import { completeModelStream, decodeHttpHead, decodeJson, header, type HttpRequest, type ModelDialectName, type Surface } from "@phoenix/wire";
 import { httpShape, mcpShape, toCall } from "./normalize.ts";
 import { cliRecording, cliShape } from "./cli.ts";
 import { mcpHttpMessages, mcpHttpShape } from "./mcp-http.ts";
@@ -73,8 +73,14 @@ async function pairHttp(list: readonly TraceEvent[], body: (e: TraceEvent) => Pr
   const shape = surface === "mcp" ? mcpHttpShape(request.head, request.body) : httpShape(request.head, request.body);
   const encoding = result.body?.content_encoding;
   const response = { body: await body(result), head: decodeHttpHead(await body(responseMeta)), ...(encoding ? { contentEncoding: encoding } : {}) };
-  if (result.partial && !(result.transport_partial && surface === "http" && model && model.connector === result.connector && modelStreamComplete(model.dialect, response.body,
-    encoding ? response.head.headers.filter((_, i, headers) => headers[i - i % 2]!.toLowerCase() !== "content-encoding") : response.head.headers))) return [];
+  if (result.partial) {
+    if (!result.transport_partial || surface !== "http" || !model || model.connector !== result.connector) return [];
+    const complete = completeModelStream(model.dialect, response.body,
+      encoding ? response.head.headers.filter((_, i, headers) => headers[i - i % 2]!.toLowerCase() !== "content-encoding") : response.head.headers);
+    if (!complete) return [];
+    response.body = complete;
+    response.contentEncoding = encoding ?? header(response.head.headers, "content-encoding");
+  }
   return [{
     call, result, surface, op: shape.op, args: shape.args, request, during: [], after: [],
     response,

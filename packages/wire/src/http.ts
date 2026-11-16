@@ -1,4 +1,4 @@
-import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
+import { brotliDecompressSync, constants, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
 import { decodeJson, encodeJson, object, type Decode } from "./json.ts";
 
 export type Headers = readonly string[];
@@ -36,15 +36,15 @@ export function header(headers: Headers, name: string): string | undefined {
   return undefined;
 }
 
-export function decodeHttpBody(bytes: Uint8Array, headers: Headers): Decode<Uint8Array> {
+export function decodeHttpBody(bytes: Uint8Array, headers: Headers, partial = false): Decode<Uint8Array> {
   try {
     let decoded = bytes;
     const encodings = (header(headers, "content-encoding") ?? "identity").split(",").map(e => e.trim().toLowerCase()).reverse();
     for (const encoding of encodings) {
-      if (encoding === "gzip") decoded = gunzipSync(decoded);
-      else if (encoding === "deflate") decoded = inflateSync(decoded);
-      else if (encoding === "br") decoded = brotliDecompressSync(decoded);
-      else if (encoding === "zstd") decoded = zstdDecompressSync(decoded);
+      if (encoding === "gzip") decoded = gunzipSync(decoded, partial ? { finishFlush: constants.Z_SYNC_FLUSH } : {});
+      else if (encoding === "deflate") decoded = inflateSync(decoded, partial ? { finishFlush: constants.Z_SYNC_FLUSH } : {});
+      else if (encoding === "br") decoded = brotliDecompressSync(decoded, partial ? { finishFlush: constants.BROTLI_OPERATION_FLUSH } : {});
+      else if (encoding === "zstd") decoded = zstdDecompressSync(decoded, partial ? { finishFlush: constants.ZSTD_e_continue } : {});
       else if (encoding !== "identity") return { ok: false, why: "Unknown HTTP content encoding", bytes };
     }
     return { ok: true, value: decoded };

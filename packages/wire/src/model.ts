@@ -134,12 +134,12 @@ export const modelDialects: Readonly<Record<ModelDialectName, ModelDialect>> = {
   "generate-content": dialect("generate-content", [{ method: "POST", path: "/v1beta/models/{model}:generateContent" }, { method: "POST", path: "/v1beta/models/{model}:streamGenerateContent" }], "contents", false),
 };
 
-export function modelStreamComplete(name: ModelDialectName, bytes: Uint8Array, headers: Headers): boolean {
-  if (!header(headers, "content-type")?.toLowerCase().includes("text/event-stream")) return false;
-  const body = decodeHttpBody(bytes, headers);
-  if (!body.ok) return false;
+export function completeModelStream(name: ModelDialectName, bytes: Uint8Array, headers: Headers): Uint8Array | undefined {
+  if (!header(headers, "content-type")?.toLowerCase().includes("text/event-stream")) return undefined;
+  const body = decodeHttpBody(bytes, headers, true);
+  if (!body.ok) return undefined;
   const sse = decodeSse(body.value);
-  return sse.ok && sse.value.some(event => modelDialects[name].isTerminal(event));
+  return sse.ok && sse.value.some(event => modelDialects[name].isTerminal(event)) ? body.value : undefined;
 }
 
 export function decodeModelBody(bytes: Uint8Array, contentType: string): Decode<unknown[]> {
