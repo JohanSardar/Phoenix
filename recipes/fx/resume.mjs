@@ -72,7 +72,8 @@ const exited = new Promise(resolve => child.once("close", code => resolve(code ?
 let code = 0;
 try {
   await request("initialize", { protocolVersion: 1, clientCapabilities: {} });
-  await request("session/load", { sessionId: moment.session, cwd: moment.cwd, mcpServers: [] });
+  const loaded = await request("session/load", { sessionId: moment.session, cwd: moment.cwd, mcpServers: [] });
+  process.stderr.write(`fx resumed with LLM ${loaded?.configOptions?.find(option => option.id === "model")?.currentValue}\n`);
   const done = await request("session/prompt", { sessionId: moment.session, prompt: [{ type: "text", text: moment.prompt }] });
   process.stderr.write(`fx stopped: ${done?.stopReason}\n`);
 } catch (error) {
