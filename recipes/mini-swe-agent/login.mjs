@@ -28,12 +28,22 @@ let response;
 try {
   response = await fetch(login.base + probe.path, { method: "POST", headers: { authorization: `Bearer ${login.key}`, "content-type": "application/json", ...probe.headers }, body: JSON.stringify(probe.body), signal: AbortSignal.timeout(60_000) });
 } catch (error) { stop(`the harness's LLM at ${host} could not be reached: ${error.cause?.message ?? error.message}`); }
+const refuse = said => {
+  said = String(said || `HTTP ${response.status}`).trim().split(/\.\s/)[0].replace(/\.$/, "");
+  stop(`the harness's LLM at ${host} refused (HTTP ${response.status}): ${said.charAt(0).toLowerCase()}${said.slice(1)}`);
+};
+let text;
+try { text = await response.text(); } catch (error) { stop(`the harness's LLM at ${host} stopped answering: ${error.cause?.message ?? error.message}`); }
 if (!response.ok) {
-  const text = await response.text();
   let said;
   try { const reply = JSON.parse(text); said = reply.error?.message ?? reply.detail ?? reply.message; } catch {}
-  said = String(said || text || `HTTP ${response.status}`).trim().split(/\.\s/)[0].replace(/\.$/, "");
-  stop(`the harness's LLM at ${host} refused (HTTP ${response.status}): ${said.charAt(0).toLowerCase()}${said.slice(1)}`);
+  refuse(said || text);
 }
-await response.body?.cancel();
+if (probe.body.stream) {
+  const events = text.split("\n").filter(line => line.startsWith("data:")).map(line => { try { return JSON.parse(line.slice(5)); } catch { return {}; } });
+  if (!events.some(event => event.type === "response.completed")) {
+    const failed = events.find(event => event.type === "response.failed" || event.type === "error");
+    refuse(failed?.response?.error?.message ?? failed?.error?.message ?? failed?.message ?? "the answer ended without completing");
+  }
+}
 writeFileSync(join(directory, "llm.json"), JSON.stringify(login), { mode: 0o600 });
