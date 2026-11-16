@@ -15,10 +15,10 @@ const seen = (op, args, value, at = "2026-11-16T10:00:00Z") => ({ op, args, resu
 const person = { email: me, self: true };
 const time = (dateTime, timeZone = "America/Chicago") => ({ dateTime, timeZone });
 const listedEvent = (id, start, end) => ({ conferenceData: {}, created: "2026-11-01T09:00:00Z", creator: person, end: time(end), eventType: "DEFAULT", htmlLink: `https://www.google.com/calendar/event?eid=${id}&ctz=America/Chicago`, id, organizer: person, start: time(start), status: "confirmed", summary: "[phoenix-test] standing", updated: "2026-11-01T09:00:00Z", useDefaultReminders: true });
-const calendars = seen("list_calendars", {}, { calendars: [{ id: me, summary: me, timeZone: "America/New_York" }, { description: "Made up", id: "team@example.invalid", summary: "Team", timeZone: "America/Chicago" }] });
+const calendars = seen("list_calendars", {}, { calendars: [{ id: me, summary: me, timeZone: "America/Denver" }, { description: "Made up", id: "team@example.invalid", summary: "Team", timeZone: "America/Chicago" }] });
 const day = { startTime: "2026-12-15T00:00:00", endTime: "2026-12-16T00:00:00", timeZone: "America/Chicago", orderBy: "startTime" };
 const byKey = object => Object.fromEntries(Object.keys(object).sort().map(key => [key, object[key]]));
-const header = { accessRole: "owner", defaultReminders: [{ method: "popup", minutes: 30 }], summary: me, timeZone: "America/New_York", updated: "2026-11-15T12:00:00Z" };
+const header = { accessRole: "owner", defaultReminders: [{ method: "popup", minutes: 30 }], summary: me, timeZone: "America/Denver", updated: "2026-11-15T12:00:00Z" };
 const listed = seen("list_events", day, { ...header, events: [listedEvent("abcdefgh0001", "2026-12-15T08:15:00-06:00", "2026-12-15T08:40:00-06:00")] });
 
 async function start(t, answers) {
@@ -44,7 +44,7 @@ const value = reply => { assert.equal(reply.status, "answer", JSON.stringify(rep
 
 test("hosted: lists, reads and writes in the shapes Google's hosted server uses", { timeout: 30000 }, async t => {
   const call = await start(t, [calendars, listed]);
-  assert.equal((await call("list_calendars", {})).text, JSON.stringify({ calendars: [{ id: me, summary: me, timeZone: "America/New_York" }, { description: "Made up", id: "team@example.invalid", summary: "Team", timeZone: "America/Chicago" }] }));
+  assert.equal((await call("list_calendars", {})).text, JSON.stringify({ calendars: [{ id: me, summary: me, timeZone: "America/Denver" }, { description: "Made up", id: "team@example.invalid", summary: "Team", timeZone: "America/Chicago" }] }));
   assert.equal((await call("list_events", day)).text, JSON.stringify(byKey({ ...header, events: [listedEvent("abcdefgh0001", "2026-12-15T08:15:00-06:00", "2026-12-15T08:40:00-06:00")] })));
 
   const created = value(await call("create_event", { summary: "[phoenix-test] new", startTime: "2026-12-15T10:00:00", endTime: "2026-12-15T10:30:00", timeZone: "America/Chicago", notificationLevel: "NONE" }));
@@ -54,7 +54,7 @@ test("hosted: lists, reads and writes in the shapes Google's hosted server uses"
   assert.equal(created.htmlLink, "https://calendar.google.com/calendar/event?eid=" + Buffer.from(`${created.id} ${me}`).toString("base64").replace(/=+$/, ""));
 
   const got = value(await call("get_event", { eventId: created.id }));
-  assert.deepEqual(got, { conferenceData: {}, created: created.created, creator: person, end: time("2026-12-15T11:30:00-05:00"), eventType: "DEFAULT", htmlLink: created.htmlLink.replace("https://calendar.google.com/calendar/", "https://www.google.com/calendar/"), id: created.id, organizer: person, start: time("2026-12-15T11:00:00-05:00"), status: "confirmed", summary: "[phoenix-test] new", updated: created.updated, useDefaultReminders: true });
+  assert.deepEqual(got, { conferenceData: {}, created: created.created, creator: person, end: time("2026-12-15T09:30:00-07:00"), eventType: "DEFAULT", htmlLink: created.htmlLink.replace("https://calendar.google.com/calendar/", "https://www.google.com/calendar/"), id: created.id, organizer: person, start: time("2026-12-15T09:00:00-07:00"), status: "confirmed", summary: "[phoenix-test] new", updated: created.updated, useDefaultReminders: true });
 
   const moved = value(await call("update_event", { eventId: created.id, startTime: "2026-12-15T11:00:00", timeZone: "America/Chicago", description: "moved" }, "2026-11-16T12:05:00Z"));
   assert.deepEqual([moved.start.dateTime, moved.end.dateTime, moved.description, moved.created, moved.updated], ["2026-12-15T17:00:00Z", "2026-12-15T17:30:00Z", "moved", created.created, "2026-11-16T12:05:00Z"]);
@@ -90,7 +90,7 @@ test("hosted: respond_to_event fails as Google does when the user is not an atte
 test("hosted: search_events repeats a search it saw, and stops once something it could newly match changed", { timeout: 30000 }, async t => {
   const call = await start(t, [calendars, listed, seen("search_events", { query: "standing" }, { events: [listedEvent("abcdefgh0001", "2026-12-15T08:15:00-06:00", "2026-12-15T08:40:00-06:00")] }, "2026-11-16T11:00:00Z")]);
   const found = value(await call("search_events", { query: "standing" }));
-  assert.deepEqual(found.events.map(e => [e.id, e.start.dateTime, e.htmlLink.includes("ctz")]), [["abcdefgh0001", "2026-12-15T09:15:00-05:00", false]]);
+  assert.deepEqual(found.events.map(e => [e.id, e.start.dateTime, e.htmlLink.includes("ctz")]), [["abcdefgh0001", "2026-12-15T07:15:00-07:00", false]]);
   assert.equal((await call("search_events", { query: "other words" })).status, "unsupported");
   value(await call("create_event", { summary: "[phoenix-test] standing two", startTime: "2026-12-15T13:00:00", endTime: "2026-12-15T13:30:00", timeZone: "America/Chicago" }));
   assert.equal((await call("search_events", { query: "standing" })).status, "unsupported");
