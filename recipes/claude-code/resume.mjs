@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { NATIVE, mendSchema } from "./tools.mjs";
+import { NATIVE, mcpName, mendSchema } from "./tools.mjs";
 
 const moment = JSON.parse(readFileSync("/phoenix/moment/moment.json", "utf8"));
 const loadout = JSON.parse(readFileSync("/phoenix/moment/loadout.json", "utf8"));
@@ -47,7 +47,7 @@ try { configured = JSON.parse(readFileSync(join(box.cwd, ".claude", "settings.js
 const model = configured.model ?? moment.model.id;
 const args = [
   "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-  ...(resumable ? ["--resume", box.session, "--fork-session"] : []),
+  ...(resumable ? ["--resume", box.session, "--fork-session"] : ["--tools", loadout.tools.filter(name => !mcpName(name)).join(",")]),
   "--settings", join(home, "settings.json"), "--mcp-config", join(home, "mcp.json"), "--strict-mcp-config",
   "--system-prompt-file", join(home, "system.md"),
   ...(existsSync("/worktree/APPEND_SYSTEM.md") ? ["--append-system-prompt-file", "/worktree/APPEND_SYSTEM.md"] : []),
