@@ -23,6 +23,7 @@ const cut = readFileSync("/phoenix/moment/cut.jsonl", "utf8").split("\n").map(li
   return JSON.stringify(entry);
 }).join("\n");
 writeFileSync(join(project, box.session + ".jsonl"), cut);
+const resumable = cut.split("\n").some(line => line && ["user", "assistant"].includes(JSON.parse(line).type));
 writeFileSync(join(home, "placeholder.txt"), "");
 
 const since = new Date(box.started ?? 0);
@@ -46,7 +47,7 @@ try { configured = JSON.parse(readFileSync(join(box.cwd, ".claude", "settings.js
 const model = configured.model ?? moment.model.id;
 const args = [
   "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-  "--resume", box.session, "--fork-session",
+  ...(resumable ? ["--resume", box.session, "--fork-session"] : []),
   "--settings", join(home, "settings.json"), "--mcp-config", join(home, "mcp.json"), "--strict-mcp-config",
   "--system-prompt-file", join(home, "system.md"),
   ...(existsSync("/worktree/APPEND_SYSTEM.md") ? ["--append-system-prompt-file", "/worktree/APPEND_SYSTEM.md"] : []),
