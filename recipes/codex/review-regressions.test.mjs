@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, readFile, readdir, writeFile, rm } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, writeFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
@@ -138,3 +138,25 @@ test("S4 stdio proxy preserves a server's configured PATH", async () => {
   } finally { await f.close(); await upstream.close(); }
 });
 
+test("S4b combined MCP and CLI capture preserves server-specific executable resolution", async () => {
+  const upstream = await origin();
+  const f = await fixture(`model="gpt-6.1-sol"\nmodel_provider="synthetic"\n[model_providers.synthetic]\nname="Synthetic local router"\nbase_url=${JSON.stringify(upstream.url)}\nwire_api="responses"\nsupports_websockets=false`);
+  const bin = join(f.root, "server-tools"), marker = join(f.root, "resolved-ls.txt"), server = join(f.root, "mcp.mjs");
+  await mkdir(bin);
+  await writeFile(join(bin, "ls"), `#!${process.execPath}\nprocess.stdout.write("synthetic server-specific executable\\n");\n`);
+  await chmod(join(bin, "ls"), 0o700);
+  await writeFile(server, `import { createInterface } from "node:readline";\nimport { writeFileSync } from "node:fs";\nimport { execFileSync } from "node:child_process";\nwriteFileSync(${JSON.stringify(marker)}, execFileSync("ls", [], {encoding:"utf8"}));\nfor await (const line of createInterface({input:process.stdin})) {\nconst req=JSON.parse(line); if (req.id===undefined) continue;\nconst result=req.method==="initialize"?{protocolVersion:req.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:"synthetic-resolution",version:"1"}}:req.method==="tools/list"?{tools:[]}:{};\nprocess.stdout.write(JSON.stringify({jsonrpc:"2.0",id:req.id,result})+"\\n");\n}\n`);
+  await writeFile(join(f.home, "config.toml"), await readFile(join(f.home, "config.toml"), "utf8") + `\n[mcp_servers.review]\ncommand=${JSON.stringify(process.execPath)}\nargs=[${JSON.stringify(server)}]\n[mcp_servers.review.env]\nPATH=${JSON.stringify(`${bin}:${process.env.PATH}`)}\n`);
+  try {
+    const direct = await execute("codex", ["exec", "--skip-git-repo-check", "synthetic executable baseline"], f.env, f.cwd);
+    assert.equal(direct.code, 0, direct.stderr);
+    const baseline = await readFile(marker, "utf8");
+    assert.equal(baseline, "synthetic server-specific executable\n");
+    await rm(marker);
+    const captured = await execute(process.execPath, [join(recipe, "capture.ts"), "--login-mode", "local", "--routes", "mcp-proxy,cli-proxy", "--cwd", f.cwd, "--", "exec", "--skip-git-repo-check", "synthetic executable capture"], f.env, f.cwd);
+    assert.equal(captured.code, 0, captured.stderr);
+    const result = await readFile(marker, "utf8");
+    console.log(JSON.stringify({ baselineOutput: baseline, capturedOutput: result }));
+    assert.equal(result, baseline, "adding CLI capture must not substitute the launcher's executable for the MCP server's configured executable");
+  } finally { await f.close(); await upstream.close(); }
+});

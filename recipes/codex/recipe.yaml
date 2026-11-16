@@ -60,4 +60,5 @@ limitations:
   - Transcripts are model-visible items, not HTTP exchanges, complete tool catalogs, MCP protocol envelopes, raw CLI streams or filesystem side effects
   - Model responses ending before transport EOF remain partial even if response.completed was observed
   - Absolute commands, shell builtins, reset shell PATH, dynamic/plugin MCP servers and direct HTTP calls can bypass live capture
+  - MCP servers with an explicit PATH keep their executable resolution and bypass the generic CLI shims
   - Static Linux builds may use the real clock; clock coverage is informational, not a fidelity penalty

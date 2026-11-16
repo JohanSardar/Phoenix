@@ -1,6 +1,6 @@
 import { spawn, fork, execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, writeFile, readdir, rm, appendFile, rename, access, realpath } from "node:fs/promises";
-import { join, resolve, dirname, delimiter } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 import { parseArgs } from "node:util";
 import { randomUUID } from "node:crypto";
@@ -43,7 +43,7 @@ async function wrapped(plan: Config) {
         set(`${prefix}.command`, process.execPath);
         set(`${prefix}.args`, [entry, "mcp-proxy", name, "--", server.command, ...server.args ?? []]);
         for (const key of ["PHOENIX_CAPTURE", "PHOENIX_COLLECTOR", "PHOENIX_HOME", "PHOENIX_CWD"]) set(`${prefix}.env.${key}`, process.env[key]);
-        set(`${prefix}.env.PATH`, server.path === undefined ? process.env.PATH : plan.routes.includes("cli-proxy") ? `${process.env.PATH!.split(delimiter)[0]}${delimiter}${server.path}` : server.path);
+        set(`${prefix}.env.PATH`, server.path ?? process.env.PATH);
       } else if (server.url && plan.reverse.includes(name)) {
         const child = fork(entry, ["mcp-http-proxy", name, server.url], { stdio: ["ignore", "ignore", "inherit", "ipc"] });
         proxies.push(child);

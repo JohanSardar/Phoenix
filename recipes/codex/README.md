@@ -56,8 +56,8 @@ Each enabled stdio entry in `mcp_servers` is overridden with the Phoenix proxy
 command and original command/argv. Its original environment, cwd, timeouts,
 enabled/disabled tools and other policy settings stay in place. The recording
 environment is passed explicitly because Codex filters stdio-server variables.
-An explicitly configured server PATH is preserved, with only the shim directory
-prepended when CLI capture is selected.
+An explicitly configured server PATH is preserved exactly; commands inside that
+server bypass the generic CLI shims rather than resolve to a different executable.
 There is no extra discovery request or tool added by the recipe.
 
 Remote HTTP servers remain at their original URLs by default. Add
