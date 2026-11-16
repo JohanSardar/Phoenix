@@ -37,7 +37,8 @@ phoenix moment create --session rollout-....jsonl --recipe recipes/codex/recipe.
 
 `--at` is a line of the session file. The moment starts at the user turn that
 holds that line. Codex gets everything before that turn and then the turn's
-message again. Sessions from Codex 0.167.0 and 0.169.0 that used a ChatGPT login
+message again. Use `--from-beginning` in place of `--at` to start at the
+session's first message, with its original prompt. Sessions from Codex 0.167.0 and 0.169.0 that used a ChatGPT login
 are supported.
 
 In checks, MCP tools are named `<server>.<tool>`, for example
