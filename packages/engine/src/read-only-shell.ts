@@ -178,7 +178,7 @@ export function readsOnly(command: string, root: string, cwd: string = root, cop
         else if (!FIND_PLAIN.has(arg)) return false;
       }
     } else if (spec.operands === "dir") {
-      if (operands.length !== 1 || (before && before !== "&&") || after !== "&&") return false;
+      if (operands.length !== 1 || operands[0] === "-" || (before && before !== "&&") || after !== "&&") return false;
       paths.push(operands[0]!);
     }
     if (spec.max !== undefined && operands.length > spec.max) return false;

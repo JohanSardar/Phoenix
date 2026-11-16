@@ -19,7 +19,7 @@ const reply = await ask("tools/call", { arguments: { command, cwd: process.cwd()
 if (reply.run_in_box) {
   const ran = spawnSync("/usr/local/lib/phoenix-dash", ["-c", command], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   const output = (ran.stdout ?? "") + (ran.stderr ?? "");
-  await ask("phoenix/ran", { result: { content: [{ type: "text", text: output }], structuredContent: { output, exit_code: ran.status ?? 1 }, isError: ran.status !== 0 } });
+  await ask("phoenix/ran", { result: { output, exit_code: ran.status ?? 1, content: [{ type: "text", text: output }], structuredContent: { output, exit_code: ran.status ?? 1 }, isError: ran.status !== 0 } });
   process.stdout.write(ran.stdout ?? "");
   process.stderr.write(ran.stderr ?? "");
   process.exitCode = ran.status ?? 1;
@@ -27,7 +27,7 @@ if (reply.run_in_box) {
   process.stderr.write(`Phoenix stopped this replay: ${reply.error.message}\n`);
   process.exitCode = 1;
 } else {
-  const { content, structuredContent, isError } = reply.result;
-  process.stdout.write(structuredContent?.output ?? (content ?? []).map(block => block.text ?? "").join("\n"));
-  process.exitCode = structuredContent?.exit_code ?? (isError ? 1 : 0);
+  const { output, exit_code, content, structuredContent, isError } = reply.result;
+  process.stdout.write(output ?? structuredContent?.output ?? (content ?? []).map(block => block.text ?? "").join("\n"));
+  process.exitCode = exit_code ?? structuredContent?.exit_code ?? (isError ? 1 : 0);
 }

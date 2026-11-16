@@ -48,7 +48,7 @@ const servers = new Map();
 const tools = server => servers.get(server) ?? servers.set(server, new Map()).get(server);
 const readOnly = {};
 const answers = [];
-const shellResult = (output, exit_code) => ({ content: [{ type: "text", text: output }], structuredContent: { output, exit_code }, isError: exit_code !== 0 });
+const shellResult = (output, exit_code) => ({ output, exit_code, content: [{ type: "text", text: output }], structuredContent: { output, exit_code }, isError: exit_code !== 0 });
 const pathOf = cwd => typeof cwd === "string" && cwd.startsWith("file://") ? decodeURIComponent(new URL(cwd).pathname) : cwd;
 for (const { line, row } of rows) {
   const item = row.type === "event_msg" && row.payload?.type === "item_completed" ? row.payload.item : undefined;
