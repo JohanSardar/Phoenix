@@ -55,4 +55,8 @@ Side by side with the real Supabase (48 calls on a real project), the copy's ans
 - `list_tables`: the order of the tables and of the foreign keys can differ. The query that Supabase's server sends has no `ORDER BY`. So the order comes from the plan Postgres picks and from where rows sit on disk. It is not table oid order, and a copy built from a snapshot can't reproduce it. Sorted by name, the answers are the same.
 - `query_logs`: the copy answers only for the exact recorded request. Logs for any other time window are a miss, because the snapshot does not hold them, and an answer built from other logs would be made up. In the 48-call comparison the window had moved, so the copy missed.
 
+- Creating an extension the project has not installed: the copy runs the agent's SQL as Supabase's own non-superuser roles, without Supabase's extension helper, so an extension such as `dblink` is refused with "Must be superuser".
+
+Merged with a gap (JOH-62 stays open): a session recorded through Johan's launcher itself was never seen. Its token is rejected and its project is paused. The moment used in the proofs was recorded through a direct start of the same server version (0.17.0) with `--read-only`. A replay never starts the server, and it matches the copy by the server name `supabase`, the same name as the launcher entry.
+
 Not compared with the real thing: a write on the real Supabase. Nothing was ever written to a real project. The write answers were compared with a real Supabase Postgres 17.6 instead. The read-write mode was only seen on a moment whose read-only setting was changed by hand. Johan's own settings run Supabase read-only.
