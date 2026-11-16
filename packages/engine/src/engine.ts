@@ -7,7 +7,7 @@ import {
   Emulators, type EmulatorConfig, type Answer, type Call, type ConnectorPolicy, type Divergence, type SimulatorOptions, type WireMessage,
 } from "@phoenix/answer";
 import type { CaptureMetadata } from "@phoenix/store";
-import { HTTP_STREAM, decodeCliInvocation, encodeHttpHead, httpGatewayTap, mcpStdioTap, type Backend, type HttpRequest, type Link } from "@phoenix/taps";
+import { HTTP_STREAM, decodeCliInvocation, encodeHttpHead, httpTap, mcpStdioTap, type Backend, type HttpRequest, type Link } from "@phoenix/taps";
 import { VirtualClock } from "./clock.ts";
 import { SampleTrace, streamName } from "./trace.ts";
 import { cliRelay, cliResponder } from "./cli.ts";
@@ -32,7 +32,7 @@ export type EngineStop = { kind: "diverged"; divergence: Divergence } | { kind: 
 export interface Engine {
   state(connector: string): Promise<unknown>;
   backend: Backend;
-  gateway: Server;
+  http: Server;
   clock: VirtualClock;
   accept(connection: { destination: { host: string; port: number }; stream: Duplex }): void;
   stopped: Promise<EngineStop>;
@@ -237,7 +237,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       return { write: async () => {}, frames: () => out.frames(), abort: () => out.end() };
     },
   };
-  const gateway = httpGatewayTap({ backend, route: request => {
+  const http = httpTap({ backend, route: request => {
     const path = new URL(request.url, "http://x").pathname;
     const connector = options.routes.mcpHttp?.[path];
     return connector ? { surface: "mcp", connector } : { surface: "http", connector: options.routes.http?.[httpHost(request)] ?? "" };
@@ -245,12 +245,12 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
 
   return {
     state: connector => emulators.state(connector),
-    backend, gateway, clock, stopped,
+    backend, http, clock, stopped,
     accept({ destination, stream }) {
       const cli = options.routes.cli?.[destination.host];
       if (cli) { void cliRelay(stream, backend, cli).catch(error => { stream.destroy(); return diverge({ trigger: "lifecycle", detail: error instanceof Error ? error.message : String(error) }); }); return; }
       const connector = options.routes.mcp?.[destination.host];
-      if (!connector) { gateway.emit("connection", stream); return; }
+      if (!connector) { http.emit("connection", stream); return; }
       mcpStdioTap({ backend, connector, io: { stdin: stream, stdout: stream, stderr: new PassThrough() } }).then(() => stream.end(), () => stream.destroy());
     },
     async close() { try { await emulators.close(); } finally { await trace.close(); } },
