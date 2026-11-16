@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 import { lstat, mkdir, open, readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compareBaseline, countsTowardPass, momentVerdict, sampleVerdict, type MomentVerdict } from "@phoenix/checks";
+import { compareBaseline, confirmDiscount, countsTowardPass, momentVerdict, type MomentVerdict } from "@phoenix/checks";
 import type { FidelityReport } from "@phoenix/fidelity";
-import type { HarnessContract, ReplayResult, TraceEvent } from "@phoenix/formats";
+import type { HarnessContract, ReplayPlan, ReplayResult, TraceEvent } from "@phoenix/formats";
 import { Runner, treeDigest, type ReplayRequest, type ReplayStatus } from "@phoenix/runner";
 import { BlobStore, bundleApproval, digest, readApprovalsLedger, readCapture, readMomentBundle, type MomentBundle } from "@phoenix/store";
 import { exportTree, freezeCandidate, git, isEditable, openWorkspace, resolveInTree, type Change, type WorkspaceState } from "./workspace.ts";
@@ -22,8 +22,6 @@ interface ReplaySet {
   start?: StartPoint;
   moments: { moment: string; replay: string; baseline?: string }[];
 }
-type Judgments = Record<string, Record<string, { met: boolean; reason: string; at: string }>>;
-type Sample = ReplayResult["samples"][number];
 
 const BODY_LIMIT = 2000;
 const worker = fileURLToPath(new URL("./worker.ts", import.meta.url));
@@ -215,47 +213,41 @@ export class Workbench {
     return { replay: id, candidate: set.candidate, done: moments.every(m => m.candidate.state === "finished"), moments };
   }
 
-  async #samples(replay: string, bundle: MomentBundle, judgments: Judgments) {
+  async #samples(replay: string, bundle: MomentBundle) {
     const status = await this.#runner.status(replay);
-    const directory = this.#runner.directory(replay);
-    const samples = [];
-    for (const sample of status.result?.samples ?? []) {
-      const judged = judgments[replay]?.[String(sample.sample)];
-      let verdict: Pick<Sample, "status" | "discounted"> = { status: sample.status, discounted: sample.discounted ?? false };
-      if (judged && bundle.check.intent !== undefined) {
-        const attempt = join(directory, "samples", String(sample.sample), String(sample.attempts.at(-1)!.attempt));
-        const assessment = await json<Parameters<typeof sampleVerdict>[0]>(join(attempt, "assessment.json"));
-        const outcome = await json<{ kind: string; code?: number }>(join(attempt, "outcome.json"));
-        if (assessment && outcome) {
-          verdict = sampleVerdict({ ...assessment, intent: { met: judged.met, reason: judged.reason }, diverged: outcome.kind === "diverged" });
-          if (outcome.kind === "finished" && outcome.code !== 0) verdict = { status: "fail", discounted: false };
-        }
-      }
-      const needsIntent = bundle.check.intent !== undefined && !judged && sample.status === "unassessed" && sample.expectations.length > 0 && sample.expectations.every(e => e.outcome === "pass");
-      samples.push({ sample: sample.sample, tiebreak: sample.tiebreak, status: verdict.status, discounted: verdict.discounted ?? false,
-        expectations: sample.expectations.map(e => ({ ...e, expect: bundle.check.expect?.[e.expectation] })),
-        ...(judged ? { intent: { met: judged.met, reason: judged.reason } } : {}), ...(needsIntent ? { needs_intent_judgment: true } : {}) });
-    }
-    const plan = await json<{ samples: { base: number; tiebreak: number } }>(join(directory, "plan.json"));
-    return { status, samples, verdict: status.result ? momentVerdict(samples, plan!.samples) : undefined };
+    const result = status.state === "finished" ? status.result : undefined;
+    const samples = status.samples.map(({ complete: _, ...sample }) => ({ ...sample, discounted: sample.discounted ?? false,
+      expectations: sample.expectations.map(e => ({ ...e, expect: bundle.check.expect?.[e.expectation] })),
+      ...(bundle.check.intent !== undefined && !sample.intent && sample.status === "unassessed" && sample.expectations.length > 0 && sample.expectations.every(e => e.outcome === "pass") ? { needs_intent_judgment: true } : {}) }));
+    const plan = await json<{ samples: { base: number; tiebreak: number } }>(join(this.#runner.directory(replay), "plan.json"));
+    return { status, result, samples, verdict: momentVerdict(samples, plan!.samples) };
+  }
+
+  async #confirmation(entry: ReplaySet["moments"][number], result: ReplayResult): Promise<ReplayResult["discount"]> {
+    if (!result.discount.discounted || result.discount.confirmed) return result.discount;
+    const resultHash = digest(await readFile(join(this.#runner.directory(entry.replay), "result.json")));
+    const accepted = (await readApprovalsLedger(this.#ledger)).entries.findLast(e => e.how === "pass-accepted" && e.moment === entry.moment && e.revision === result.ledger_entry.revision && e.result_hash === resultHash);
+    if (!accepted) return result.discount;
+    const plan = JSON.parse(await readFile(join(this.#runner.directory(entry.replay), "plan.json"), "utf8")) as ReplayPlan;
+    return confirmDiscount({ moment: entry.moment, revision: result.ledger_entry.revision, resultHash, plan, result, trace: [] }, { how: "pass-accepted", entry: accepted });
   }
 
   async runChecks(id: string) {
     const set = await this.#set(id);
-    const judgments = await json<Judgments>(join(this.#root, "judgments.json")) ?? {};
     const moments = [];
     for (const entry of set.moments) {
       const bundle = await this.#bundle(entry.moment);
-      const candidate = await this.#samples(entry.replay, bundle, judgments);
-      const baseline = entry.baseline ? await this.#samples(entry.baseline, bundle, judgments) : candidate;
+      const candidate = await this.#samples(entry.replay, bundle);
+      const baseline = entry.baseline ? await this.#samples(entry.baseline, bundle) : candidate;
       const result = candidate.status.result;
-      if (!result || !candidate.verdict || !baseline.verdict) { moments.push({ moment: entry.moment, replay: entry.replay, state: candidate.status.state, verdict: "incomplete" as const }); continue; }
-      const verdict: MomentVerdict = { ...candidate.verdict, discount: { ...candidate.verdict.discount, ...(result.discount.confirmed ? { confirmed: result.discount.confirmed } : {}) } };
+      if (!result) { moments.push({ moment: entry.moment, replay: entry.replay, state: candidate.status.state, verdict: "incomplete" as const }); continue; }
+      const settled = !!candidate.result && !!baseline.result;
+      const verdict: MomentVerdict = settled ? { ...candidate.verdict, discount: candidate.verdict.discount.discounted ? await this.#confirmation(entry, result) : candidate.verdict.discount }
+        : { ...candidate.verdict, verdict: "incomplete", meets_check: undefined, discount: { discounted: false } };
       const compared = entry.baseline ? compareBaseline(verdict, baseline.verdict) : { target_pass: false, baseline_did_not_reproduce: verdict.verdict === "meets-check" };
       moments.push({
-        moment: entry.moment, replay: entry.replay, ...(entry.baseline ? { baseline_replay: entry.baseline } : {}), check_hash: result.check, ledger_entry: result.ledger_entry,
+        moment: entry.moment, replay: entry.replay, ...(entry.baseline ? { baseline_replay: entry.baseline } : {}), state: candidate.status.state, check_hash: result.check, ledger_entry: result.ledger_entry,
         intent: bundle.check.intent ?? null, verdict: verdict.verdict, meets_check: verdict.meets_check ?? null, discount: verdict.discount, counts: verdict.counts, scheduled: verdict.scheduled,
-        ...(verdict.verdict === "incomplete" && verdict.needsTiebreak && candidate.samples.length < verdict.scheduled ? { note: "Intent judgments made the base samples disagree; the tiebreak sample was not scheduled" } : {}),
         baseline: { verdict: baseline.verdict.verdict, counts: baseline.verdict.counts, meets_check: baseline.verdict.meets_check ?? null },
         improved: "improved" in compared ? compared.improved ?? null : null, target_pass: compared.target_pass, baseline_did_not_reproduce: compared.baseline_did_not_reproduce,
         counts_toward_patch: countsTowardPass(verdict), fidelity_grade: result.fidelity_grade ?? null,
@@ -272,17 +264,8 @@ export class Workbench {
   async judgeIntent(replay: string, sample: number, met: boolean, reason: string) {
     await this.#owned(replay);
     if (!reason.trim()) throw new Error("A judgment needs a reason");
-    const plan = await json<{ check: string }>(join(this.#runner.directory(replay), "plan.json"));
-    const bundle = (await this.#bundles()).find(b => b.lock.check === plan?.check);
-    if (!bundle) throw new Error("The moment for this Replay is not in the set");
-    if (bundle.check.intent === undefined) throw new Error("This moment's check has no intent to judge");
-    const status = await this.#runner.status(replay);
-    if (!status.samples.find(s => s.sample === sample)?.complete) throw new Error(`Sample ${sample} has not finished`);
-    const path = join(this.#root, "judgments.json");
-    const judgments = await json<Judgments>(path) ?? {};
-    (judgments[replay] ??= {})[String(sample)] = { met, reason, at: new Date().toISOString() };
-    await durable(path, JSON.stringify(judgments, null, 2) + "\n");
-    return { replay, sample, met, reason };
+    await this.#runner.judge(replay, sample, { met, reason });
+    return { replay, sample, met, reason, next: "Judge the other samples, then poll getReplay: it recomputes the verdict and runs a tiebreak sample if the judgments disagree. Then runChecks" };
   }
 
   async fidelityReport(id: string) {
@@ -336,6 +319,13 @@ export class Workbench {
   async #pullRequest(set: ReplaySet, result: { claims: string[]; set_pass: boolean; moments: unknown[] }) {
     const repo = this.#state.harness.repo;
     const branch = `phoenix/candidate-${set.candidate.commit.slice(0, 12)}`;
+    const target = this.#state.harness.branch;
+    if (!target) throw new Error("The harness checkout had no branch when the workspace was made, so there is no pull-request base");
+    await git(repo, ["fetch", "-q", "origin", target]);
+    const prefix = this.#state.harness.path ? this.#state.harness.path + "/" : "";
+    const proposed = (await git(repo, ["diff", "--name-only", "-z", "--no-renames", `FETCH_HEAD...${set.candidate.commit}`])).split("\0").filter(Boolean);
+    const forbidden = proposed.filter(path => !path.startsWith(prefix) || !isEditable(this.#contract, path.slice(prefix.length)));
+    if (forbidden.length) throw new Error(`Refused: a pull request against origin/${target} would also carry non-editable paths: ${forbidden.join(", ")}. Make the workspace from a base commit on that branch.`);
     const remote = (await git(repo, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`])).trim().split(/\s+/)[0];
     if (remote && remote !== set.candidate.commit) throw new Error(`Branch ${branch} already exists on origin at another commit`);
     if (!remote) await git(repo, ["push", "origin", `${set.candidate.commit}:refs/heads/${branch}`]);
