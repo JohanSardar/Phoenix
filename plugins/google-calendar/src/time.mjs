@@ -1,13 +1,13 @@
 export class Unknown extends Error {}
 
 const formatters = new Map();
-// Zones the copy worked out from offsets, by the name it hands out: each maps to every IANA zone that fits.
+// Zones the copy worked out from offsets for one calendar, by a name of their own: each maps to every IANA zone that fits.
 const fitted = new Map();
 
-// Registers the zones that fit what Google showed and returns the name used for them.
-export function fitZone(zones) {
-  fitted.set(zones[0], zones);
-  return zones[0];
+// Registers the zones that fit what Google showed for one calendar under that calendar's own name.
+export function fitZone(name, zones) {
+  fitted.set(name, zones);
+  return name;
 }
 
 function parts(zone, ms) {
@@ -29,6 +29,7 @@ function zoneParts(zone, ms) {
 }
 
 export function validZone(zone) {
+  if (fitted.has(zone)) return true;
   try { parts(zone, 0); return true; } catch { return false; }
 }
 

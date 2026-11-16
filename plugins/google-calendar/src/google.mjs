@@ -52,10 +52,16 @@ export class Copy {
     if (!cal.offsets.size) return undefined;
     if (cal.fit?.seen !== cal.offsets.size) {
       const zones = Intl.supportedValuesOf("timeZone").filter(zone => [...cal.offsets].every(([ms, offset]) => offsetMinutes(zone, ms) === offset));
-      cal.fit = { seen: cal.offsets.size, zone: zones.length ? fitZone(zones) : undefined };
+      cal.fit = { seen: cal.offsets.size, zone: zones.length ? fitZone(`phoenix-fitted:${cal.id}`, zones) : undefined, name: zones[0] };
     }
     return cal.fit.zone;
   }
+  // cocal reads the calendar's zone from the calendar list and asks for that zone back; give it the fitted zones again.
+  asked(cal, q) {
+    const zone = q.get("timeZone");
+    return zone && !cal.entry && this.fittedZone(cal) && zone === cal.fit.name ? cal.fit.zone : zone;
+  }
+  shown(cal, zone) { return zone === cal.fit?.zone ? cal.fit.name : zone; }
   sawOffset(calId, dateTime) {
     const m = /([+-])(\d{2}):(\d{2})$|Z$/.exec(dateTime ?? "");
     const ms = parseInstant(dateTime);
@@ -233,7 +239,7 @@ export class Copy {
       if (cal.entry) return { status: 200, body: cal.entry };
       if (this.listComplete) return apiError(404, "notFound", "Not Found");
       const fitted = this.fittedZone(cal);
-      if (fitted) return { status: 200, body: { kind: "calendar#calendarListEntry", id: cal.id, timeZone: fitted } };
+      if (fitted) return { status: 200, body: { kind: "calendar#calendarListEntry", id: cal.id, timeZone: cal.fit.name } };
       this.gap(`the copy does not know calendar ${cal.id}`);
     }
     if (method === "GET" && (m = /^\/calendar\/v3\/calendars\/([^/]+)$/.exec(path))) {
@@ -285,7 +291,7 @@ export class Copy {
   }
 
   list(cal, q) {
-    const zone = q.get("timeZone") ?? this.zoneOf(cal);
+    const zone = this.asked(cal, q) ?? this.zoneOf(cal);
     const a = q.has("timeMin") ? parseInstant(q.get("timeMin")) : NaN, b = q.has("timeMax") ? parseInstant(q.get("timeMax")) : NaN;
     if (!Number.isFinite(a) || !Number.isFinite(b)) this.gap(`the copy only lists events of ${cal.id} inside a known time window`);
     if (q.get("singleEvents") !== "true") this.gap("the copy only answers lists with recurring events expanded");
@@ -304,11 +310,11 @@ export class Copy {
     const offset = q.get("pageToken") ? Number(Buffer.from(q.get("pageToken"), "base64url").toString()) || 0 : 0;
     const page = items.slice(offset, offset + max).map(e => this.render(e, zone, q.get("timeZone")));
     const updated = [...cal.events.values()].map(e => Date.parse(e.updated)).filter(Number.isFinite);
-    const e = cal.entry ?? this.gap(`the copy does not know calendar ${cal.id}`);
+    const e = cal.entry ?? (cal.fit?.zone ? {} : this.gap(`the copy does not know calendar ${cal.id}`));
     const result = {
       kind: "calendar#events", etag: `"p3${createHash("sha1").update(JSON.stringify(page.map(i => i.etag))).digest("hex").slice(0, 14)}"`,
       summary: e.summaryOverride ?? e.summary, description: e.description ?? "", updated: isoMs(updated.length ? Math.max(...updated) : this.now()),
-      timeZone: zone, accessRole: e.accessRole, defaultReminders: e.defaultReminders ?? [],
+      timeZone: this.shown(cal, zone), accessRole: e.accessRole, defaultReminders: e.defaultReminders ?? [],
       ...(offset + max < items.length ? { nextPageToken: Buffer.from(String(offset + max)).toString("base64url") } : {}),
       items: page,
     };
@@ -339,7 +345,7 @@ export class Copy {
     const ev = this.getEvent(cal, id);
     if (!ev && this.missing(cal, id)) return apiError(404, "notFound", "Not Found");
     if (!ev) this.gap(`the copy has not seen event ${id} in ${cal.id}`);
-    return { status: 200, body: this.render(ev, q.get("timeZone") ?? this.zoneOf(cal), q.get("timeZone")), etag: ev.etag };
+    return { status: 200, body: this.render(ev, this.asked(cal, q) ?? this.zoneOf(cal), q.get("timeZone")), etag: ev.etag };
   }
 
   normalTime(value, zone, cal) {
