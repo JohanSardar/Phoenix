@@ -1,10 +1,12 @@
-export function readNative(text, emit, unread) {
-  let expected = 1, task, closed = false;
-  const lines = text.split("\n");
-  for (const [index, line] of lines.entries()) {
-    if (!line && index === lines.length - 1) continue;
+export function readNative(bytes, emit, unread) {
+  let expected = 1, task, closed = false, offset = 0, lineNumber = 0;
+  while (offset < bytes.length) {
+    const newline = bytes.indexOf(10, offset), record = bytes.subarray(offset, newline < 0 ? bytes.length : newline);
+    offset = newline < 0 ? bytes.length : newline + 1;
+    lineNumber++;
     try {
-      if (index === lines.length - 1) throw new Error("Torn final record");
+      if (newline < 0) throw new Error("Torn final record");
+      const line = new TextDecoder("utf-8", { fatal: true }).decode(record);
       const suffix = /,"crc":"([0-9a-f]{8})"}$/.exec(line);
       if (!suffix) throw new Error("Missing native checksum");
       let crc = 0xffffffff;
@@ -15,12 +17,12 @@ export function readNative(text, emit, unread) {
       if (((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, "0") !== suffix[1]) throw new Error("Native checksum mismatch");
       const row = JSON.parse(line);
       if (row.v !== 1 || row.seq !== expected++ || !Number.isFinite(row.ts)) throw new Error("Unsupported or out-of-order native record");
-      if (index === 0 && row.kind !== "session_created") throw new Error("Missing session_created");
+      if (lineNumber === 1 && row.kind !== "session_created") throw new Error("Missing session_created");
       if (row.kind === "session_created") task = row.id;
       const fields = { ts: { wall: new Date(row.ts).toISOString() }, task };
       if (row.kind === "item") {
         if (!["user", "runtime_context", "context_note", "assistant_running", "assistant", "tool_running", "tool_call", "tool_result", "steering", "turn_end", "interrupted", "context_checkpoint", "file_review"].includes(row.type)) {
-          unread(row.type, "Unknown native item type", index + 1);
+          unread(row.type, "Unknown native item type", lineNumber);
           continue;
         }
         const data = row.data;
@@ -31,11 +33,11 @@ export function readNative(text, emit, unread) {
       } else if (["session_created", "set", "turn_started", "turn_committed", "turn_interrupted", "compacted", "snapshot", "closed", "child_spawned", "child_finished"].includes(row.kind)) {
         emit(row.kind === "closed" ? "close" : "meta", `fx.${row.kind}`, row, ["body", "ts.wall", "task"], fields);
         if (row.kind === "closed") closed = true;
-      } else unread(row.kind, "Unknown native record kind", index + 1);
+      } else unread(row.kind, "Unknown native record kind", lineNumber);
     } catch (error) {
-      unread("native", error.message, index + 1);
+      unread("native", error.message, lineNumber);
       return;
     }
   }
-  if (!closed) unread("native", "Session has no closed record", lines.length);
+  if (!closed) unread("native", "Session has no closed record", lineNumber + 1);
 }

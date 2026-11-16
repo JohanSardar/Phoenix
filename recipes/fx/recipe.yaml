@@ -162,7 +162,7 @@
     "command": [
       "node",
       "transcript-reader.mjs",
-      "v1"
+      "v2"
     ],
     "harness_versions": [
       "0.0.16"

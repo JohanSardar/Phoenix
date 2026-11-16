@@ -14,11 +14,11 @@ emit("meta", "transcript.coverage", {
   lacks: ["raw model requests and responses", "complete system prompt and tool definitions", "MCP initialize, protocol version and raw envelopes", "individual call times in exports; all monotonic times", "CLI stdin/stdout/stderr frames and environment", "result-store artifacts outside the supplied bytes", "unsaved sessions and omitted subagent sessions"],
 });
 try {
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(0));
+  const bytes = readFileSync(0);
   let input;
-  try { input = JSON.parse(text); } catch {}
+  try { input = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch {}
   if (!input || input.v === 1 && input.kind === "session_created") {
-    readNative(text, emit, unread);
+    readNative(bytes, emit, unread);
     process.exitCode ??= 0;
   } else {
   if (input.fx_version !== "0.0.16") throw new Error("Unsupported fx version");

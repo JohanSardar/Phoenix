@@ -16,7 +16,10 @@ async function config(path, optional = false) {
   let source;
   try { source = JSON.parse(await readFile(path, "utf8")); } catch (error) { if (optional && error.code === "ENOENT") return []; throw error; }
   return Object.entries(source.mcpServers ?? source.mcp).filter(([, server]) => server.enabled !== false && (server.command || !server.oauth && process.env.PHOENIX_FX_HTTP_STDIO === "1")).map(([name, server]) => {
-    if (server.command) return { name, command: expand(server.command), args: (server.args ?? []).map(expand), env: Object.entries(server.env ?? {}).map(([name, value]) => ({ name, value: expand(value) })) };
+    if (server.command) {
+      const command = Array.isArray(server.command) ? server.command : [server.command, ...server.args ?? []];
+      return { name, command: expand(command[0]), args: command.slice(1).map(expand), env: Object.entries(server.environment ?? server.env ?? {}).map(([name, value]) => ({ name, value: expand(value) })) };
+    }
     if (!server.url) throw new Error("Unsupported MCP entry");
     const headers = Object.entries(server.headers ?? {}).map(([name, value]) => ({ name, value: expand(value) }));
     for (const [name, variable] of Object.entries(server.header_env ?? {})) {

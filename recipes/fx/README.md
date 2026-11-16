@@ -11,7 +11,7 @@ node packages/cli/src/import.ts --recipe recipes/fx/recipe.yaml \
   --home /private/phoenix ~/.fx/sessions/v2/SESSION_ID/log.jsonl
 ```
 
-The reader consumes only stdin. It checks the v1 log's sequence and CRC32C, preserves native wall times, imports known records, and reports unknown kinds, versions, truncated tails and unclosed sessions as unread. It does not reopen result-store artifacts beside the source. A native result's preview and artifact reference are not its complete output, even when fx says the stored artifact is complete. Use the read-only session export to obtain result text that fx can still load:
+The reader consumes only stdin. It checks the v1 log's sequence and CRC32C, preserves native wall times, imports known records, and reports unknown kinds, versions, truncated tails and unclosed sessions as unread. It preserves valid records before a torn UTF-8 tail. It does not reopen result-store artifacts beside the source. A native result's preview and artifact reference are not its complete output, even when fx says the stored artifact is complete. Use the read-only session export to obtain result text that fx can still load:
 
 ```sh
 umask 077
@@ -21,6 +21,8 @@ node packages/cli/src/import.ts --recipe recipes/fx/recipe.yaml \
 ```
 
 This stamps the installed fx version on `fx session --id ID --json` output. The supported presentation execution schema is 3. Exported calls have only session-level wall time; that time is not marked verbatim for individual calls. An interrupted turn is reported as unread, and truncated outputs are partial. Every event has `verbatim`. Tool identities and argument/output values are preserved without inventing JSON-RPC envelopes, inferring connector names from underscores, or pretending these are model wire exchanges. Import subagent sessions separately. Neither route needs anything in the live path; `--no-save` leaves no session to import.
+
+These imports create separate captures by default. Before importing into an existing live capture, its task markers must already use the native session ID; otherwise previously unkeyed wire events become unattributed. The reader does not invent that association.
 
 ## Live ACP, MCP and CLI
 
