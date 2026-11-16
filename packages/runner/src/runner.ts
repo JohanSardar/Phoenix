@@ -253,7 +253,6 @@ export class Runner {
     await persist();
     let engine: Engine | undefined;
     let process: SandboxProcess | undefined;
-    let clockWrites = Promise.resolve();
     const submission = new AbortController();
     const states = new Map<string, unknown>();
     let finalText = "";
@@ -281,7 +280,6 @@ export class Runner {
         clock: { start: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall }, routes: { ...tree.routes, http: { ...Object.fromEntries(plan.runner.plugins.flatMap(plugin => (plugin.descriptor.recognize.hosts ?? []).map(host => [host, plugin.descriptor.connector]))), ...tree.routes.http } },
         sample: { root: join(root, "trace"), metadata: { capture: `${id.slice(7)}-${sample.sample}-${attempt.attempt}`, harness: { name: plan.runner.harness.name, tree: plan.candidate_tree }, recipe: { name: "runner", version: "1" }, routes: ["tap"], started_at: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall ?? new Date(0).toISOString(), boot_id: `${id}-${sample.sample}-${attempt.attempt}` } }, hmacKey });
       await writeClockFile(join(root, "clock"), engine.clock.now());
-      engine.clock.onAnchor(time => { clockWrites = clockWrites.then(() => writeClockFile(join(root, "clock"), time)); });
       const running = await sandbox.start({ image: plan.harness_image, argv: tree.argv, env: { ...tree.env, ...fromHost(model.env), TZ: bundle.manifest.clock?.timezone ?? "UTC" }, mounts: [{ source: tree.directory, target: "/worktree" }, { source: join(root, "support"), target: "/phoenix", readOnly: true }], clockFile: join(root, "clock"), workdir: "/worktree", virtualTime: engine.clock.now().toISOString(), clockProbe: plan.clock_probe, dontFakeMonotonic: true, directHosts: [new URL(model.url).hostname] });
       process = running.process; attempt.container = process.id;
       await persist();
@@ -305,7 +303,6 @@ export class Runner {
       submission.abort();
       await process?.stop().catch(() => {});
       await engine?.close();
-      await clockWrites;
     }
     const clockReport = await optional<ClockReport>(join(root, "clock-report.json"));
     const context: FidelityContext = { source: bundle.manifest.source, connectors: Object.fromEntries(Object.entries(bundle.manifest.connectors ?? {}).map(([name, connector]) => [name, { coverage_tier: connector.tier, origin: connector.origin, routes: connector.routes, read_only: connector.read_only, ...(plan.runner.plugins.find(p => p.descriptor.connector === name) ? { plugin_tier: plan.runner.plugins.find(p => p.descriptor.connector === name)!.descriptor.tier } : {}) }])), start: plan.start, container_runtime: plan.container_runtime, clock: clockReport ?? { clock: "unknown" }, processes: clockReport?.binaries ?? [], ...("serve" in plan.runner.harness.run ? { earlier_tasks_not_replayed: true } : {}) };
