@@ -1,5 +1,6 @@
 // Plans the reads that snapshot what the session touched: each thread, message and draft it saw,
-// and the label list. Every planned read is a declared read-only tool. Makes no network calls.
+// and the label list, or for a command-line target the folder list and the session's own
+// envelope lists and message reads. Every planned read is declared read-only. Makes no network calls.
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -7,15 +8,28 @@ import { createInterface } from "node:readline";
 const descriptor = JSON.parse(await readFile(new URL("../phoenix-plugin.json", import.meta.url), "utf8"));
 const MESSAGE_RESULTS = new Set(["get_message", "send_message", "reply", "forward"]);
 const DRAFT_RESULTS = new Set(["create_draft", "update_draft", "get_draft"]);
-let calls = [];
+let calls = { mcp: [], cli: [] };
 let initialized = false;
 
 async function plan(segments) {
-  const events = [];
+  const events = [], commands = [];
+  const bodyOf = async (event, segment) => {
+    if (!event.body || event.body.content_encoding) return undefined;
+    if (!event.body.blob) return event.body.inline;
+    if (!/^sha256:[a-f0-9]{64}$/.test(event.body.blob)) throw new Error("Invalid capture blob reference");
+    return readFile(join(dirname(segment), "..", "blobs", "sha256", event.body.blob.slice(7)), "utf8");
+  };
   for (const segment of segments) {
     for (const line of (await readFile(segment, "utf8")).split("\n").filter(Boolean)) {
       const event = JSON.parse(line);
-      if (event.connector === descriptor.connector && event.surface === "mcp" && !event.partial && ["call", "result"].includes(event.kind)) events.push({ event, segment });
+      if (event.connector !== descriptor.connector || event.partial) continue;
+      if (event.surface === "mcp" && ["call", "result"].includes(event.kind)) events.push({ event, segment });
+      if (event.surface === "cli" && event.kind === "call" && !/^(frame|fragment):/.test(event.op ?? "")) {
+        let value;
+        try { value = JSON.parse(await bodyOf(event, segment) ?? ""); } catch { continue; }
+        const argv = event.op === "open" ? value?.meta?.argv : value?.argv;
+        if (Array.isArray(argv) && argv.every(a => typeof a === "string")) commands.push(argv);
+      }
     }
   }
   events.sort((a, b) => a.event.stream.localeCompare(b.event.stream) || a.event.seq - b.event.seq);
@@ -24,12 +38,7 @@ async function plan(segments) {
   const pending = new Map();
   let used = false;
   for (const { event, segment } of events) {
-    if (!event.body || event.body.content_encoding) continue;
-    let body = event.body.inline;
-    if (event.body.blob) {
-      if (!/^sha256:[a-f0-9]{64}$/.test(event.body.blob)) throw new Error("Invalid capture blob reference");
-      body = await readFile(join(dirname(segment), "..", "blobs", "sha256", event.body.blob.slice(7)), "utf8");
-    }
+    const body = await bodyOf(event, segment);
     let message;
     try { message = JSON.parse(body ?? ""); } catch { continue; }
     if (message?.jsonrpc !== "2.0" || !["string", "number"].includes(typeof message.id)) continue;
@@ -59,13 +68,20 @@ async function plan(segments) {
     for (const m of value.messages ?? []) { add(messages, m.id); add(threads, m.threadId); }
     for (const d of value.drafts ?? []) { add(drafts, d.id); add(messages, d.messageId); add(threads, d.threadId); }
   }
-  if (!used) return [];
-  return [
+  const reads = new Map();
+  for (const argv of commands) {
+    const [command, group, action, ...rest] = argv;
+    if (group === "envelope" && action === "list") reads.set(JSON.stringify(argv), argv);
+    if (group === "message" && action === "read") { const read = [command, group, action, "--preview", ...rest.filter(a => a !== "--preview" && a !== "-p")]; reads.set(JSON.stringify(read), read); }
+  }
+  const cli = commands.length ? [["himalaya", "folder", "list"], ...reads.values()].map(argv => ({ op: "himalaya", args: { argv: ["himalaya", ...argv.slice(1)] } })) : [];
+  if (!used) return { mcp: [], cli };
+  return { cli, mcp: [
     { op: "tools/call:list_labels", args: {} },
     ...[...threads].map(threadId => ({ op: "tools/call:get_thread", args: { threadId, messageFormat: "FULL_CONTENT" } })),
     ...[...messages].map(messageId => ({ op: "tools/call:get_message", args: { messageId, messageFormat: "RAW" } })),
     ...[...drafts].map(draftId => ({ op: "tools/call:get_draft", args: { draftId, messageFormat: "FULL_CONTENT" } })),
-  ];
+  ] };
 }
 
 for await (const line of createInterface({ input: process.stdin })) {
@@ -81,7 +97,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       initialized = true;
       value = null;
     } else if (!initialized) throw new Error("Initialize first");
-    else if (request.method === "capture" && request.params.phase === "plan") value = { calls };
+    else if (request.method === "capture" && request.params.phase === "plan") value = { calls: request.params.surface === "cli" ? calls.cli : request.params.surface === "mcp" ? calls.mcp : [] };
     else if (request.method === "capture" && request.params.phase === "complete") value = { collections: [{ entity: "message", complete: false }, { entity: "draft", complete: false }] };
     else {
       console.log(JSON.stringify({ phoenix_plugin: 1, id: request.id, status: "unsupported", reason: "The capture command does not answer " + request.method }));

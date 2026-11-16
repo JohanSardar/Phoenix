@@ -69,7 +69,7 @@ async function call(params) {
   const nowMs = Date.parse(params.now ?? new Date().toISOString());
   if (params.surface === "cli") {
     box.missed = undefined;
-    const { stdout, stderr, code } = await himalaya.run((params.args?.argv ?? []).slice(1), "", nowMs);
+    const { stdout, stderr, code } = await himalaya.run((params.args?.argv ?? []).slice(1), Buffer.from(params.raw?.stdin ?? "", "base64"), nowMs);
     if (box.missed) return { status: "unsupported", reason: box.missed };
     const frame = (stream, bytes, last = true) => ({ dir: "back", stream, bytes: Buffer.from(bytes).toString("base64"), last });
     const frames = [frame(1, stdout), frame(2, stderr), frame(3, JSON.stringify({ type: "exit", code, signal: null }))];

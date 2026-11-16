@@ -7,7 +7,7 @@
   },
   "tier": "stateful",
   "operations": ["tools/call:search_threads", "tools/call:get_thread", "tools/call:get_message", "tools/call:list_labels", "tools/call:list_drafts", "tools/call:get_draft", "tools/call:download_gmail_attachment", "tools/call:send_message", "tools/call:reply", "tools/call:forward", "tools/call:create_draft", "tools/call:update_draft", "tools/call:delete_draft", "tools/call:label_message", "tools/call:unlabel_message", "tools/call:label_thread", "tools/call:unlabel_thread", "tools/call:update_message_labels", "tools/call:trash_message", "tools/call:untrash_message", "tools/call:trash_thread", "tools/call:untrash_thread", "tools/call:mark_message_spam", "tools/call:unmark_message_spam", "tools/call:mark_thread_spam", "tools/call:unmark_thread_spam", "tools/call:apply_sensitive_message_label", "tools/call:apply_sensitive_thread_label", "tools/call:create_label", "tools/call:update_label", "tools/call:delete_label", "himalaya"],
-  "read_only": ["tools/call:search_threads", "tools/call:get_thread", "tools/call:get_message", "tools/call:list_labels", "tools/call:list_drafts", "tools/call:get_draft", "tools/call:download_gmail_attachment"],
+  "read_only": ["tools/call:search_threads", "tools/call:get_thread", "tools/call:get_message", "tools/call:list_labels", "tools/call:list_drafts", "tools/call:get_draft", "tools/call:download_gmail_attachment", "himalaya folder list", "himalaya envelope list", "himalaya message read --preview"],
   "capture": {
     "command": ["node", "src/capture.mjs"],
     "protocol": "stdio"
