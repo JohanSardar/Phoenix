@@ -1,5 +1,5 @@
 diff --git a/src/core/tooling/tool_dispatch.zig b/src/core/tooling/tool_dispatch.zig
-index 268ac86..e12f0de 100644
+index 268ac86..1cd9756 100644
 --- a/src/core/tooling/tool_dispatch.zig
 +++ b/src/core/tooling/tool_dispatch.zig
 @@ -905,12 +905,34 @@ pub fn dispatchToolCall(ctx: DispatchContext, registry: Registry, call: message.
@@ -9,7 +9,7 @@ index 268ac86..e12f0de 100644
 +var phoenix_call_counter = std.atomic.Value(u64).init(0);
 +
 +/// Phoenix replay: hands one tool call to the stand-in helper and returns its answer instead of running the tool.
-+fn phoenixStandIn(alloc: Allocator, dir: []const u8, call: message.ToolCall) DispatchError!AuthorizedDispatchResult {
++pub fn phoenixStandIn(alloc: Allocator, dir: []const u8, call: message.ToolCall) DispatchError!AuthorizedDispatchResult {
 +    const helper = io_mod.getenv("PHOENIX_FX_TOOL_HELPER") orelse return phoenixStop(alloc);
 +    const path = try alloc.print("{s}/call-{d}.json", .{ dir, phoenix_call_counter.fetchAdd(1, .seq_cst) });
 +    defer alloc.free(path);
@@ -37,3 +37,15 @@ index 268ac86..e12f0de 100644
      const validated = try decodeAndValidateRegisteredToolCall(ctx, registry, call);
      switch (validated) {
          .not_registered => return .{ .status = .failure, .body = try ctx.allocator.print("unknown tool: {s}", .{call.name}) },
+diff --git a/src/core/tooling/tool_runtime.zig b/src/core/tooling/tool_runtime.zig
+index c8b8512..5447666 100644
+--- a/src/core/tooling/tool_runtime.zig
++++ b/src/core/tooling/tool_runtime.zig
+@@ -431,6 +431,7 @@ pub fn executeToolCallAuthorized(
+     execution_ctx.command_replay_capture = request.command_replay_capture;
+     execution_ctx.command_replay_unavailable = request.command_replay_unavailable;
+ 
++    if (io_mod.getenv("PHOENIX_FX_TOOL_DIR")) |dir| return toolExecutionResultFromDispatch(try tool_dispatch.phoenixStandIn(request.result_allocator, dir, request.call), .{});
+     const started_at_ms = io_mod.milliTimestamp();
+     const uses_file_mutation_contract = if (registeredToolSpec(
+         execution_ctx,
