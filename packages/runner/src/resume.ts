@@ -106,15 +106,15 @@ export async function resumeAttempt(input: {
     const own = all.filter((a, at) => a.before_cut || firstWrite < 0 || at < firstWrite || (a.world && plugin.descriptor.read_only?.includes(`tools/call:${a.op}`)));
     const mine = new Set(own);
     const commander = plugin.descriptor.recognize.commands?.length ? { ...plugin.descriptor, connector: name } : undefined;
-    let last = -Infinity;
+    let last = -Infinity, seq = 0;
     const steps = moment.answers.map((a, at) => {
       const time = Date.parse(a.observed_at);
       last = Number.isFinite(time) ? time : last;
       return { a, at, time: last };
     }).sort((x, y) => x.time - y.time);
     const snapshot = steps.flatMap(({ a, at }) => mine.has(a) ? [
-      { v: 1, capture: input.capture, stream: "session", seq: at * 2, ts: { wall: a.observed_at }, kind: "call", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: at, method: "tools/call", params: { name: a.op, arguments: a.args } }) } },
-      { v: 1, capture: input.capture, stream: "session", seq: at * 2 + 1, ts: { wall: a.observed_at }, kind: "result", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: at, result: a.result }) } },
+      { v: 1, capture: input.capture, stream: "session", seq: seq++, ts: { wall: a.observed_at }, kind: "call", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: at, method: "tools/call", params: { name: a.op, arguments: a.args } }) } },
+      { v: 1, capture: input.capture, stream: "session", seq: seq++, ts: { wall: a.observed_at }, kind: "result", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: at, result: a.result }) } },
     ] : commander ? pastCommand(a, moment.shell?.[a.connector]?.[a.op], commander, moment.cwd, { capture: input.capture, stream: `session-cli-${at}`, connector: plugin.descriptor.connector }, commandPlugins) : []).map(event => JSON.stringify(event) + "\n").join("");
     await writeFile(join(pluginRoot, "inputs/snapshot"), plugin.snapshot ? bundle.files.get(plugin.snapshot)! : snapshot, { mode: 0o600 });
     await writeFile(join(pluginRoot, "inputs/seed"), plugin.seed ? bundle.files.get(plugin.seed)! : JSON.stringify({ seed: `sha256:${createHash("sha256").update(`${input.id}:${input.capture}`).digest("hex")}` }), { mode: 0o600 });

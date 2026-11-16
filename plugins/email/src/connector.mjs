@@ -344,12 +344,18 @@ export class Connector {
     const known = this.box.messages.get(fields.id);
     if (known && (known.provisional || known.know?.has("body") || known.know?.has("raw"))) return;
     const to = [...(fields.toRecipients ?? [])].sort().join(","), at = Number(fields.internalDate);
-    const text = s => s === undefined ? undefined : String(s).replace(/\r\n/g, "\n").trim();
-    const html = s => s === undefined ? undefined : textOfHtml(s).replace(/\s+/g, " ").trim();
-    const agree = (norm, key, m) => norm(fields[key]) === undefined || norm(m.fields[key]) === undefined || norm(fields[key]) === norm(m.fields[key]);
+    const bodies = f => ({ plain: f.plaintextBody === undefined ? undefined : String(f.plaintextBody).replace(/\s+/g, " ").trim(), html: f.htmlBody === undefined ? undefined : textOfHtml(f.htmlBody).replace(/\s+/g, " ").trim() });
+    const theirs = bodies(fields);
+    const agree = m => {
+      const ours = bodies(m.fields);
+      const pairs = ["plain", "html"].filter(k => theirs[k] !== undefined && ours[k] !== undefined);
+      if (pairs.length) return pairs.every(k => theirs[k] === ours[k]);
+      const a = theirs.plain ?? theirs.html, b = ours.plain ?? ours.html;
+      return a === undefined || b === undefined || a === b;
+    };
     const found = [...this.box.messages.values()].filter(m => m.provisional && m.fields.subject === fields.subject && m.fields.sender === fields.sender
       && (fields.toRecipients === undefined || [...(m.fields.toRecipients ?? [])].sort().join(",") === to) && (!Number.isFinite(at) || Math.abs(Number(m.internalDate) - at) < 120000)
-      && agree(text, "plaintextBody", m) && agree(html, "htmlBody", m));
+      && agree(m));
     if (found.length !== 1) return;
     const m = found[0];
     delete m.provisional;
@@ -360,7 +366,7 @@ export class Connector {
     }
     this.adopt(m.id, fields.id);
     this.rethread(m, thread);
-    if (known && count !== undefined) counts.set(thread, count);
+    if ((known || thread === fields.id) && count !== undefined) counts.set(thread, count);
   }
 
   // Learns the mailbox from one recorded connector answer.

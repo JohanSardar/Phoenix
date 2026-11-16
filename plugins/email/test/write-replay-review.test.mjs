@@ -242,3 +242,26 @@ test("S32: claiming a metadata placeholder preserves a known incomplete thread c
   ]);
   await assert.rejects(() => copy.tool("get_thread", { threadId: id, messageFormat: "METADATA_ONLY" }), /only part of thread/);
 });
+
+test("S29c: contradictory known bodies must not merge across plain and HTML formats", async t => {
+  const id = ((BigInt(Date.parse("2026-11-16T20:33:50Z")) << 20n) | 1n).toString(16);
+  const message = { id, threadId: id, labelIds: ["SENT"], internalDate: String(Date.parse("2026-11-16T20:33:50Z")), sender: me, toRecipients: ["ana@example.com"], subject: "[phoenix-test] t57 Mixed", htmlBody: "<p>Different HTML body.</p>", viewUrl: "https://mail.google.com/mail/?authuser=" + me };
+  const copy = await copyOf(t, [
+    ...cliEvents([{ argv: ["himalaya", "message", "send"], stdin: raw("Mixed", "Original plaintext body."), stdout: "Message successfully sent!\n" }]),
+    ...mcpEvents("get_message", { messageId: id, messageFormat: "FULL_CONTENT" }, message, "2026-11-16T20:33:55Z"),
+  ]);
+  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 2);
+});
+
+test("S32b: an authoritative thread count survives a claim without a metadata placeholder", async t => {
+  const id = ((BigInt(Date.parse("2026-11-16T20:33:40Z")) << 20n) | 1n).toString(16);
+  const replyId = ((BigInt(Date.parse("2026-11-16T20:33:43Z")) << 20n) | 1n).toString(16);
+  const message = { id, threadId: id, labelIds: ["SENT"], internalDate: String(Date.parse("2026-11-16T20:33:40Z")), sender: me, toRecipients: ["ana@example.com"], subject: "[phoenix-test] t57 Count", plaintextBody: "Count once.", viewUrl: "https://mail.google.com/mail/?authuser=" + me };
+  const reply = { id: replyId, threadId: id, labelIds: ["INBOX"], internalDate: String(Date.parse("2026-11-16T20:33:43Z")), sender: "ana@example.com", toRecipients: [me], subject: "Re: [phoenix-test] t57 Count", snippet: "Reply" };
+  const copy = await copyOf(t, [
+    ...cliEvents([{ argv: ["himalaya", "message", "send"], stdin: raw("Count", "Count once."), stdout: "Message successfully sent!\n" }]),
+    ...mcpEvents("search_threads", { query: "t57", view: "THREAD_VIEW_SUMMARY" }, { resultCountEstimate: "1", threads: [{ id, messageCount: 6, messages: [reply] }] }, "2026-11-16T20:33:45Z"),
+    ...mcpEvents("get_message", { messageId: id, messageFormat: "FULL_CONTENT" }, message, "2026-11-16T20:33:50Z"),
+  ]);
+  await assert.rejects(() => copy.tool("get_thread", { threadId: id, messageFormat: "METADATA_ONLY" }), /only part of thread/);
+});

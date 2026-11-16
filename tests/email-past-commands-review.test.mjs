@@ -8,6 +8,7 @@ import test from "node:test";
 import { recognizeCommand } from "../packages/engine/src/index.ts";
 import { pastCommand } from "../packages/runner/src/past-commands.ts";
 import { resumeAttempt } from "../packages/runner/src/resume.ts";
+import { createCapture, createTraceWriter } from "../packages/store/src/index.ts";
 
 const at = "2026-11-16T20:33:40Z", cut = "2026-11-16T20:35:00Z", output = "[phoenix-test] captured output\n";
 const plugin = connector => ({ phoenix_plugin: 1, connector, tier: "stateful", recognize: { commands: ["copycmd"] }, operations: ["copycmd", "tools/call:get"], read_only: ["copycmd list", "tools/call:get"] });
@@ -80,6 +81,17 @@ test("S34b: parallel shell parts exported by a recipe still become a chronologic
   const result = await snapshots(t, moment.answers, [plugin("copy")], { shell: moment.shell });
   const times = result.copy.filter(event => event.kind === "call" && event.op === "copycmd").map(event => Date.parse(event.ts.wall));
   assert.deepEqual(times, [Date.parse(at), Date.parse(late)]);
+});
+
+test("S34c: chronological snapshots retain increasing sequence numbers in each capture stream", async t => {
+  const late = { id: "late", connector: "copy", op: "get", args: {}, result: { content: [{ type: "text", text: "[phoenix-test] late" }] }, observed_at: "2026-11-16T20:34:00Z", before_cut: true };
+  const early = { ...late, id: "early", observed_at: at };
+  const result = await snapshots(t, [late, early], [plugin("copy")]);
+  const root = await mkdtemp(join(import.meta.dirname, ".past-sequence-review-"));
+  await createCapture(root, { capture: "proof", harness: { name: "proof", tree: "proof" }, recipe: { name: "proof", version: "1" }, routes: [], started_at: at, boot_id: "proof" });
+  const writer = createTraceWriter(root, { capture: "proof", stream: "session" });
+  t.after(async () => { await writer.close(); await rm(root, { recursive: true, force: true }); });
+  assert.doesNotThrow(() => { for (const event of result.copy) writer.append(event); });
 });
 
 test("recipe shell output and exit pointers preserve a successful synthetic command", async t => {
