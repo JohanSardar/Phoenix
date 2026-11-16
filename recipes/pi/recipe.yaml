@@ -1,0 +1,53 @@
+phoenix_recipe: 1
+name: pi
+harness_versions: ["1.5.2"]
+login_modes: [api-key, oauth, subscription, ambient-cloud, extension, unauthenticated]
+routes:
+  - versions: "1.5.2"
+    login_mode: api-key
+    surfaces: {model: [gateway, transcript], mcp: [mcp-proxy, transcript], cli: [cli-proxy, transcript]}
+  - versions: "1.5.2"
+    login_mode: oauth
+    surfaces: {model: [gateway, transcript], mcp: [mcp-proxy, transcript], cli: [cli-proxy, transcript]}
+  - versions: "1.5.2"
+    login_mode: subscription
+    surfaces: {model: [gateway, transcript], mcp: [mcp-proxy, transcript], cli: [cli-proxy, transcript]}
+  - versions: "1.5.2"
+    login_mode: ambient-cloud
+    surfaces: {model: [transcript], mcp: [mcp-proxy, transcript], cli: [cli-proxy, transcript]}
+  - versions: "1.5.2"
+    login_mode: extension
+    surfaces: {model: [transcript], mcp: [mcp-proxy, transcript], cli: [cli-proxy, transcript]}
+  - versions: "1.5.2"
+    login_mode: unauthenticated
+    surfaces: {model: [gateway, transcript], mcp: [mcp-proxy, transcript], cli: [cli-proxy, transcript]}
+model:
+  setting: "PI_CODING_AGENT_DIR/models.json: providers.<provider>.baseUrl (run.mjs maps PHOENIX_MODEL_BASE_URL)"
+  dialect: "provider-selected; openai-codex-responses uses openai-responses"
+configuration:
+  mcp:
+    file: "~/.pi/agent/mcp.json + .pi/mcp.json; adapter: explicit --mcp-config"
+    format: mcpServers
+    overlay: run.mjs
+shim: [ls, cat, date]
+transcript_reader:
+  command: [node, read-transcript.mjs]
+  harness_versions: ["1.5.2"]
+task_keys: []
+image: "node:24-bookworm (install the same Pi version; pin the resulting image digest)"
+clock:
+  probe: [node, -e, "console.log(new Date().toISOString())"]
+  dont_fake_monotonic: true
+copy_ignored: false
+limitations:
+  - "Gateway is opt-in for one explicit provider/model and an unchanged upstream; no provider or billing-route substitution."
+  - "Codex OAuth honors baseUrl; gateway capture selects Pi's supported SSE transport, not WebSocket."
+  - "The observed Codex SSE client cancels after response.completed; HTTP capture results remain partial and current runner echo blocks. Transcript import still works; never clear partial flags."
+  - "Copilot OAuth replaces model URLs with token-bound endpoints: use transcript, not gateway."
+  - "Radius catalog auth, ambient Bedrock/Vertex/federation, and arbitrary extension transports use transcript unless independently verified."
+  - "Stdio MCP is proxied. Anonymous/fixed-header Streamable HTTP needs explicit per-server PHOENIX_PI_MCP_REVERSE authorization; OAuth, SSE and expanded URLs stay unchanged and use transcript. No OAuth resource or CA changes."
+  - "MCP tools registered by extensions outside the selected config are transcript-only."
+  - "Session selection keeps Pi's original cwd; project MCP config then uses transcript rather than a cwd mirror. Do not switch sessions during a mirrored launch."
+  - "Built-in read/edit/write/grep/find/ls and absolute paths bypass PATH; bash only captures external shimmed commands, not shell builtins."
+  - "Sessions carry structured messages and tool results, not raw model requests, HTTP/SSE bytes, MCP protocol/version, complete nested calls, or filesystem side effects."
+  - "One RPC launch is one Run; use phoenix task markers for multiple tasks. No universal session key is inferred."
