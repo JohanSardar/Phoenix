@@ -11,7 +11,7 @@ interface Operation { description: string; input: Schema; run(api: Workbench, ar
 
 const object = (properties: Record<string, object>, required: string[] = []): Schema => ({ type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false });
 const id = { type: "string", pattern: "^sha256:[a-f0-9]{64}$" };
-const start = { description: "beginning, mark, or {at: <event id>} between them; defaults to each moment's own start", oneOf: [{ enum: ["beginning", "mark"] }, object({ at: { type: "string" } }, ["at"])] };
+const start = { description: "beginning or mark; defaults to each moment's own start. A session moment's start is fixed when the moment is made", enum: ["beginning", "mark"] };
 
 export const OPERATIONS: Record<string, Operation> = {
   listMoments: { description: "List the locked moments in this workspace's set, with each check (read-only), its hash and ledger entry.", input: object({}), run: api => api.listMoments() },

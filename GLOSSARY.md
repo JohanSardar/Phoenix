@@ -21,11 +21,11 @@ The language model a harness talks to while it runs. Phoenix never sits between 
 _Avoid_: Model
 
 **Moment**:
-A point in a run, picked from the session file, flagged by the agent itself, or saved with a mark, that a replay is built around.
+A point in a run that a replay is built around, picked from the session file or saved with a mark. Under `phoenix capture` the agent can also flag one, which replays from the beginning only.
 _Avoid_: Snapshot, checkpoint, case
 
 **Mark**:
-A saved world at a moment, taken while the harness runs or afterward: the session file and its line, a copy of the project's files, and what each service's read-only tools answered right then.
+A saved world at a moment, taken while the harness runs or afterward: the session file and its line, a copy of the project's files, and, when the mark is given the services' MCP config and plugins, what each service's read-only tools answered right then.
 _Avoid_: Checkpoint, bookmark
 
 **Replay**:
@@ -77,7 +77,7 @@ A staged or seeded world for a situation that never happened live, which yields 
 _Avoid_: Fixture, mock world, test environment
 
 **Workbench**:
-Phoenix's internal sandbox that the Improver drives to read a moment, edit the harness, replay, and check.
+The workspace and tools the Improver uses to read a moment, edit the harness, replay, and check.
 _Avoid_: Sandbox app, studio
 
 **Correction**:
