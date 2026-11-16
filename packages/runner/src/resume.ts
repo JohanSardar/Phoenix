@@ -97,7 +97,7 @@ export async function resumeAttempt(input: {
     await mkdir(join(pluginRoot, "inputs"), { recursive: true, mode: 0o700 });
     const all = moment.answers.filter(a => a.connector === name);
     const firstWrite = all.findIndex(a => !a.before_cut && !plugin.descriptor.read_only?.includes(`tools/call:${a.op}`));
-    const own = all.filter((a, at) => a.before_cut || firstWrite < 0 || at < firstWrite);
+    const own = all.filter((a, at) => a.before_cut || firstWrite < 0 || at < firstWrite || (a.world && plugin.descriptor.read_only?.includes(`tools/call:${a.op}`)));
     const snapshot = own.flatMap((a, seq) => [
       { v: 1, capture: input.capture, stream: "session", seq: seq * 2, ts: { wall: a.observed_at }, kind: "call", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: seq, method: "tools/call", params: { name: a.op, arguments: a.args } }) } },
       { v: 1, capture: input.capture, stream: "session", seq: seq * 2 + 1, ts: { wall: a.observed_at }, kind: "result", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: seq, result: a.result }) } },
