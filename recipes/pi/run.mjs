@@ -52,6 +52,7 @@ try {
     return config;
   };
   let cwd = process.cwd();
+  const selectsSession = args.some(arg => ["--continue", "-c", "--resume", "-r", "--session", "--session-id"].includes(arg));
   const adapter = option("--mcp-config");
   const globalMcp = await json(join(source, "mcp.json"));
   await writeFile(join(agent, "mcp.json"), JSON.stringify(mcp && !adapter ? proxy(globalMcp) : globalMcp), { mode: 0o600 });
@@ -62,7 +63,9 @@ try {
   } else if (mcp) {
     const project = join(cwd, ".pi");
     const config = await json(join(project, "mcp.json"));
-    if (Object.keys(config).length) {
+    if (Object.keys(config).length && selectsSession) {
+      misses.push({ route: "transcript", reason: "session selection keeps the original cwd; project MCP config is unchanged" });
+    } else if (Object.keys(config).length) {
       const mirror = join(runtime, "cwd");
       await mkdir(join(mirror, ".pi"), { recursive: true, mode: 0o700 });
       for (const name of await readdir(cwd)) if (name !== ".pi") await symlink(join(cwd, name), join(mirror, name));
