@@ -36,7 +36,7 @@ A write through one is seen by the other. If the agent stars a message with hima
 
 The snapshot can also be capture events, one JSON line per call and per result. That is what the resume path writes; each `tools/call` is paired with its result to make `answers`. A recorded himalaya call (its invocation and stdout frames) and a command-line capture read (a `prefetch` event) become `himalaya_output`.
 
-The copy learns mail from himalaya's JSON output (`-o json`). `envelope list` gives each message its real id in that folder, its flags, subject, sender, recipient and date with its UTC offset. Messages listed in the same minute keep the order himalaya printed them in. `message read` of one id gives that message its headers and body. A message seen only in a list keeps its body unknown, so reading it falls through. Plain-text output is not parsed. A past himalaya write that exited 0 (a send with its message from stdin, a move, a delete, a flag change) runs again in the copy, so a moment cut just after a write starts with it. Connector answers and himalaya calls are applied as one history in time order. A later real list's ids replace the ids the copy gave that mail, and a later connector answer showing a replayed send gives it Gmail's id. The account's address comes from the sender of mail listed in `[Gmail]/Sent Mail` when the snapshot doesn't name it.
+The copy learns mail from himalaya's JSON output (`-o json`). `envelope list` gives each message its real id in that folder, its flags, subject, sender, recipient and date with its UTC offset. Messages listed in the same minute keep the order himalaya printed them in. `message read` of one id gives that message its headers and body. A message seen only in a list keeps its body unknown, so reading it falls through. Plain-text output is not parsed. A past himalaya write that exited 0 (a send with its message from stdin, a move, a delete, a flag change) runs again in the copy, so a moment cut just after a write starts with it. Connector answers and himalaya calls are applied as one history in time order. Recorded lists of one message in different folders are joined by its envelope (subject, sender, recipient and minute). A message a replayed write made is joined to nothing that way: only a recorded id says it is another record's message (a Gmail id, a Message-ID the session read, a UID in a list). A later list of a whole folder (no search, first page, shorter than a page) shows that folder as it was, so the replayed write's own record leaves it. When a replayed write's record and another record can't be told apart by an id, the copy answers `unsupported` for anything that would show either. The account's address comes from the sender of mail listed in `[Gmail]/Sent Mail` when the snapshot doesn't name it.
 
 With no `himalaya` settings, the copy's himalaya gets Gmail's folder names as its sent, drafts and trash folders. himalaya's own defaults (`Sent`, `Trash`, `Drafts`) don't exist on Gmail, so a working Gmail setup names these folders.
 
@@ -78,20 +78,25 @@ The plugin test kit was run on 38 answers recorded from the real connector. Thes
 
 ## himalaya against the real Gmail
 
-A real session (two sends, list, read, search, send, move to All Mail, delete) was recorded on test messages and its later calls asked of a copy made from its first three. 10 of 15 answers were the same. 4 differed only in the ids of messages new to a folder. 1, the body of a message the session never read, fell through.
+A real session (list, read, search, send to oneself, move, delete, delete for good) was recorded on test messages and its later calls asked of a copy made from its first reads. 21 of 22 answers were the same; 3 of those differ only in the ids of folders the session never listed (All Mail, Trash). 1, the body of a message the session never read, falls through.
+
+A real send through himalaya with no Date and no Message-ID (2026-11-16) is the source of these:
+
+- Gmail's SMTP adds a `Message-ID: <…@mx.google.com>` and a `Date` in Pacific time to a message that has none; the copy's SMTP does the same.
+- A message with no Date header is listed at its arrival time, in Pacific time, not as 1970.
+- himalaya's saved copy without a Message-ID stays a second entry in Sent Mail; one with a Message-ID merges into the sent message, which then gets a new UID (each such send used two ids).
 
 ## Limits
 
-Merged with a gap (JOH-57 stays open). Not proven or not built yet:
+Not proven or not built yet (JOH-57 stays open):
 
-- pi on the resume path, the pi half of steps 2 to 4 and 6. pi reaches email only through himalaya.
-- The copy learns mail from himalaya's output and from command-line capture reads, but nothing in the core hands them to it yet: a mark doesn't plan command-line reads, and a resume snapshot holds only MCP answers. MCP prefetch isn't used either. Both wait for the step that recognizes a session's shell command as a plugin's (PHOE-47).
-- The resume path does not yet send a new shell command, one the session never made, to a plugin's copy.
+- A himalaya send that the session listed but never read comes back with its recorded id and without its content: reading it answers `unsupported`. himalaya prints no id for a send and no Message-ID in a list, so no recorded id ties the listed message to the replayed send.
+- A mark doesn't plan command-line reads, and MCP prefetch isn't used.
 
 Other limits:
 
 - Attachment bytes are not held.
 - From himalaya output alone, the copy learns messages in INBOX and Gmail's own folders. A label folder needs the label list from the connector.
-- A message new to a folder gets the next id the copy knows for that folder. Gmail's id can be higher (each send to Sent Mail used two ids), and the copy never sees the ids of folders the session didn't list, such as All Mail or Trash. Ids the session saw are kept.
+- A message new to a folder gets the next id the copy knows for that folder. The copy never sees the ids of folders the session didn't list, such as All Mail or Trash. Ids the session saw are kept.
 - `create_label` and `update_label` answer only plain labels: a color or a nested name (with `/`) falls through, because no real answer for those has been recorded.
 - A search with plain words falls through when any message the copy holds has content it never saw, because the copy can't tell whether those words are in it.

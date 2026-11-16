@@ -5,7 +5,7 @@ import { createInterface } from "node:readline";
 import { Mailbox } from "./mailbox.mjs";
 import { Connector, TOOLS, ToolError, Unsupported } from "./connector.mjs";
 import { Himalaya, folderAliases } from "./himalaya.mjs";
-import { learnHimalaya, reads, takeUids } from "./learn.mjs";
+import { completeList, learnHimalaya, reads, settle, takeUids } from "./learn.mjs";
 import { addresses } from "./mime.mjs";
 
 let box, connector, himalaya, aliases;
@@ -85,20 +85,24 @@ async function initialize(params) {
     ...timed(snapshot.answers ?? [], a => a.observed_at, "answer"),
     ...timed((snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)), o => o.at, "o"),
   ].sort((a, b) => a.order - b.order);
-  for (const { at, answer, o } of history) {
+  const made = new Map(), complete = new Map();
+  for (const [step, { at, answer, o }] of history.entries()) {
     if (answer) {
       const tool = answer.op.replace(/^tools\/call:/, "");
       if (TOOLS.includes(tool) && !answer.result?.isError) connector.ingest(tool, answer.args, valueOf(answer.result), at, answer.before_cut !== false && at <= cut);
       continue;
     }
     learnHimalaya(box, [o], aliases);
+    const whole = (o.code ?? 0) === 0 && completeList(o.argv, o.stdout, aliases);
+    if (whole) complete.set(whole, step);
     if (reads(o.argv, READ_ONLY) || o.code !== 0 || !(at <= cut)) continue;
     const from = /^from:\s*(.*)$/im.exec(String(o.stdin ?? "").split(/\r?\n\r?\n/)[0] ?? "")?.[1];
     if (!box.account.email && o.argv.includes("send") && from) box.account.email = addresses(from)[0]?.email ?? "";
     const before = new Set(box.messages.keys());
     await himalaya.run(o.argv.slice(1), Buffer.from(o.stdin ?? ""), Number.isFinite(at) ? at : box.nowMs ?? 0);
-    for (const [id, m] of box.messages) if (!before.has(id)) { m.provisional = true; box.fromRaw(m); }
+    for (const [id, m] of box.messages) if (!before.has(id)) { m.provisional = true; made.set(id, step); box.fromRaw(m); }
   }
+  settle(box, made, complete);
   box.missed = undefined;
   for (const m of box.messages.values()) box.fromRaw(m);
   box.changes = [];

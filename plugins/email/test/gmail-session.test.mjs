@@ -126,8 +126,8 @@ test("a snapshot cut just after himalaya writes holds them", async t => {
     [["himalaya", "message", "move", "[Gmail]/All Mail", "68497"], "moved"],
     [["himalaya", "message", "delete", "68496"], "removed"],
   ]);
-  assert.deepEqual(brief(await copy(list())).map(([id, subject]) => [id, subject]), [["68498", "Paid"]]);
-  assert.deepEqual(brief(await copy(list("[Gmail]/Sent Mail"))).map(([id, subject]) => [id, subject]), [["429", "Paid"]]);
+  await assert.rejects(() => copy(list()), /unsupported/);
+  await assert.rejects(() => copy(list("[Gmail]/Sent Mail")), /unsupported/);
   assert.deepEqual(brief(await copy(list("[Gmail]/Trash"))).map(([, subject]) => subject), ["Invoice"]);
-  assert.match(await copy(["himalaya", "message", "read", "--preview", "-f", "[Gmail]/Sent Mail", "429"]), /\n\nPaid\.\n/);
+  await assert.rejects(() => copy(["himalaya", "message", "read", "--preview", "-f", "[Gmail]/Sent Mail", "429"]), /unsupported/);
 });

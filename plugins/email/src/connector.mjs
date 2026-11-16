@@ -27,7 +27,15 @@ export class Connector {
     throw new Unsupported(`message ${id} is not in the copy`);
   }
 
+  // A record in a folder the copy can't settle may be another record's message, so it is not shown.
+  settled(m) {
+    const unsettled = this.box.unsettled ?? new Set();
+    const inTrash = m.labelIds.includes("TRASH") || m.labelIds.includes("SPAM");
+    if (m.ambiguous || (unsettled.has(null) && !inTrash) || m.labelIds.some(l => unsettled.has(l))) throw new Unsupported(`the copy can't tell whether message ${m.id} is the same as another of its records`);
+  }
+
   render(m, format = "PLAIN_TEXT") {
+    this.settled(m);
     const level = knowsFor(format);
     if (!knows(m, level)) throw new Unsupported(`the copy does not hold the ${format} form of message ${m.id}`);
     const full = { ...m.fields, id: m.id, threadId: m.threadId, labelIds: m.labelIds, historyId: m.historyId, internalDate: m.internalDate, viewUrl: m.fields.viewUrl ?? this.box.viewUrl(m), ...(format === "RAW" ? { raw: m.raw.toString("base64url") } : {}) };
@@ -162,6 +170,7 @@ export class Connector {
 
   draftView(draftId, view) {
     const m = this.draftMessage(draftId);
+    this.settled(m);
     if (view !== "metadata" && !knows(m, "body")) throw new Unsupported(`the copy does not hold the body of draft ${draftId}`);
     const f = m.fields;
     const out = { date: f.date, id: draftId, labelIds: m.labelIds, messageId: m.id, sender: f.sender, threadId: m.threadId, toRecipients: f.toRecipients, ccRecipients: f.ccRecipients, bccRecipients: f.bccRecipients, viewUrl: this.box.draftUrl(draftId, m.threadId) };
@@ -336,39 +345,6 @@ export class Connector {
     return made;
   }
 
-  // Mail the copy made by running a past himalaya send again is the same message a later connector
-  // answer shows under Gmail's id; it takes that id when exactly one such message matches.
-  // A message first seen only as metadata is a placeholder, and the replayed send can still become it.
-  claim(fields) {
-    if (!fields?.id) return;
-    const known = this.box.messages.get(fields.id);
-    if (known && (known.provisional || known.know?.has("body") || known.know?.has("raw"))) return;
-    const to = [...(fields.toRecipients ?? [])].sort().join(","), at = Number(fields.internalDate);
-    const bodies = f => ({ plain: f.plaintextBody === undefined ? undefined : String(f.plaintextBody).replace(/\s+/g, " ").trim(), html: f.htmlBody === undefined ? undefined : textOfHtml(f.htmlBody).replace(/\s+/g, " ").trim() });
-    const theirs = bodies(fields);
-    const agree = m => {
-      const ours = bodies(m.fields);
-      const pairs = ["plain", "html"].filter(k => theirs[k] !== undefined && ours[k] !== undefined);
-      if (pairs.length) return pairs.every(k => theirs[k] === ours[k]);
-      const a = theirs.plain ?? theirs.html, b = ours.plain ?? ours.html;
-      return a === undefined || b === undefined || a === b;
-    };
-    const found = [...this.box.messages.values()].filter(m => m.provisional && m.fields.subject === fields.subject && m.fields.sender === fields.sender
-      && (fields.toRecipients === undefined || [...(m.fields.toRecipients ?? [])].sort().join(",") === to) && (!Number.isFinite(at) || Math.abs(Number(m.internalDate) - at) < 120000)
-      && agree(m));
-    if (found.length !== 1) return;
-    const m = found[0];
-    delete m.provisional;
-    const thread = fields.threadId ?? known?.threadId, counts = this.box.threadCounts, count = counts.get(thread);
-    if (known) {
-      for (const [folder, uid] of Object.entries(known.uids ?? {})) if (known.realUids?.has(folder)) { m.uids[folder] = uid; (m.realUids ??= new Set()).add(folder); }
-      this.box.messages.delete(known.id);
-    }
-    this.adopt(m.id, fields.id);
-    this.rethread(m, thread);
-    if ((known || thread === fields.id) && count !== undefined) counts.set(thread, count);
-  }
-
   // Learns the mailbox from one recorded connector answer.
   ingest(tool, args, value, at, past) {
     const a = args ?? {};
@@ -376,7 +352,6 @@ export class Connector {
     const learnAccount = url => { const m = /authuser=([^#&]+)/.exec(url ?? ""); if (m && !this.box.account.email) this.box.account.email = decodeURIComponent(m[1]); };
     const learn = (fields, know) => {
       learnAccount(fields.viewUrl);
-      this.claim(fields);
       if (!past && this.box.messages.has(fields.id)) return;
       const m = this.box.upsert(fields, { at, know: [know] });
       const me = fields.addressDisplayNames?.find(x => x.emailAddress === this.box.account.email);

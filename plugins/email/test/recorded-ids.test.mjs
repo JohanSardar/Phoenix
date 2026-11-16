@@ -64,7 +64,7 @@ test("himalaya: a mirrored envelope list gives the copy's messages the recorded 
   const raw = ["From: Test Person <" + me + ">", "To: ana@example.com", "Subject: [phoenix-test] t57 Paid", "Date: Mon, 16 Nov 2026 20:33:50 +0000", "Message-ID: <t57-paid@example.com>", "Content-Type: text/plain; charset=utf-8", "", "Paid.", ""].join("\r\n");
   await cli(["himalaya", "message", "send"], raw, "Message successfully sent!\n");
   const ids = stdout => JSON.parse(stdout).map(e => e.id);
-  assert.deepEqual(ids(await cli(sent, "", JSON.stringify([env("429", "[phoenix-test] t57 Paid", "ana@example.com"), env("427", "[phoenix-test] t57 Lunch")]))), ["428", "427"]);
+  assert.deepEqual(ids(await cli(sent, "", JSON.stringify([env("429", "[phoenix-test] t57 Paid", "ana@example.com"), env("427", "[phoenix-test] t57 Lunch")]))), ["429", "427"]);
   assert.deepEqual(ids(await cli(sent)), ["429", "427"]);
   assert.match(await cli(["himalaya", "message", "read", "--preview", "-f", "[Gmail]/Sent Mail", "429"]), /Subject: \[phoenix-test\] t57 Paid/);
 });

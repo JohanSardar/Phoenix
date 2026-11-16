@@ -57,13 +57,12 @@ function realUid(box, m, folder, uid) {
 
 // The minutes a listed date can show for a message: its own Date header's, or when it arrived.
 const minutes = m => new Set([Number(m.internalDate), m.raw ? Date.parse(header(splitHead(m.raw).headers, "date") ?? "") : NaN].filter(Number.isFinite).map(ms => Math.floor(ms / 60000)));
-
-const byUid = (box, folder, uid) => [...box.messages.values()].find(m => m.uids[folder] === uid);
-const byRealUid = (box, folder, uid) => [...box.messages.values()].find(m => m.uids[folder] === uid && m.realUids?.has(folder));
 const heads = m => {
   const headers = m.raw ? splitHead(m.raw).headers : [];
   return { sender: m.fields.sender ?? addresses(header(headers, "from") ?? "")[0]?.email, to: m.fields.toRecipients ?? addresses(header(headers, "to") ?? "").map(a => a.email) };
 };
+const byUid = (box, folder, uid) => [...box.messages.values()].find(m => m.uids[folder] === uid);
+const byRealUid = (box, folder, uid) => [...box.messages.values()].find(m => m.uids[folder] === uid && m.realUids?.has(folder));
 const dateMs = text => { const ms = Date.parse(String(text ?? "").replace(" ", "T")); return Number.isFinite(ms) ? ms : undefined; };
 const offsetOf = text => { const found = /([+-]\d{2}):?(\d{2})$/.exec(String(text ?? "")); return found ? found[1] + found[2] : undefined; };
 
@@ -81,8 +80,10 @@ function envelopes(box, folder, list, newestFirst) {
     const minute = newestFirst && dateMs(e.date) !== undefined ? list.filter(o => o?.date === e.date).length : 0;
     const later = minute ? list.slice(i + 1).filter(o => o?.date === e.date).length : 0;
     const ms = dateMs(e.date) === undefined ? box.nowMs ?? 0 : dateMs(e.date) + Math.min(later, 59) * 1000;
+    // Recorded observations of one message in different folders are joined by their envelope. A record
+    // a replayed write made is never joined this way: only a recorded id ties it to anything.
     const alike = [...box.messages.values()].filter(o => {
-      if (o.realUids?.has(folder) || o.fields.subject !== e.subject || !minutes(o).has(Math.floor(ms / 60000))) return false;
+      if (o.provisional || o.realUids?.has(folder) || o.fields.subject !== e.subject || !minutes(o).has(Math.floor(ms / 60000))) return false;
       const { sender, to } = heads(o);
       return sender === e.from?.addr && (!e.to?.addr || to.includes(e.to.addr));
     });
@@ -163,6 +164,53 @@ export function takeUids(box, argv, ours, theirs, aliases = {}) {
   const moving = new Set(pairs.map(([m]) => m));
   if (pairs.some(([, uid]) => { const holder = byUid(box, folder, uid); return holder && !moving.has(holder); })) return;
   for (const [m, uid] of pairs) realUid(box, m, folder, uid);
+}
+
+// The folder a list shows in full: an envelope list as JSON with no search, on its first page, shorter than a page.
+export function completeList(argv, stdout, aliases = {}) {
+  const { words, folder, json } = command(argv, aliases);
+  if (!json || words[0] !== "envelope" || words[1] !== "list" || words.length > 2) return;
+  const option = names => { for (let i = argv.length - 1; i > 0; i--) { if (names.includes(argv[i])) return argv[i + 1]; const eq = names.map(n => argv[i].startsWith(n + "=") && argv[i].slice(n.length + 1)).find(Boolean); if (eq) return eq; } };
+  if (Number(option(["--page", "-p"]) ?? 1) !== 1) return;
+  let list;
+  try { list = JSON.parse(stdout); } catch { return; }
+  return Array.isArray(list) && list.length < Number(option(["--page-size", "-s"]) ?? 10) ? folder : undefined;
+}
+
+const inFolder = (m, label) => (label === "TRASH" || label === "SPAM" || !(m.labelIds.includes("TRASH") || m.labelIds.includes("SPAM"))) && (label === null || m.labelIds.includes(label));
+const NOT_FOLDERS = new Set(["UNREAD"]);
+
+// A record a replayed write made is the same as another record only when a recorded id says so: a
+// Gmail id, a Message-ID the session read, or a UID in a folder's list. In a folder a later complete
+// list shows, it is one of the listed messages, so it leaves the copy, and the other folders it was in
+// become unsettled. When such a record and another can't be told apart by id, and their subject,
+// sender or recipients don't prove them different, they may be one message: both are marked, and the
+// copy answers nothing that would show either.
+export function settle(box, made, complete) {
+  const unsettled = new Set();
+  for (const [folder, at] of complete) {
+    const { known, label } = folderLabel(box, folder);
+    if (!known) continue;
+    for (const m of [...box.messages.values()]) {
+      if (!(made.get(m.id) < at) || m.realUids?.has(folder) || !inFolder(m, label)) continue;
+      for (const l of m.labelIds) if (l !== label && !NOT_FOLDERS.has(l) && !l.startsWith("CATEGORY_")) unsettled.add(l);
+      box.messages.delete(m.id);
+      if (box.threadCounts.has(m.id) && !box.thread(m.id).length) box.threadCounts.delete(m.id);
+    }
+  }
+  box.unsettled = unsettled;
+  const records = [...box.messages.values()];
+  const apart = (a, b) => {
+    if (a.provisional === b.provisional) return true;
+    if ([...(a.realUids ?? [])].some(folder => b.realUids?.has(folder))) return true;
+    const ids = [a, b].map(m => m.raw ? header(splitHead(m.raw).headers, "message-id") : undefined);
+    if (ids[0] && ids[1]) return ids[0] !== ids[1];
+    const differ = key => a.fields[key] !== undefined && b.fields[key] !== undefined && a.fields[key] !== b.fields[key];
+    if (differ("subject") || differ("sender")) return true;
+    const to = [a, b].map(m => m.fields.toRecipients?.map(x => x.toLowerCase()));
+    return !!(to[0]?.length && to[1]?.length && !to[0].some(x => to[1].includes(x)));
+  };
+  for (const [i, a] of records.entries()) for (const b of records.slice(i + 1)) if (!apart(a, b)) a.ambiguous = b.ambiguous = true;
 }
 
 export function learnHimalaya(box, observations, aliases = {}) {

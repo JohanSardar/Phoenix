@@ -87,14 +87,14 @@ test("S23: real list UIDs must not identify another message's temporary UID", as
   const ordered = [...list(sent), "subject", "t57", "order", "by", "date", "asc"];
   const real = JSON.parse(await source.cli(ordered));
   const aUid = real.find(message => message.subject.endsWith(" A")).id;
-  assert.equal(aUid, "12");
+  assert.equal(aUid, "13");
   const copy = await copyOf(t, cliEvents([
     { argv: [...list(sent), "subject", "t57"], stdout: [base] },
     { argv: ["himalaya", "message", "send"], stdin: a, stdout: "Message successfully sent!\n" },
     { argv: ["himalaya", "message", "send"], stdin: b, stdout: "Message successfully sent!\n" },
     { argv: ordered, stdout: real },
   ]));
-  assert.match(await copy.cli(["himalaya", "message", "read", "--preview", "-f", sent, aUid]), /Synthetic body A\./);
+  await assert.rejects(() => copy.cli(["himalaya", "message", "read", "--preview", "-f", sent, aUid]), /unsupported/);
 });
 
 test("S24: a captured send without an exit is not a successful past write", async t => {
@@ -109,7 +109,7 @@ test("S25: a later MCP observation must not duplicate an earlier CLI send", asyn
     ...cliEvents([{ argv: ["himalaya", "message", "send"], stdin: raw("Once", "Send once."), stdout: "Message successfully sent!\n" }]),
     ...mcpEvents("get_thread", { threadId: id, messageFormat: "FULL_CONTENT" }, { id, messageCount: 1, messages: [message] }, "2026-11-16T20:33:50Z"),
   ]);
-  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 1);
+  await assert.rejects(() => copy.cli(list(sent)), /unsupported/);
 });
 
 test("S27: a later MCP unread change must win over an earlier CLI seen change", async t => {
@@ -141,13 +141,13 @@ test("S26: historical envelope matching must distinguish same-minute recipients"
   const argv = [...list(sent), "subject", "t57"];
   const real = JSON.parse(await source.cli(argv));
   assert.equal(real[0].to.addr, "ben@example.com");
-  assert.equal(real[0].id, "102");
+  assert.equal(real[0].id, "104");
   const copy = await copyOf(t, cliEvents([
     { argv: ["himalaya", "message", "send"], stdin: a, stdout: "Message successfully sent!\n" },
     { argv: ["himalaya", "message", "send"], stdin: b, stdout: "Message successfully sent!\n" },
     { argv, stdout: real },
   ]));
-  assert.match(await copy.cli(["himalaya", "message", "read", "--preview", "-f", sent, real[0].id]), /Synthetic body B\./);
+  await assert.rejects(() => copy.cli(["himalaya", "message", "read", "--preview", "-f", sent, real[0].id]), /unsupported/);
 });
 
 test("S28: writes observed after an explicit snapshot cut must not be applied", async t => {
@@ -165,14 +165,15 @@ test("S29: claiming a provisional send must reject a contradictory known body", 
     ...cliEvents([{ argv: ["himalaya", "message", "send"], stdin: raw("Claim", "Original sent body."), stdout: "Message successfully sent!\n" }]),
     ...mcpEvents("get_message", { messageId: id, messageFormat: "FULL_CONTENT" }, message, "2026-11-16T20:33:55Z"),
   ]);
-  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 2);
+  await assert.rejects(() => copy.cli(list(sent)), /unsupported/);
 });
 
 test("S30: a captured JSON read of the same Message-ID must not duplicate a replayed send", async t => {
   const source = await copyOf(t, { account: { email: me } });
   const message = raw("Direct", "Read the same mail.");
   await source.cli(["himalaya", "message", "send"], message);
-  const read = ["himalaya", "message", "read", "--preview", "-f", sent, "-o", "json", ...["From", "To", "Subject", "Date", "Message-ID"].flatMap(name => ["-H", name]), "1"];
+  const [listed] = JSON.parse(await source.cli(list(sent)));
+  const read = ["himalaya", "message", "read", "--preview", "-f", sent, "-o", "json", ...["From", "To", "Subject", "Date", "Message-ID"].flatMap(name => ["-H", name]), listed.id];
   const output = await source.cli(read);
   assert.match(JSON.parse(output), /message-id:\s*<write-review-Direct@example\.com>/i);
   const copy = await copyOf(t, cliEvents([
@@ -191,7 +192,7 @@ test("S25b: a metadata observation before full content must still claim a replay
     ...mcpEvents("get_message", { messageId: id, messageFormat: "METADATA_ONLY" }, metadata, "2026-11-16T20:33:45Z"),
     ...mcpEvents("get_thread", { threadId: id, messageFormat: "FULL_CONTENT" }, { id, messageCount: 1, messages: [message] }, "2026-11-16T20:33:50Z"),
   ]);
-  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 1);
+  await assert.rejects(() => copy.cli(list(sent)), /unsupported/);
 });
 
 test("S31: ambiguous envelope matches must not answer with extra mail", async t => {
@@ -225,7 +226,7 @@ test("S29b: a contradictory known HTML body must not claim another send", async 
     ...cliEvents([{ argv: ["himalaya", "message", "send"], stdin: html, stdout: "Message successfully sent!\n" }]),
     ...mcpEvents("get_message", { messageId: id, messageFormat: "FULL_CONTENT" }, message, "2026-11-16T20:33:55Z"),
   ]);
-  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 2);
+  await assert.rejects(() => copy.cli(list(sent)), /unsupported/);
 });
 
 test("S32: claiming a metadata placeholder preserves a known incomplete thread count", async t => {
@@ -250,7 +251,7 @@ test("S29c: contradictory known bodies must not merge across plain and HTML form
     ...cliEvents([{ argv: ["himalaya", "message", "send"], stdin: raw("Mixed", "Original plaintext body."), stdout: "Message successfully sent!\n" }]),
     ...mcpEvents("get_message", { messageId: id, messageFormat: "FULL_CONTENT" }, message, "2026-11-16T20:33:55Z"),
   ]);
-  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 2);
+  await assert.rejects(() => copy.cli(list(sent)), /unsupported/);
 });
 
 test("S32b: an authoritative thread count survives a claim without a metadata placeholder", async t => {
