@@ -5,25 +5,29 @@ import { PassThrough, type Duplex } from "node:stream";
 import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
 import type { MomentManifest, PluginDescriptor, TraceEvent } from "@phoenix/formats";
 import {
-  answerCall, buildIndex, checkModelRequest, comparePrefixRequest, httpHost, httpShape, matchFrozen, mcpShape, replayCtx, sameReply, toCall,
-  Emulators, type EmulatorConfig, type Answer, type Call, type ConnectorPolicy, type Divergence, type ModelDialectName, type SimulatorOptions, type StartPoint, type WireMessage,
+  answerCall, buildIndex, checkModelRequest, comparePrefixRequest, httpHost, httpShape, matchFrozen, mcpShape, modelInferencePath, replayCtx, sameReply, selectModelRequest, toCall,
+  Emulators, type EmulatorConfig, type Answer, type Call, type ConnectorPolicy, type Divergence, type Exchange, type ModelDialectName, type SimulatorOptions, type StartPoint, type WireMessage,
 } from "@phoenix/answer";
 import type { CaptureMetadata } from "@phoenix/store";
-import { HTTP_STREAM, encodeHttpHead, httpGatewayTap, mcpStdioTap, type Backend, type Frame, type Link } from "@phoenix/taps";
+import { HTTP_STREAM, decodeCliInvocation, encodeHttpHead, httpGatewayTap, mcpStdioTap, type Backend, type Link } from "@phoenix/taps";
 import { VirtualClock } from "./clock.ts";
 import { SampleTrace, streamName } from "./trace.ts";
+import { cliRelay, cliResponder } from "./cli.ts";
+import { mcpHttpResponder } from "./mcp-http.ts";
+import { Outbox, type Responder } from "./responder.ts";
 
 export interface EngineOptions {
   emulators?: readonly EmulatorConfig[];
   simulator?: Omit<SimulatorOptions, "clock">;
   evidence: { events: readonly TraceEvent[]; body(event: TraceEvent): Promise<Uint8Array> };
+  resume?: EngineOptions["evidence"] | readonly EngineOptions["evidence"][];
   connectors?: MomentManifest["connectors"];
   volatile?: Readonly<Record<string, readonly string[]>>;
   entityMaps?: Readonly<Record<string, PluginDescriptor["entity_map"]>>;
   start: StartPoint;
   clock?: { start?: string };
-  routes: { mcp?: Readonly<Record<string, string>>; http?: Readonly<Record<string, string>> };
-  model?: { connector: string; dialect: ModelDialectName; provider: { url: string; headers: Readonly<Record<string, string>> } };
+  routes: { mcp?: Readonly<Record<string, string>>; cli?: Readonly<Record<string, string>>; http?: Readonly<Record<string, string>>; mcpHttp?: Readonly<Record<string, string>> };
+  model?: { connector: string; dialect: ModelDialectName; provider: { url: string; headers: Readonly<Record<string, string>> }; selection?: { id: string; parameters?: Readonly<Record<string, unknown>> } };
   sample: { root: string; metadata: CaptureMetadata };
   hmacKey: Uint8Array;
 }
@@ -37,32 +41,10 @@ export interface Engine {
   clock: VirtualClock;
   accept(connection: { destination: { host: string; port: number }; stream: Duplex }): void;
   phase(): "prefix" | "live";
+  prefixComplete(): boolean;
   prefixEdits(): { field: string }[];
   stopped: Promise<EngineStop>;
   close(): Promise<void>;
-}
-
-class Outbox {
-  #queue: Frame[] = [];
-  #wake: (() => void) | undefined;
-  #done = false;
-  #error: Error | undefined;
-  push(stream: number, bytes: Uint8Array, last: boolean): void {
-    this.#queue.push({ dir: "back", stream, bytes, last, at: process.hrtime.bigint() });
-    this.#wake?.();
-  }
-  end(): void { this.#done = true; this.#wake?.(); }
-  fail(error: Error): void { this.#error ??= error; this.#wake?.(); }
-  async *frames(): AsyncGenerator<Frame> {
-    for (;;) {
-      if (this.#error) throw this.#error;
-      const next = this.#queue.shift();
-      if (next) { yield next; continue; }
-      if (this.#done) return;
-      await new Promise<void>(resolve => { this.#wake = resolve; });
-      this.#wake = undefined;
-    }
-  }
 }
 
 const concat = (parts: Uint8Array[]): Uint8Array => Buffer.concat(parts);
@@ -90,7 +72,30 @@ function withId(bytes: Uint8Array, id: unknown): Uint8Array {
 
 export async function startEngine(options: EngineOptions): Promise<Engine> {
   const policy = (connector: string): ConnectorPolicy => ({ ...options.connectors?.[connector], entity_map: options.entityMaps?.[connector], ...(options.volatile?.[connector] ? { volatile: options.volatile[connector] } : {}) });
-  const index = await buildIndex(options.evidence.events, { body: options.evidence.body, policy, start: options.start, ...(options.clock?.start ? { startTime: options.clock.start } : {}) });
+  const original = await buildIndex(options.evidence.events, { body: options.evidence.body, policy, start: options.start, ...(options.clock?.start ? { startTime: options.clock.start } : {}) });
+  const resumes = options.resume ? "events" in options.resume ? [options.resume] : options.resume : [];
+  const recoveryIndexes = await Promise.all(resumes.map(resume => buildIndex(resume.events, { body: resume.body, policy, start: "echo", startTime: original.startTime })));
+  const recovery = recoveryIndexes.reduce<typeof recoveryIndexes[number] | undefined>((longest, next) => !longest || next.frozen.length > longest.frozen.length ? next : longest, undefined);
+  const recovered = new Map<string, Exchange>();
+  const covered = new Set<string>();
+  let recoveryPrefix = "resume:";
+  while (original.exchanges.some(e => e.id.startsWith(recoveryPrefix))) recoveryPrefix = `resume:${recoveryPrefix}`;
+  const recoveryFrozen = (recovery?.frozen ?? []).map(exchange => {
+    const matched = original.exchanges.find(e => {
+      if (covered.has(e.id)) return false;
+      if (e.key === exchange.key && e.history.length === exchange.history.length && e.history.every((key, i) => key === exchange.history[i])) return true;
+      if (!options.model || e.connector !== options.model.connector || exchange.connector !== e.connector || !e.request.head || !exchange.request.head) return false;
+      return e.request.head.method === exchange.request.head.method
+        && new URL(e.request.head.url, "http://x").pathname === new URL(exchange.request.head.url, "http://x").pathname
+        && comparePrefixRequest(options.model.dialect, e.request.body, exchange.request.body).ok;
+    });
+    const id = `${recoveryPrefix}${exchange.id}`;
+    if (matched) { recovered.set(id, matched); covered.add(matched.id); }
+    return { ...exchange, id, response: { ...exchange.response, ...(exchange.response.chunks ? { chunks: exchange.response.chunks.map(chunk => ({ ...chunk, waitFor: chunk.waitFor.map(id => `${recoveryPrefix}${id}`) })) } : {}) } };
+  });
+  const notifications = new Map(original.notifications);
+  for (const [connector, methods] of recovery?.notifications ?? []) notifications.set(connector, new Set([...(notifications.get(connector) ?? []), ...methods]));
+  const index = { ...original, frozen: [...recoveryFrozen, ...original.frozen.filter(e => !covered.has(e.id))], notifications };
   const clock = new VirtualClock(index.startTime);
   const trace = await SampleTrace.create(options.sample.root, options.sample.metadata, clock, options.hmacKey);
   let emulators: Emulators;
@@ -100,9 +105,17 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
     });
   } catch (error) { await trace.close(); throw error; }
   const ctx = replayCtx(index, policy, emulators, options.simulator ? { ...options.simulator, clock: () => index.cutTime } : undefined);
+  const completed = new Set<string>();
   const edits = new Set<string>();
+  for (const resume of resumes) for (const event of resume.events) if (event.op === "start-point" && event.kind === "meta") {
+    const previous = JSON.parse(Buffer.from(await resume.body(event)).toString()) as { prefix_edits?: { field: string }[] };
+    previous.prefix_edits?.forEach(edit => edits.add(edit.field));
+  }
   const links = new Set<Outbox>();
   let live = false, linkCount = 0;
+  let startMarked = false, resumeMarked = false;
+  const changed = new Set<() => void>();
+  const mcpHttpIds = new Map<string, Map<string, string>>();
   let stop: EngineStop | undefined;
   let settle!: (value: EngineStop) => void;
   const stopped = new Promise<EngineStop>(resolve => { settle = resolve; });
@@ -113,16 +126,40 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
     if (result.kind === "diverged")
       await trace.append("engine", { kind: "divergence", body: Buffer.from(JSON.stringify(result.divergence)), ...(result.divergence.call ? { connector: result.divergence.call.connector, op: result.divergence.call.op } : {}) }).catch(() => {});
     for (const link of links) link.fail(new Error(result.kind === "diverged" ? "Replay diverged" : "Replay interrupted"));
+    for (const wake of changed) wake();
     settle(result);
   };
   const diverge = (divergence: Divergence) => halt({ kind: "diverged", divergence });
   const interrupt = (error: unknown) => halt({ kind: "interrupted", why: error instanceof Error ? error.message : String(error) });
 
   const goLiveIfDone = async (): Promise<void> => {
-    if (live || options.start === "echo" || !index.frozen.every(e => ctx.served.has(e.id))) return;
+    if (!startMarked && options.start !== "echo" && original.frozen.every(e => completed.has(e.id))) {
+      startMarked = true;
+      await trace.append("engine", { kind: "meta", op: "start-point", body: Buffer.from(JSON.stringify({ prefix_edits: [...edits].sort().map(field => ({ field })) })) });
+    }
+    if (recovery && !resumeMarked && recoveryFrozen.every(e => completed.has(e.id))) {
+      resumeMarked = true;
+      await trace.append("engine", { kind: "meta", op: "resume-point", body: Buffer.from(JSON.stringify({ recovered: recoveryFrozen.length })) });
+    }
+    if (live || options.start === "echo" || !index.frozen.every(e => completed.has(e.id))) return;
     live = true;
-    clock.anchor(index.cutTime);
-    await trace.append("engine", { kind: "meta", op: "start-point", body: Buffer.from(JSON.stringify({ prefix_edits: [...edits].sort().map(field => ({ field })) })) });
+    clock.anchor(recovery && original.frozen.every(e => covered.has(e.id)) ? [...recoveryFrozen].sort((a, b) => a.completed - b.completed).at(-1)?.observedAt ?? index.cutTime : index.cutTime);
+  };
+
+  const accepted = (answer: Answer): Answer => {
+    const originalExchange = answer.exchange && recovered.get(answer.exchange.id);
+    if (originalExchange) ctx.served.add(originalExchange.id);
+    for (const wake of changed) wake();
+    return answer;
+  };
+
+  const advance = async (answer: Answer): Promise<void> => {
+    if (answer.exchange) {
+      completed.add(answer.exchange.id);
+      const originalExchange = recovered.get(answer.exchange.id);
+      if (originalExchange) completed.add(originalExchange.id);
+    }
+    await goLiveIfDone();
   };
 
   const respond = async (call: Call): Promise<Answer | undefined> => {
@@ -131,12 +168,16 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       const frozen = matchFrozen(call, ctx);
       if ("trigger" in frozen) { await diverge(frozen); return undefined; }
       const answer = { raw: frozen.response, provenance: frozen.provenance, resolver: "frozen-prefix", exchange: frozen };
-      await emulators.observe(call, answer, frozen.observedAt);
-      return answer;
+      const difference = await emulators.observe(call, answer, frozen.observedAt);
+      if (difference && !call.readOnly && frozen.id.startsWith(recoveryPrefix)) {
+        await diverge({ trigger: "prefix-drift", detail: `a recovered write on ${call.connector} returned a different emulator response`, call: { connector: call.connector, surface: call.surface, op: call.op, key: call.key } });
+        return undefined;
+      }
+      return accepted(answer);
     }
     const result = await answerCall(call, ctx);
     if ("divergence" in result) { await diverge(result.divergence); return undefined; }
-    return result.answer;
+    return accepted(result.answer);
   };
 
   const opened = (): Outbox => {
@@ -144,6 +185,18 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
     links.add(out);
     if (stop) out.fail(new Error("Replay stopped"));
     return out;
+  };
+
+  const responder = (surface: string, connector: string): Responder => ({
+    connector, stream: streamName(surface, connector, String(linkCount++)), out: opened(), trace, policy: policy(connector),
+    history: () => ctx.histories[connector] ?? [], respond, advance, diverge, interrupt,
+  });
+  const waitFor = async (ids: readonly string[]): Promise<boolean> => {
+    while (!stop && !ids.every(id => ctx.served.has(id))) await new Promise<void>(resolve => {
+      const wake = () => { changed.delete(wake); resolve(); };
+      changed.add(wake);
+    });
+    return !stop;
   };
 
   const mcpLink = (connector: string): Link => {
@@ -178,7 +231,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       }
       await send(withId(answer.raw.body, shape.message.id), answer);
       for (const message of answer.exchange?.after ?? []) await send(message, answer);
-      await goLiveIfDone();
+      await advance(answer);
     };
     return {
       async write(f) {
@@ -204,12 +257,12 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
     };
   };
 
-  const serveHttp = async (out: Outbox, stream: string, connector: string, raw: WireMessage, answer: { provenance: Answer["provenance"]; resolver: string; note?: string }) => {
+  const serveHttp = async (out: Outbox, stream: string, connector: string, raw: WireMessage, answer: { provenance: Answer["provenance"]; resolver: string; note?: string }, op: string) => {
     const wire = raw.contentEncoding ? encodeBody(raw.body, raw.contentEncoding) : raw.body;
     const head = { ...raw.head!, headers: raw.head!.headers.map((value, i) => i % 2 === 1 && raw.head!.headers[i - 1]!.toLowerCase() === "content-length" ? String(wire.length) : value) };
     await trace.append(stream, { kind: "meta", surface: "http", connector, head });
     await trace.append(stream, {
-      kind: "result", surface: "http", connector, body: raw.body, provenance: answer.provenance, resolver: answer.resolver, contentType: header(head.headers, "content-type") ?? "",
+      kind: "result", surface: "http", connector, op, body: raw.body, provenance: answer.provenance, resolver: answer.resolver, contentType: header(head.headers, "content-type") ?? "",
       contentEncoding: raw.contentEncoding ? "identity" : header(head.headers, "content-encoding") ?? "identity", ...(raw.contentEncoding ? { decodedFrom: raw.contentEncoding } : {}),
     });
     out.push(HTTP_STREAM.responseHead, encodeHttpHead(head), true);
@@ -226,9 +279,10 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
         const compared = comparePrefixRequest(model!.dialect, exchange.request.body, body);
         if (!compared.ok) { first ??= compared; continue; }
         ctx.served.add(exchange.id);
+        const answer = accepted({ raw: exchange.response, provenance: exchange.provenance, resolver: "frozen-prefix", exchange });
         compared.edits.forEach(field => edits.add(field));
-        await serveHttp(out, stream, model!.connector, exchange.response, { provenance: exchange.provenance, resolver: "frozen-prefix" });
-        await goLiveIfDone();
+        await serveHttp(out, stream, model!.connector, exchange.response, { provenance: exchange.provenance, resolver: "frozen-prefix" }, `${request.method} ${modelInferencePath(model!.dialect, path)}`);
+        await advance(answer);
         return;
       }
       const next = index.frozen.find(e => !ctx.served.has(e.id));
@@ -236,9 +290,11 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
         ? { trigger: "prefix-drift", detail: `model request differs from the recorded request at ${first.field}: ${first.why}`, field: first.field }
         : { trigger: "prefix-drift", detail: `model request ${request.method} ${path} where the recording has ${next ? `${next.op} on ${next.connector}` : "nothing"}` });
     }
-    const refused = checkModelRequest(model!.dialect, request.method, path, body);
+    const selected = model!.selection ? selectModelRequest(model!.dialect, path, body, model!.selection) : { path, body };
+    body = selected.body;
+    const refused = checkModelRequest(model!.dialect, request.method, selected.path, body);
     if (refused) return diverge(refused);
-    const target = new URL(model!.provider.url.replace(/\/$/, "") + new URL(request.url, "http://x").pathname + new URL(request.url, "http://x").search);
+    const target = new URL(model!.provider.url.replace(/\/$/, "") + selected.path + new URL(request.url, "http://x").search);
     const replaced = new Set(Object.keys(model!.provider.headers).map(n => n.toLowerCase()));
     const dropped = new Set(["host", "connection", "content-length", "transfer-encoding", "keep-alive", "proxy-connection", "proxy-authorization"]);
     const headers: Record<string, string> = {};
@@ -258,6 +314,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       req.on("error", reject);
       req.end(body);
     });
+    if (response.status === 429 || response.status >= 500) throw new Error(`Model provider returned HTTP ${response.status}`);
     const pairs: string[] = [];
     for (let i = 0; i + 1 < response.headers.length; i += 2) {
       const name = response.headers[i]!;
@@ -265,7 +322,7 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       pairs.push(name, name.toLowerCase() === "date" ? clock.now().toUTCString() : response.headers[i + 1]!);
     }
     const head = { status: response.status, statusMessage: response.statusMessage, headers: pairs };
-    await serveHttp(out, stream, model!.connector, { body: response.body, head }, { provenance: "real", resolver: "model-route" });
+    await serveHttp(out, stream, model!.connector, { body: response.body, head }, { provenance: "real", resolver: "model-route" }, `${request.method} ${modelInferencePath(model!.dialect, path)}`);
   };
 
   const httpLink = (connector: string, meta: { request: { method: string; url: string; headers: string[]; httpVersion: string } }): Link => {
@@ -275,7 +332,8 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
     const handle = async (body: Uint8Array): Promise<void> => {
       const request = meta.request;
       await trace.append(stream, { kind: "meta", surface: "http", connector, head: { ...request } });
-      await trace.append(stream, { kind: "call", surface: "http", connector, op: `${request.method} ${new URL(request.url, "http://x").pathname}`, body, contentType: header(request.headers, "content-type") ?? "", contentEncoding: header(request.headers, "content-encoding") ?? "identity" });
+      const path = new URL(request.url, "http://x").pathname;
+      await trace.append(stream, { kind: "call", surface: "http", connector, op: `${request.method} ${connector === model?.connector ? modelInferencePath(model.dialect, path) : path}`, body, contentType: header(request.headers, "content-type") ?? "", contentEncoding: header(request.headers, "content-encoding") ?? "identity" });
       if (stop) return;
       if (!connector) return diverge({ trigger: "unmapped-connection", detail: `no connector is bound to host ${httpHost(request)}` });
       if (connector === model?.connector) return modelExchange(out, stream, request, body);
@@ -283,8 +341,8 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
       const call = toCall({ surface: "http", connector, op: shape.op, args: shape.args, raw: { body, head: request } }, policy(connector));
       const answer = await respond(call);
       if (!answer) return;
-      await serveHttp(out, stream, connector, answer.raw, answer);
-      await goLiveIfDone();
+      await serveHttp(out, stream, connector, answer.raw, answer, call.op);
+      await advance(answer);
     };
     return {
       async write(f) {
@@ -301,24 +359,40 @@ export async function startEngine(options: EngineOptions): Promise<Engine> {
     open({ surface, connector, meta }) {
       const m = meta as { transport?: string; request?: { method: string; url: string; headers: string[]; httpVersion: string } };
       if (surface === "mcp" && m.transport === "stdio") return mcpLink(connector);
+      if (surface === "cli") {
+        try { return cliResponder({ ...responder("cli", connector), invocation: decodeCliInvocation(Buffer.from(JSON.stringify(meta))) }); }
+        catch { void diverge({ trigger: "lifecycle", detail: `invalid CLI invocation on ${connector}` }); }
+      }
+      if (surface === "mcp" && m.transport === "http" && m.request) {
+        const ids = mcpHttpIds.get(connector) ?? new Map<string, string>();
+        mcpHttpIds.set(connector, ids);
+        return mcpHttpResponder({ ...responder("mcp-http", connector), request: m.request, ids, waitFor });
+      }
       if (m.transport === "http" && m.request && surface === "http") return httpLink(connector, { request: m.request });
       const out = opened();
       void diverge({ trigger: "unmapped-connection", detail: `the engine has no responder for ${surface} connections on ${connector}` });
       return { write: async () => {}, frames: () => out.frames(), abort: () => out.end() };
     },
   };
-  const gateway = httpGatewayTap({ backend, route: request => ({ surface: "http", connector: options.routes.http?.[httpHost(request)] ?? "" }) });
-  if (!index.frozen.length) await goLiveIfDone();
+  const gateway = httpGatewayTap({ backend, route: request => {
+    const path = new URL(request.url, "http://x").pathname;
+    const connector = options.routes.mcpHttp?.[path];
+    return connector ? { surface: "mcp", connector } : { surface: "http", connector: options.routes.http?.[httpHost(request)] ?? "" };
+  } });
+  await goLiveIfDone();
 
   return {
     state: connector => emulators.state(connector),
     backend, gateway, clock, stopped,
     accept({ destination, stream }) {
+      const cli = options.routes.cli?.[destination.host];
+      if (cli) { void cliRelay(stream, backend, cli).catch(error => { stream.destroy(); return diverge({ trigger: "lifecycle", detail: error instanceof Error ? error.message : String(error) }); }); return; }
       const connector = options.routes.mcp?.[destination.host];
       if (!connector) { gateway.emit("connection", stream); return; }
       mcpStdioTap({ backend, connector, io: { stdin: stream, stdout: stream, stderr: new PassThrough() } }).then(() => stream.end(), () => stream.destroy());
     },
     phase: () => live ? "live" : "prefix",
+    prefixComplete: () => index.frozen.every(e => completed.has(e.id)),
     prefixEdits: () => [...edits].sort().map(field => ({ field })),
     async close() { try { await emulators.close(); } finally { await trace.close(); } },
   };

@@ -5,5 +5,7 @@ export { httpHost, httpShape, isReadOnly, mcpShape, sameReply, toCall } from "./
 export { answerCall, matchFrozen, replayCtx } from "./chain.ts";
 export { resolvers } from "./resolvers/index.ts";
 export { Emulators, type EmulatorConfig, type EmulatorDifference } from "./emulators.ts";
-export { SimulatorStore, type SimulatorOptions } from "./simulator.ts";
-export { checkModelRequest, comparePrefixRequest, type ModelDialectName, type PrefixComparison } from "./model.ts";
+export { createSimulator, SimulatorStore, type SimulatorOptions } from "./simulator.ts";
+export { checkModelRequest, comparePrefixRequest, isModelDialect, resolveModelDialect, modelInferencePath, selectModelRequest, type ModelDialectName, type PrefixComparison } from "./model.ts";
+export { cliShape, type CliReplayFrame } from "./cli.ts";
+export { mcpHttpShape } from "./mcp-http.ts";
