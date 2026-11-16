@@ -14,6 +14,10 @@ This installs the latest release for macOS or Linux (arm64 or x64) into `~/.phoe
 - [Glossary](GLOSSARY.md)
 - [Architecture decision records](docs/adr/)
 
+## Limits
+
+- Google Calendar through the claude.ai connector: the working copy does not support a successful `respond_to_event` (accepting or declining an invitation), and answers `unsupported` in a replay. It could not be recorded from one Google account. The "not an attendee" error is answered as recorded. See [the plugin's limits](plugins/google-calendar/README.md#limits).
+
 ## Merging
 
 Label a pull request `automerge` and it lands, squash-merged, once its checks pass.

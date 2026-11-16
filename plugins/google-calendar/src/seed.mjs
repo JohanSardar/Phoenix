@@ -50,6 +50,7 @@ export function learn(copy, answer, adapter = { calendarId: "primary" }) {
   if (value === undefined) return;
   if (kind === "cocal") return learnCocal(copy, op, args, value);
   if (kind === "adapter") return learnAdapter(copy, op, args, value, adapter);
+  if (kind === "google") return copy.hosted?.learn(op, args, value, answer.observed_at);
 }
 
 function learnList(copy, calId, events, a, b, whole) {
@@ -121,6 +122,7 @@ function learnAdapter(copy, op, args, value, adapter) {
 export function seedAll(copy, answers, adapter) {
   const usable = answers.filter(a => a.before_cut !== false).map((a, i) => [a, i]).sort((x, y) => (Date.parse(x[0].observed_at ?? "") || 0) - (Date.parse(y[0].observed_at ?? "") || 0) || x[1] - y[1]).map(x => x[0]);
   // Calendar lists first: time windows need each calendar's time zone.
-  for (const a of usable) if (["list-calendars", "manage-accounts"].includes(a.op)) learn(copy, a, adapter);
-  for (const a of usable) if (!["list-calendars", "manage-accounts"].includes(a.op)) learn(copy, a, adapter);
+  const first = ["list-calendars", "manage-accounts", "list_calendars"];
+  for (const a of usable) if (first.includes(a.op)) learn(copy, a, adapter);
+  for (const a of usable) if (!first.includes(a.op)) learn(copy, a, adapter);
 }
