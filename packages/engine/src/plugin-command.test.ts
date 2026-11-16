@@ -10,11 +10,11 @@ const plugins: CommandPlugin[] = [
 const [M0, M1] = [marker(0), marker(1)];
 
 test("a plugin's command is that plugin's, with its argv and whether its read-only rules call it a read", () => {
-  assert.deepEqual(recognizeCommand("mailer envelope list --page-size 5", plugins), { calls: [{ connector: "mail", argv: ["mailer", "envelope", "list", "--page-size", "5"], readOnly: true }], around: M0 });
+  assert.deepEqual(recognizeCommand("mailer envelope list --page-size 5", plugins), { calls: [{ connector: "mail", argv: ["mailer", "envelope", "list", "--page-size", "5"], readOnly: true, conditional: false }], around: M0 });
   assert.deepEqual(recognizeCommand("mailer message read --preview 12", plugins)?.calls[0]?.readOnly, true);
   assert.deepEqual(recognizeCommand("mailer message read 12", plugins)?.calls[0]?.readOnly, false);
   assert.deepEqual(recognizeCommand("mailer message delete 12", plugins)?.calls[0]?.readOnly, false);
-  assert.deepEqual(recognizeCommand("errs issues --query 'is:unresolved level:error'", plugins), { calls: [{ connector: "errors", argv: ["errs", "issues", "--query", "is:unresolved level:error"], readOnly: false }], around: M0 });
+  assert.deepEqual(recognizeCommand("errs issues --query 'is:unresolved level:error'", plugins), { calls: [{ connector: "errors", argv: ["errs", "issues", "--query", "is:unresolved level:error"], readOnly: false, conditional: false }], around: M0 });
 });
 
 test("the rest of the line is kept around each plugin command, every other word quoted", () => {
@@ -23,13 +23,16 @@ test("the rest of the line is kept around each plugin command, every other word 
   const two = recognizeCommand("cd app && errs issue list | head; echo; mailer folder list", plugins);
   assert.deepEqual(two?.calls.map(c => [c.connector, c.argv.join(" ")]), [["errors", "errs issue list"], ["mail", "mailer folder list"]]);
   assert.equal(two?.around, `'cd' 'app' && ${M0} | 'head' ; 'echo' ; ${M1}`);
+  assert.deepEqual(two?.calls.map(c => c.conditional), [true, true]);
+  assert.deepEqual(recognizeCommand("mailer folder list; mailer envelope list || echo none", plugins)?.calls.map(c => c.conditional), [false, false]);
+  assert.equal(recognizeCommand("ls; echo 'To: a@b.c' | mailer template send", plugins)?.around, `'ls' ; ${M0}`);
 });
 
 test("text piped or written into the command is its stdin", () => {
-  assert.deepEqual(recognizeCommand("echo 'Hi there' | mailer message send", plugins), { calls: [{ connector: "mail", argv: ["mailer", "message", "send"], stdin: "Hi there\n", readOnly: false }], around: `'echo' 'Hi there' | ${M0}` });
+  assert.deepEqual(recognizeCommand("echo 'Hi there' | mailer message send", plugins), { calls: [{ connector: "mail", argv: ["mailer", "message", "send"], stdin: "Hi there\n", readOnly: false, conditional: false }], around: M0 });
   assert.equal(recognizeCommand("echo -n hi | mailer message send", plugins)?.calls[0]?.stdin, "hi");
   assert.equal(recognizeCommand("printf 'To: a@b.c\\nSubject: %s\\n\\n%s\\n' 'Lunch' 'Noon?' | mailer template send", plugins)?.calls[0]?.stdin, "To: a@b.c\nSubject: Lunch\n\nNoon?\n");
-  assert.deepEqual(recognizeCommand("mailer template send <<'EOF'\nTo: a@b.c\nSubject: $5 lunch\n\nNoon?\nEOF", plugins), { calls: [{ connector: "mail", argv: ["mailer", "template", "send"], stdin: "To: a@b.c\nSubject: $5 lunch\n\nNoon?\n", readOnly: false }], around: M0 });
+  assert.deepEqual(recognizeCommand("mailer template send <<'EOF'\nTo: a@b.c\nSubject: $5 lunch\n\nNoon?\nEOF", plugins), { calls: [{ connector: "mail", argv: ["mailer", "template", "send"], stdin: "To: a@b.c\nSubject: $5 lunch\n\nNoon?\n", readOnly: false, conditional: false }], around: M0 });
   assert.equal(recognizeCommand("mailer template send <<EOF\nTo: a@b.c\nEOF\n", plugins)?.calls[0]?.stdin, "To: a@b.c\n");
   assert.equal(recognizeCommand("mailer template send <<-EOF\n\tTo: a@b.c\n\tEOF", plugins)?.calls[0]?.stdin, "To: a@b.c\n");
 });

@@ -3,9 +3,10 @@ import { isReadOnly } from "@phoenix/answer";
 import { lex } from "./read-only-shell.ts";
 
 export type CommandPlugin = Pick<PluginDescriptor, "connector" | "recognize" | "read_only">;
-export interface RecognizedCommand { connector: string; argv: string[]; stdin?: string; readOnly: boolean }
+export interface RecognizedCommand { connector: string; argv: string[]; stdin?: string; readOnly: boolean; conditional: boolean }
 /**
- * calls are the plugin commands in the line, in order. around is the line with the i-th plugin command written as
+ * calls are the plugin commands in the line, in order; a conditional one runs only if an earlier && or || lets it.
+ * around is the line with the i-th plugin command written as
  * a NUL, i, NUL marker and every other word single-quoted, so it reads as the same shell line once each marker is
  * replaced by something that prints that command's output; a line that is one plugin command alone is just its marker.
  */
@@ -83,8 +84,10 @@ export function recognizeCommand(command: string, plugins: readonly CommandPlugi
   const owner = (words: string[]) => plugins.find(p => words[0] !== undefined && p.recognize.commands?.includes(words[0]));
   const calls: RecognizedCommand[] = [];
   const parts: string[] = [];
+  let conditional = false;
   for (const [i, { words, redirects, before }] of simple.entries()) {
     const plugin = owner(words);
+    conditional ||= before === "&&" || before === "||";
     if (before) parts.push(before);
     if (!plugin) { parts.push([...words.map(quote), ...redirects].join(" ")); continue; }
     let stdin = split!.stdin;
@@ -93,9 +96,10 @@ export function recognizeCommand(command: string, plugins: readonly CommandPlugi
       const source = simple[i - 1]!;
       stdin = source.before === "|" || source.redirects.length || owner(source.words) ? undefined : printed(source.words);
       if (stdin === undefined) return undefined;
+      parts.splice(-2);
     }
     const readOnly = isReadOnly({ read_only: (plugin.read_only ?? []).map(op => ({ op, source: "plugin" as const })) }, "cli", words[0]!, { argv: words });
-    calls.push({ connector: plugin.connector, argv: words, ...(stdin === undefined ? {} : { stdin }), readOnly });
+    calls.push({ connector: plugin.connector, argv: words, ...(stdin === undefined ? {} : { stdin }), readOnly, conditional });
     parts.push([marker(calls.length - 1), ...redirects].join(" "));
   }
   return calls.length ? { calls, around: parts.join(" ") } : undefined;
