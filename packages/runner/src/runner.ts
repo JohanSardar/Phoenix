@@ -13,7 +13,7 @@ import { bundleBody, bundleEvidence, canonical, checked, claim, echoDriftPath, e
 import { materialize, treeDigest } from "./materialize.ts";
 import { resolvePlan, type ReplayRequest, type ResolvedPlan } from "./plan.ts";
 import { submitTask } from "./server.ts";
-import { resumeAttempt } from "./resume.ts";
+import { resumeAttempt, type Outcome } from "./resume.ts";
 
 type Sample = ReplayResult["samples"][number];
 type Attempt = Sample["attempts"][number] & { container?: string; recovered?: boolean; fresh_after_drift?: boolean };
@@ -107,6 +107,7 @@ export class Runner {
       const root = join(directory, "samples", String(sample), String(attempt.attempt));
       const assessment = await load<Awaited<ReturnType<typeof evaluateCheck>>>(join(root, "assessment.json"));
       const outcome = await load<{ kind: string; code?: number | null }>(join(root, "outcome.json"));
+      if (outcome.kind === "not-run") throw new Error(`Sample ${sample} could not run, so it has no intent to judge`);
       if (!assessment.intentRequired) throw new Error("This check has no intent to judge");
       Object.assign(state, sampleVerdict({ ...assessment, intent, diverged: outcome.kind === "diverged" }), { intent });
       if (outcome.kind === "finished" && outcome.code !== 0) state.status = "fail";
@@ -263,7 +264,7 @@ export class Runner {
     let clockWrites = Promise.resolve();
     const submission = new AbortController();
     const states = new Map<string, unknown>();
-    let outcome: { kind: "finished"; code: number | null } | { kind: "interrupted"; why: string } | { kind: "diverged"; trigger: string; detail: string };
+    let outcome: Outcome;
     try {
       const simulation = plan.start !== "echo" && plan.runner.simulator;
       const simulator = simulation ? createSimulator({ moment: plan.bundle, root: join(this.#options.root, "simulator"), configuration: { ...simulation.config, model: simulation.model.id }, headers: modelHeaders(simulation.headers), improverModel: simulation.improverModel, attempts: simulation.config.attempts, outputSchemas: simulation.config.outputSchemas }) : undefined;
@@ -346,7 +347,10 @@ export class Runner {
     await save(join(root, "fidelity.json"), report);
     await save(join(root, "assessment.json"), assessed);
     await save(join(root, "outcome.json"), outcome);
-    if (outcome.kind === "interrupted") {
+    if (outcome.kind === "not-run") {
+      attempt.status = "finished"; attempt.cause = `could not run: ${outcome.why}`;
+      sample.complete = true; sample.status = "unassessed"; sample.expectations = [];
+    } else if (outcome.kind === "interrupted") {
       attempt.status = "interrupted"; attempt.cause = outcome.why;
     } else if (recovering && outcome.kind === "diverged" && outcome.trigger === "prefix-drift" && verdict.status !== "fail") {
       const priors = await Promise.all(sample.attempts.slice(sample.attempts.findLastIndex(attempt => attempt.fresh_after_drift) + 1, -1).map(attempt => optional<Awaited<ReturnType<typeof evaluateCheck>>>(join(directory, "samples", String(sample.sample), String(attempt.attempt), "assessment.json"))));

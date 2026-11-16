@@ -22,6 +22,7 @@ export interface SessionMomentOptions {
   answers?: readonly SessionAnswer[];
   readOnly?: Readonly<Record<string, readonly string[]>>;
   marked?: NonNullable<MomentManifest["resume"]>["marked"];
+  project?: { root: string; tar: Buffer; taken_at: string };
   madeUp?: boolean;
   id: string;
   check: string;
@@ -147,6 +148,30 @@ async function projectCopy(cwd: string | undefined, time: string, out: string): 
   } finally { await rm(scratch, { recursive: true, force: true }); }
 }
 
+async function markCopy(project: { root: string; tar: Buffer; taken_at: string }, policy: SecretPolicy): Promise<ProjectCopy> {
+  const scratch = await mkdtemp(join(tmpdir(), "phoenix-mark-copy-"));
+  const files = join(scratch, "files");
+  try {
+    await mkdir(files);
+    await writeFile(join(scratch, "mark.tar"), project.tar, { mode: 0o600 });
+    await execute("tar", ["-xf", join(scratch, "mark.tar"), "-C", files]);
+    const left_out: string[] = [];
+    const strip = async (folder: string): Promise<void> => {
+      for (const entry of await readdir(join(files, folder), { withFileTypes: true })) {
+        const path = folder ? `${folder}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) { await strip(path); continue; }
+        if (!entry.isFile()) continue;
+        const { msg } = await stripSecrets({ body: await readFile(join(files, path)) }, policy);
+        if (msg.secrets === "unscanned") { await rm(join(files, path)); left_out.push(path); }
+        else if (msg.body) await writeFile(join(files, path), msg.body);
+      }
+    };
+    await strip("");
+    await execute("tar", ["-cf", join(scratch, "copy.tar"), "-C", files, "."]);
+    return { root: project.root, source: "mark", taken_at: project.taken_at, left_out: left_out.sort(), parts: [await readFile(join(scratch, "copy.tar"))] };
+  } finally { await rm(scratch, { recursive: true, force: true }); }
+}
+
 async function sideFiles(session: string, patterns: readonly string[]): Promise<string[]> {
   const found = new Set<string>();
   for (const pattern of patterns) {
@@ -212,7 +237,7 @@ export async function createSessionMoment(o: SessionMomentOptions): Promise<Mome
   }
   if (!mark) throw new Error(`The imported session has no event for line ${reading.at}`);
   const prepared = await prepareSnapshotMoment({ capture: o.capture, mark: eventId(mark), start: "mark", id: o.id, connectors: [], check: o.check, workdir: false, prompt: reading.prompt, ...(task ? { task } : {}), ...(o.timezone ? { timezone: o.timezone } : {}) });
-  const taken = await projectCopy(reading.cwd, reading.time, o.out);
+  const taken = o.project ? await markCopy(o.project, o.policy) : await projectCopy(reading.cwd, reading.time, o.out);
   const copy = taken && "parts" in taken ? taken : undefined;
   const connectors: NonNullable<MomentManifest["connectors"]> = {};
   for (const name of new Set(reading.answers.map(a => a.connector))) connectors[name] = { surface: "mcp", routes: ["transcript"], tier: "recorded", origin: reading.answers.every(a => a.connector !== name || a.world) ? "seeded" : "captured", read_only: [...(o.readOnly?.[name] ?? []).map(op => ({ op: `tools/call:${op}`, source: "plugin" as const })), ...(reading.read_only?.[name] ?? []).filter(op => !o.readOnly?.[name]?.includes(op)).map(op => ({ op: `tools/call:${op}`, source: "annotation" as const }))], data: [{ path: "data/run.jsonl", kind: "run-evidence" }] };
@@ -221,7 +246,7 @@ export async function createSessionMoment(o: SessionMomentOptions): Promise<Mome
     resume: {
       recipe: o.recipe.descriptor.name, session: "data/session.jsonl", moment: "data/session-moment.json",
       ...(reading.files?.length ? { files: "data/session-files" } : {}),
-      ...(copy ? { project: { tar: "data/project.tar", ...(copy.parts.length > 1 ? { more: copy.parts.slice(1).map((_, index) => `data/project.${index + 1}.tar`) } : {}), root: copy.root, source: copy.source, ...(copy.commit ? { commit: copy.commit } : {}), taken_at: copy.taken_at, left_out: copy.left_out, bytes: copy.bytes, files: copy.files } } : {}),
+      ...(copy ? { project: { tar: "data/project.tar", ...(copy.parts.length > 1 ? { more: copy.parts.slice(1).map((_, index) => `data/project.${index + 1}.tar`) } : {}), root: copy.root, source: copy.source, ...(copy.commit ? { commit: copy.commit } : {}), taken_at: copy.taken_at, left_out: copy.left_out, ...(copy.bytes === undefined ? {} : { bytes: copy.bytes, files: copy.files }) } } : {}),
       ...(taken && "not_copied" in taken ? { files_not_copied: taken.not_copied } : {}),
       ...(o.fromBeginning ? { from_beginning: true } : {}),
       ...(reading.edits?.length ? { changed_answers: reading.edits.map(edit => edit.line) } : {}),

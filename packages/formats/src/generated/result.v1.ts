@@ -115,9 +115,9 @@ export interface ReplayResult {
    */
   files_copy?: {
     /**
-     * git: as committed at the moment's time. today: as the files were when the moment was made.
+     * git: as committed at the moment's time. today: as the files were when the moment was made. mark: as saved at the mark.
      */
-    source: "git" | "today";
+    source: "git" | "today" | "mark";
     commit?: string;
     taken_at: string;
     /**

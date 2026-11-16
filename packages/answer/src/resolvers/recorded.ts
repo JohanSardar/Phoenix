@@ -4,6 +4,7 @@ import type { Resolver } from "../types.ts";
 export const recorded: Resolver = {
   name: "recorded",
   async resolve(call, ctx) {
+    if (ctx.emulators?.wrote(call.connector)) return { miss: true, why: "a working copy owns this connector and has taken a write in this replay, so the recording may be stale" };
     const sameKey = ctx.index.exchanges.filter(e => e.connector === call.connector && e.key === call.key);
     if (!sameKey.length) return { miss: true, why: "no recorded exchange has this call key" };
     const later = sameKey.filter(e => !e.frozen);
