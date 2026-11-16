@@ -296,6 +296,40 @@ export class Connector {
     this.box.messages.set(theirs, m);
   }
 
+  rethread(m, threadId) {
+    if (!threadId || m.threadId === threadId) return;
+    if (this.box.threadCounts.has(m.threadId)) { this.box.threadCounts.set(threadId, this.box.threadCounts.get(m.threadId)); this.box.threadCounts.delete(m.threadId); }
+    m.threadId = threadId;
+  }
+
+  // What the copy made for a write takes the ids in the real answer to that write, so later calls by
+  // those ids reach it. Returns the copy's answer with those ids.
+  takeIds(tool, made, real) {
+    if (!made || !real || typeof real !== "object") return made;
+    if (["send_message", "reply", "forward"].includes(tool) && real.id && made.id && (real.id === made.id || !this.box.messages.has(real.id))) {
+      const m = this.box.messages.get(made.id);
+      this.adopt(made.id, real.id);
+      this.rethread(m, real.threadId);
+      return this.link(m, made.labelIds ? { labelIds: m.labelIds } : {});
+    }
+    if ((tool === "create_draft" || tool === "update_draft") && real.messageId && made.messageId && (real.messageId === made.messageId || !this.box.messages.has(real.messageId))) {
+      const draftId = tool === "create_draft" && real.id ? real.id : made.id;
+      const m = this.box.messages.get(made.messageId);
+      this.box.drafts.delete(made.id);
+      this.adopt(made.messageId, real.messageId);
+      this.rethread(m, real.threadId);
+      this.box.drafts.set(draftId, m.id);
+      return sorted({ id: draftId, messageId: m.id, threadId: m.threadId, viewUrl: this.box.draftUrl(draftId, m.threadId) });
+    }
+    if (tool === "create_label" && real.labelId && made.labelId && real.labelId !== made.labelId && !this.box.labels.some(l => l.labelId === real.labelId)) {
+      const l = this.box.labels.find(x => x.labelId === made.labelId);
+      this.box.labels = this.box.labels.filter(x => x !== l);
+      this.box.addLabel({ ...l, labelId: real.labelId });
+      return sorted({ ...made, labelId: real.labelId });
+    }
+    return made;
+  }
+
   // Learns the mailbox from one recorded connector answer.
   ingest(tool, args, value, at, past) {
     const a = args ?? {};
@@ -334,23 +368,19 @@ export class Connector {
         if (["send_message", "reply", "forward"].includes(tool) && value.id && !this.box.messages.has(value.id)) {
           let made;
           try { made = this.call(tool, a, at); } catch { break; }
-          const m = this.box.messages.get(made.id);
-          this.adopt(made.id, value.id);
-          if (value.threadId && m.threadId !== value.threadId) {
-            if (this.box.threadCounts.has(m.threadId)) { this.box.threadCounts.set(value.threadId, this.box.threadCounts.get(m.threadId)); this.box.threadCounts.delete(m.threadId); }
-            m.threadId = value.threadId;
-          }
+          this.takeIds(tool, made, value);
+          const m = this.box.messages.get(value.id);
           delete m.raw;
           m.know.delete("raw");
           break;
         }
         if (tool === "create_draft" && value.id && value.messageId) {
-          try { const made = this.createDraft(a, at); this.box.drafts.delete(made.id); this.adopt(made.messageId, value.messageId); this.box.drafts.set(value.id, value.messageId); }
+          try { this.takeIds(tool, this.createDraft(a, at), value); }
           catch { this.box.drafts.set(value.id, value.messageId); }
           break;
         }
         if (tool === "update_draft" && value.messageId) {
-          try { const made = this.updateDraft(a, at); this.adopt(made.messageId, value.messageId); this.box.drafts.set(a.draftId, value.messageId); } catch { /* draft unknown to the copy */ }
+          try { this.takeIds(tool, this.updateDraft(a, at), value); } catch { /* draft unknown to the copy */ }
           break;
         }
         if (tool === "create_label" && value.labelId && this.box.labels) {

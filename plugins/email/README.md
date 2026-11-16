@@ -16,6 +16,7 @@ A write through one is seen by the other. If the agent stars a message with hima
 - Connector tools are answered from the mailbox. The JSON has the same keys, order and text as the real connector.
 - himalaya calls run the real himalaya 1.2.0 inside the box. The copy hands it a config that points at its own IMAP and SMTP servers on 127.0.0.1 (`src/imap.mjs`), which behave like Gmail's: label folders, `[Gmail]/Trash`, sent mail filed under Sent, and X-GM extensions. Only the connection settings are replaced. The person's other himalaya settings come from the snapshot.
 - Writes change the copy and nothing else. The box has no network.
+- When the engine runs a recorded call against the copy, it also sends the recorded answer. A send, reply, forward, draft or new label the copy made then takes the ids in that answer, so later calls by those ids reach the copy. himalaya's writes print no ids, so for himalaya it is a recorded `envelope list -o json`: when the copy listed the same messages, they take the ids the real list printed. Without a recorded answer the copy picks its own ids.
 - When the copy does not hold what a call asks for, it answers `unsupported`. Examples: a thread it saw only part of, the body of a message it only saw in a search, the RAW form of a message it wrote itself, attachment bytes. The call then goes to the next answer source, which labels its answer.
 
 ## Snapshot

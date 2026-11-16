@@ -5,9 +5,14 @@ import { createInterface } from "node:readline";
 import { Mailbox } from "./mailbox.mjs";
 import { Connector, TOOLS, ToolError, Unsupported } from "./connector.mjs";
 import { Himalaya, folderAliases } from "./himalaya.mjs";
-import { learnHimalaya } from "./learn.mjs";
+import { learnHimalaya, takeUids } from "./learn.mjs";
 
-let box, connector, himalaya;
+let box, connector, himalaya, aliases;
+
+const stdoutOf = frames => Buffer.concat(frames.filter(f => f.dir === "back" && f.stream === 1).map(f => Buffer.from(f.bytes, "base64"))).toString("utf8");
+
+// When the engine runs a recorded call against the copy, it also sends the recorded answer.
+const recordedBody = recorded => { try { return recorded?.body === undefined ? undefined : JSON.parse(Buffer.from(recorded.body, "base64").toString("utf8")); } catch { return undefined; } };
 
 const valueOf = result => {
   if (!result || typeof result !== "object") return undefined;
@@ -25,7 +30,6 @@ function readSnapshot(text) {
     if (value && typeof value === "object" && !Array.isArray(value) && value.kind === undefined) return value;
   } catch { /* capture events */ }
   const calls = new Map(), answers = [], runs = new Map(), output = [];
-  const stdoutOf = frames => Buffer.concat(frames.filter(f => f.dir === "back" && f.stream === 1).map(f => Buffer.from(f.bytes, "base64"))).toString("utf8");
   for (const line of text.split("\n").filter(Boolean)) {
     const event = JSON.parse(line);
     if (event.body?.inline === undefined) continue;
@@ -73,7 +77,8 @@ async function initialize(params) {
     const at = Date.parse(answer.observed_at);
     connector.ingest(tool, answer.args, valueOf(answer.result), at, answer.before_cut !== false && at <= cut);
   }
-  learnHimalaya(box, (snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)).sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0)), folderAliases(snapshot.himalaya));
+  aliases = folderAliases(snapshot.himalaya);
+  learnHimalaya(box, (snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)).sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0)), aliases);
   for (const m of box.messages.values()) box.fromRaw(m);
   box.changes = [];
   himalaya = new Himalaya(box, snapshot.himalaya);
@@ -88,6 +93,8 @@ async function call(params) {
     box.missed = undefined;
     const { stdout, stderr, code } = await himalaya.run((params.args?.argv ?? []).slice(1), Buffer.from(params.raw?.stdin ?? "", "base64"), nowMs);
     if (box.missed) return { status: "unsupported", reason: box.missed };
+    const recorded = recordedBody(params.recorded);
+    if (Array.isArray(recorded)) takeUids(box, (params.args?.argv ?? []), stdout.toString("utf8"), stdoutOf(recorded), aliases);
     const frame = (stream, bytes, last = true) => ({ dir: "back", stream, bytes: Buffer.from(bytes).toString("base64"), last });
     const frames = [frame(1, stdout), frame(2, stderr), frame(3, JSON.stringify({ type: "exit", code, signal: null }))];
     return { status: "answer", value: { body: Buffer.from(JSON.stringify(frames)).toString("base64") } };
@@ -95,7 +102,9 @@ async function call(params) {
   const request = JSON.parse(Buffer.from(params.raw.body, "base64").toString("utf8"));
   const tool = params.op.replace(/^tools\/call:/, "");
   try {
-    const value = connector.call(tool, params.args, nowMs);
+    const made = connector.call(tool, params.args, nowMs);
+    const recorded = recordedBody(params.recorded)?.result;
+    const value = recorded && !recorded.isError ? connector.takeIds(tool, made, valueOf(recorded)) : made;
     return { status: "answer", value: rpc(request, { result: { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value } }) };
   } catch (error) {
     if (error instanceof Unsupported) return { status: "unsupported", reason: error.message };

@@ -110,6 +110,21 @@ function read(box, folder, uid, text) {
   for (const k of ["metadata", "minimal", "body"]) m.know.add(k);
 }
 
+// A recorded `envelope list -o json` run against the copy: when the copy listed the same messages,
+// they take the ids the real list printed, so later calls by those ids reach them.
+export function takeUids(box, argv, ours, theirs, aliases = {}) {
+  const { words, folder, json } = command(argv, aliases);
+  if (!json || words[0] !== "envelope" || words[1] !== "list") return;
+  let copy, real;
+  try { copy = JSON.parse(ours); real = JSON.parse(theirs); } catch { return; }
+  if (!Array.isArray(copy) || !Array.isArray(real) || copy.length !== real.length) return;
+  const pairs = copy.map((e, i) => [byUid(box, folder, Number(e?.id)), Number(real[i]?.id), e?.subject === real[i]?.subject]);
+  if (pairs.some(([m, uid, same]) => !m || !Number.isInteger(uid) || !same)) return;
+  const moving = new Set(pairs.map(([m]) => m));
+  if (pairs.some(([, uid]) => { const holder = byUid(box, folder, uid); return holder && !moving.has(holder); })) return;
+  for (const [m, uid] of pairs) m.uids[folder] = uid;
+}
+
 export function learnHimalaya(box, observations, aliases = {}) {
   for (const { argv, stdout } of observations) {
     const { words, folder, json, newestFirst } = command(argv, aliases);

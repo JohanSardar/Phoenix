@@ -45,8 +45,8 @@ export class Folders {
     if (!entry) return undefined;
     const state = this.status(name);
     const members = [...this.box.messages.values()].filter(m => this.inFolder(m, entry)).sort((a, b) => Number(a.internalDate ?? 0) - Number(b.internalDate ?? 0) || (a.id < b.id ? -1 : 1));
+    state.uidnext = Math.max(state.uidnext, ...members.filter(m => m.uids[name] !== undefined).map(m => m.uids[name] + 1));
     for (const m of members) if (m.uids[name] === undefined) m.uids[name] = state.uidnext++;
-    state.uidnext = Math.max(state.uidnext, ...members.map(m => m.uids[name] + 1));
     return members.sort((a, b) => a.uids[name] - b.uids[name]);
   }
 
