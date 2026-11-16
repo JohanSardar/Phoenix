@@ -120,6 +120,10 @@ export interface ReplayResult {
     source: "git" | "today";
     commit?: string;
     taken_at: string;
+    /**
+     * How many files were too big to copy, and are missing inside the box.
+     */
+    left_out?: number;
   };
   baseline?: {
     pass: number;

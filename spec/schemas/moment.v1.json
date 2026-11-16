@@ -435,6 +435,11 @@
               "type": "string",
               "format": "date-time",
               "description": "When the files in the copy were current."
+            },
+            "left_out": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Files not in the copy: over 1 MB, or binary and over 64 KB. They are missing inside the box."
             }
           }
         }

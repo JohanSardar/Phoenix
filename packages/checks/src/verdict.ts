@@ -12,7 +12,10 @@ export function sampleVerdict(input: {
   diverged?: boolean;
 }): SampleVerdict {
   if (input.evidence.error) return { status: "unassessed", discounted: false, leaned_on_made_up: false };
-  if (input.diverged || input.evidence.trace.some(e => e.kind === "divergence")) return { status: input.expectations.some(e => e.outcome === "fail" && e.irreversible) ? "fail" : "unassessed", discounted: false, leaned_on_made_up: false };
+  if (input.diverged || input.evidence.trace.some(e => e.kind === "divergence")) {
+    const irreversible = input.expectations.filter(e => e.outcome === "fail" && e.irreversible);
+    return irreversible.length ? { status: "fail", discounted: false, leaned_on_made_up: irreversible.every(e => e.tainted) } : { status: "unassessed", discounted: false, leaned_on_made_up: false };
+  }
   if (input.expectations.some(e => e.outcome === "error")) return { status: "unassessed", discounted: false, leaned_on_made_up: false };
   const failed = input.expectations.filter(e => e.outcome === "fail");
   if (failed.length) return { status: "fail", discounted: false, leaned_on_made_up: failed.every(e => e.tainted) };

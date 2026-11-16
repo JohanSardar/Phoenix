@@ -29,7 +29,7 @@ export const PhoenixStandIn = async () => {
       const reply = await ask("tools/call", name, args, ctx.callID, {}, ctx.abort);
       if (reply.error) throw new Error("Phoenix stopped this replay: " + reply.error.message);
       if (reply.result.isError) throw new Error(reply.result.error);
-      return { output: reply.result.output, title: reply.result.title ?? "", metadata: reply.result.metadata ?? {}, ...(reply.result.attachments ? { attachments: reply.result.attachments } : {}) };
+      return { output: reply.result.output ?? (reply.result.content ?? []).map(block => block.text ?? "").join("\n"), title: reply.result.title ?? "", metadata: reply.result.metadata ?? {}, ...(reply.result.attachments ? { attachments: reply.result.attachments } : {}) };
     },
   };
   return {

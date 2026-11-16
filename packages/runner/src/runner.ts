@@ -56,9 +56,9 @@ function answerSources(trace: readonly TraceEvent[]): NonNullable<Sample["answer
   const results = trace.filter(e => e.kind === "result" && e.stream.startsWith("stand-in"));
   const madeUp = results.filter(e => e.provenance === "synthesized");
   return {
-    session: results.filter(e => e.provenance === "recorded").length,
-    files_copy: results.filter(e => e.provenance === "real").length,
-    working_copy: results.filter(e => e.provenance === "derived").length,
+    session: results.filter(e => e.resolver === "recorded").length,
+    files_copy: results.filter(e => e.resolver === "files-copy").length,
+    working_copy: results.filter(e => e.resolver === "overlay" || e.resolver === "emulator").length,
     made_up: madeUp.length,
     made_up_calls: madeUp.map(e => ({ connector: e.connector ?? "", op: e.op ?? "" })),
   };
@@ -190,7 +190,7 @@ export class Runner {
         phoenix_result: 1, plan: id, check: plan.check, ledger_entry: approval, start: plan.start, prefix_edits: [...edits].sort().map(field => ({ field })),
         samples: status.samples.map(({ complete: _, ...sample }) => sample), tiebreak_ran: status.samples.some(s => s.tiebreak),
         leaned_on_made_up: status.samples.some(s => s.status !== "unassessed" && s.leaned_on_made_up),
-        ...(bundle.manifest.resume?.project ? { files_copy: { source: bundle.manifest.resume.project.source, ...(bundle.manifest.resume.project.commit ? { commit: bundle.manifest.resume.project.commit } : {}), taken_at: bundle.manifest.resume.project.taken_at } } : {}),
+        ...(bundle.manifest.resume?.project ? { files_copy: { source: bundle.manifest.resume.project.source, ...(bundle.manifest.resume.project.commit ? { commit: bundle.manifest.resume.project.commit } : {}), taken_at: bundle.manifest.resume.project.taken_at, left_out: bundle.manifest.resume.project.left_out?.length ?? 0 } } : {}),
         verdict: verdict.verdict, discount: verdict.discount, ...(verdict.meets_check !== undefined ? { meets_check: verdict.meets_check } : {}),
         ...(grades.length ? { fidelity_grade: weakestTier(...grades) } : {}),
       };

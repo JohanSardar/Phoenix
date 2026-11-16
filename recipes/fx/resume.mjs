@@ -32,7 +32,7 @@ writeFileSync(join(store, "log.jsonl"), lines.map(line => `${line.slice(0, -1)},
 writeFileSync(join(store, "lock"), "", { mode: 0o600 });
 
 mkdirSync(moment.cwd, { recursive: true });
-if (existsSync("/worktree/AGENTS.md")) cpSync("/worktree/AGENTS.md", join(moment.cwd, "AGENTS.md"));
+if (existsSync("/worktree/AGENTS.md")) writeFileSync(join(moment.cwd, "AGENTS.md"), readFileSync("/worktree/AGENTS.md"));
 const settings = existsSync("/worktree/fx.json") ? JSON.parse(readFileSync("/worktree/fx.json", "utf8")) : {};
 const profile = join(home, ".fx", "settings.json");
 const saved = JSON.parse(readFileSync(profile, "utf8"));

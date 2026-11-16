@@ -209,6 +209,10 @@ export type MomentManifest = {
        * When the files in the copy were current.
        */
       taken_at: string;
+      /**
+       * Files not in the copy: over 1 MB, or binary and over 64 KB. They are missing inside the box.
+       */
+      left_out?: string[];
     };
   };
 };

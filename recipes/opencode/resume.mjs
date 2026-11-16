@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, copyFileSync, cpSync, openSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, openSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
@@ -22,7 +22,15 @@ copyFileSync("/phoenix/moment/loadout.json", join(home, "loadout.json"));
 
 const cwd = box.directory;
 mkdirSync(cwd, { recursive: true });
-cpSync("/worktree", cwd, { recursive: true, filter: path => path !== patch });
+const copy = (from, to) => {
+  for (const entry of readdirSync(from, { withFileTypes: true })) {
+    const path = join(from, entry.name);
+    if (path === patch) continue;
+    if (entry.isDirectory()) { mkdirSync(join(to, entry.name), { recursive: true }); copy(path, join(to, entry.name)); }
+    else writeFileSync(join(to, entry.name), readFileSync(path));
+  }
+};
+copy("/worktree", cwd);
 const git = (...args) => spawnSync("git", args, { cwd, stdio: "ignore" });
 git("init", "-q"); git("add", "-A"); git("commit", "-q", "--allow-empty", "-m", "harness");
 

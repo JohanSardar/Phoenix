@@ -29,9 +29,9 @@ async function fileHashes(root: string): Promise<Map<string, string>> {
   const walk = async (folder: string): Promise<void> => {
     for (const entry of await readdir(join(root, folder), { withFileTypes: true })) {
       const path = folder ? `${folder}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) await walk(path);
+      if (entry.isDirectory()) { if (entry.name !== ".git") await walk(path); }
       else if (entry.isSymbolicLink()) hashes.set(path, `link:${await readlink(join(root, path))}`);
-      else if (entry.isFile()) hashes.set(path, createHash("sha256").update(await readFile(join(root, path))).digest("hex"));
+      else if (entry.isFile()) hashes.set(path, await readFile(join(root, path)).then(bytes => createHash("sha256").update(bytes).digest("hex"), () => "unreadable"));
     }
   };
   await walk("");

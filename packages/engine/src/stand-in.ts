@@ -38,17 +38,18 @@ export interface ToolStandIn {
 const rpc = (id: unknown, body: object) => Buffer.from(JSON.stringify({ jsonrpc: "2.0", id, ...body }));
 
 export async function startToolStandIn(options: ToolStandInOptions): Promise<ToolStandIn> {
+  const policy = (connector: string): ConnectorPolicy => ({ allow_synthesized: true, ...options.policy(connector) });
   const clock = new VirtualClock(new Date());
   const trace = await SampleTrace.create(options.sample.root, options.sample.metadata, clock, options.hmacKey);
   const exchanges: Exchange[] = options.answers.map((answer, position) => {
     const op = `tools/call:${answer.op}`;
     const request = { body: rpc(position, { method: "tools/call", params: { name: answer.op, arguments: answer.args } }) };
-    const call = toCall({ surface: "mcp", connector: answer.connector, op, args: answer.args, raw: request }, options.policy(answer.connector));
+    const call = toCall({ surface: "mcp", connector: answer.connector, op, args: answer.args, raw: request }, policy(answer.connector));
     return { ...call, id: answer.id, history: [], frozen: answer.beforeCut, position, completed: position, observedAt: answer.observedAt, provenance: "recorded", request, response: { body: rpc(position, { result: answer.result }) }, during: [], after: [] };
   });
   for (const exchange of exchanges) exchange.history = exchanges.filter(w => w.connector === exchange.connector && !w.readOnly && w.completed < exchange.position).map(w => w.key);
   const index: ExchangeIndex = { exchanges, prefetch: [], frozen: exchanges.filter(e => e.frozen), continuation: exchanges.filter(e => !e.frozen), notifications: new Map(), startTime: options.cutTime, cutTime: options.cutTime };
-  const ctx = replayCtx(index, options.policy, undefined, options.simulator ? { ...options.simulator, clock: () => options.cutTime } : undefined);
+  const ctx = replayCtx(index, policy, undefined, options.simulator ? { ...options.simulator, clock: () => options.cutTime } : undefined);
   for (const exchange of index.frozen) if (!exchange.readOnly) ctx.histories = { ...ctx.histories, [exchange.connector]: [...(ctx.histories[exchange.connector] ?? []), exchange.key] };
   let served = 0;
   let stop!: (divergence: Divergence) => void;
@@ -65,7 +66,7 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
         response.end(rpc(message.id, { result: {} }));
         return;
       }
-      const call = toCall({ surface: "mcp", connector, op: `tools/call:${message.params.name}`, args: message.params.arguments ?? {}, raw: { body } }, options.policy(connector));
+      const call = toCall({ surface: "mcp", connector, op: `tools/call:${message.params.name}`, args: message.params.arguments ?? {}, raw: { body } }, policy(connector));
       await trace.append(stream, { kind: "call", surface: "mcp", layer: "agent", connector, op: call.op, body });
       const inBox = options.inBox(connector, message.params.name);
       const answered = await answerCall(call, ctx, inBox ? ["simulator"] : []);
