@@ -20,8 +20,10 @@ resume:
   command: [python3, /phoenix/recipe/resume.py]
   llm_hosts:
     opencode-go: [opencode.ai]
+    openai-codex: [chatgpt.com]
 limitations:
   - "mini-swe-agent has no resume, so every replay starts at the first message with the moment's prompt."
   - "Its one tool is bash. Phoenix answers every command, except mini-swe-agent's own finish command, which ends the run without a shell; anything after it in the same command is not run."
-  - "The LLM must speak the OpenAI chat API; only OpenCode Go (opencode.ai) is wired up."
+  - "Two LLM routes are wired up: OpenCode Go (opencode.ai) and pi's ChatGPT login (chatgpt.com)."
+  - "If the LLM refuses the login before the run, the replay does not run and gives no verdict. A refusal partway through the run fails the sample."
   - "There is no live session file to cut: moments for it are made up."

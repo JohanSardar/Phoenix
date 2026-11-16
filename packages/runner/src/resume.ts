@@ -48,7 +48,8 @@ function changedFiles(before: Map<string, string>, after: Map<string, string>): 
   };
 }
 
-export type Outcome = { kind: "finished"; code: number | null } | { kind: "interrupted"; why: string } | { kind: "diverged"; trigger: string; detail: string };
+export type Outcome = { kind: "finished"; code: number | null } | { kind: "interrupted"; why: string } | { kind: "diverged"; trigger: string; detail: string } | { kind: "not-run"; why: string };
+class NotRun extends Error {}
 
 export async function resumeAttempt(input: {
   id: string; directory: string; root: string; plan: ResolvedPlan; bundle: MomentBundle; sandbox: Sandbox; hmacKey: Uint8Array; capture: string;
@@ -98,7 +99,7 @@ export async function resumeAttempt(input: {
     await mkdir(join(pluginRoot, "inputs"), { recursive: true, mode: 0o700 });
     const all = moment.answers.filter(a => a.connector === name);
     const firstWrite = all.findIndex(a => !a.before_cut && !plugin.descriptor.read_only?.includes(`tools/call:${a.op}`));
-    const own = all.filter((a, at) => a.before_cut || firstWrite < 0 || at < firstWrite);
+    const own = all.filter((a, at) => a.before_cut || firstWrite < 0 || at < firstWrite || (a.world && plugin.descriptor.read_only?.includes(`tools/call:${a.op}`)));
     const snapshot = own.flatMap((a, seq) => [
       { v: 1, capture: input.capture, stream: "session", seq: seq * 2, ts: { wall: a.observed_at }, kind: "call", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: seq, method: "tools/call", params: { name: a.op, arguments: a.args } }) } },
       { v: 1, capture: input.capture, stream: "session", seq: seq * 2 + 1, ts: { wall: a.observed_at }, kind: "result", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: seq, result: a.result }) } },
@@ -133,7 +134,10 @@ export async function resumeAttempt(input: {
   let outcome: Outcome;
   try {
     const [login, ...loginArgs] = recipe.resume.login;
-    await execute(login!, [...loginArgs, join(box, "agent"), moment.model.provider], { cwd: recipeDirectory });
+    await execute(login!, [...loginArgs, join(box, "agent"), moment.model.provider], { cwd: recipeDirectory }).catch((error: { stderr?: string; message: string }) => {
+      const said = (error.stderr || error.message).trim();
+      throw new NotRun(said.match(/^Error: (.+)$/m)?.[1] ?? said);
+    });
     await writeClockFile(join(root, "clock"), time);
     const { clock } = parse(await readFile(join(recipeDirectory, recipe.file), "utf8")) as RecipeDescriptor;
     const running = await sandbox.start({
@@ -172,7 +176,7 @@ export async function resumeAttempt(input: {
       const entries = (await readFile(join(box, "out", result.session), "utf8")).split("\n").filter(Boolean);
       await standIn.note("session.resumed", entries.slice(moment.cut_lines).map(line => JSON.parse(line)));
     }
-  } catch (error) { outcome = { kind: "interrupted", why: error instanceof Error ? error.message : String(error) }; }
+  } catch (error) { outcome = error instanceof NotRun ? { kind: "not-run", why: error.message } : { kind: "interrupted", why: error instanceof Error ? error.message : String(error) }; }
   finally {
     await process?.stop().catch(() => {});
     await rm(join(box, "agent"), { recursive: true, force: true });

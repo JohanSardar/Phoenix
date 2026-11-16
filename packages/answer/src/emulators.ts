@@ -7,6 +7,7 @@ export interface EmulatorDifference { connector: string; op: string; expected: s
 
 export class Emulators {
   readonly #plugins = new Map<string, ServingPlugin>();
+  readonly #written = new Set<string>();
   readonly #now: () => Date;
   readonly #difference: (difference: EmulatorDifference) => Promise<void>;
 
@@ -33,10 +34,13 @@ export class Emulators {
     const reply = await plugin.call(call, at);
     if (reply.status === "unsupported") return { miss: true, why: reply.reason };
     if (reply.status !== "answer") throw new Error(`Emulator ${call.connector}: ${reply.status}: ${reply.reason}`);
+    if (!call.readOnly) this.#written.add(call.connector);
     return { raw: reply.value, provenance: "derived", resolver: "emulator" };
   }
 
   has(connector: string): boolean { return this.#plugins.has(connector); }
+
+  wrote(connector: string): boolean { return this.#written.has(connector); }
 
   async observe(call: Call, answer: Answer, at?: string): Promise<EmulatorDifference | undefined> {
     if (!this.#plugins.has(call.connector) || answer.resolver === "emulator" || answer.provenance === "synthesized") return;
