@@ -210,7 +210,7 @@ export class Workbench {
     };
     const moments = [];
     for (const entry of set.moments) moments.push({ moment: entry.moment, candidate: await summary(entry.replay), ...(entry.baseline ? { baseline: await summary(entry.baseline) } : {}) });
-    return { replay: id, candidate: set.candidate, done: moments.every(m => m.candidate.state === "finished"), moments };
+    return { replay: id, candidate: set.candidate, done: moments.every(m => m.candidate.state === "finished" && (!m.baseline || m.baseline.state === "finished")), moments };
   }
 
   async #samples(replay: string, bundle: MomentBundle) {
