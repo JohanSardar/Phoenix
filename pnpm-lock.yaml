@@ -537,6 +537,12 @@ importers:
         specifier: ^1.32.2
         version: 1.32.2(zod@4.6.7)
 
+  plugins/sentry:
+    dependencies:
+      '@sentry/mcp-server':
+        specifier: 0.49.0
+        version: 0.49.0
+
   recipes/codex:
     dependencies:
       yaml:
@@ -743,6 +749,11 @@ packages:
   '@secretlint/types@13.1.0':
     resolution: {integrity: sha512-ZslrDXhpdfqp9Kp+9XZO5M/ehiwuIRCbjGZumfmE8crCvKqszirQKBxM4HPPsoWFUlf3H/eCNxx8vE93KY5I4g==}
     engines: {node: '>=22.0.0'}
+
+  '@sentry/mcp-server@0.49.0':
+    resolution: {integrity: sha512-pMMJj+MZMDejiVidD3n/acZJMnVrQf+SVdL0frownGAxLM6z7IfHtO6lWk5oT/toRS2piFGMTu7lTEeNQZeFTg==}
+    engines: {node: '>=22.15'}
+    hasBin: true
 
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
@@ -1431,6 +1442,8 @@ snapshots:
   '@secretlint/secretlint-rule-preset-recommend@13.1.0': {}
 
   '@secretlint/types@13.1.0': {}
+
+  '@sentry/mcp-server@0.49.0': {}
 
   '@types/json-schema@7.0.15': {}
 
