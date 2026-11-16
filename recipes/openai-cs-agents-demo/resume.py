@@ -35,10 +35,10 @@ class StreamedResponses(OpenAIResponsesModel):
 
 set_tracing_disabled(True)
 if login["provider"] == "openai-codex":
-    llm = StreamedResponses(model=model, openai_client=AsyncOpenAI(base_url=login["base"], api_key=login["key"], default_headers={"chatgpt-account-id": login["account"], "originator": "phoenix"}))
+    llm = StreamedResponses(model=model, openai_client=AsyncOpenAI(base_url="https://chatgpt.com/backend-api/codex", api_key=login["key"], default_headers={"chatgpt-account-id": login["account"], "originator": "phoenix"}))
     settings = ModelSettings(store=False)
 else:
-    llm = OpenAIChatCompletionsModel(model=model, openai_client=AsyncOpenAI(base_url=login["base"], api_key=login["key"], default_headers={"x-opencode-session": str(uuid.uuid4())}))
+    llm = OpenAIChatCompletionsModel(model=model, openai_client=AsyncOpenAI(base_url="https://opencode.ai/inference/go/openai/v1", api_key=login["key"], default_headers={"x-opencode-session": str(uuid.uuid4())}))
     settings = ModelSettings()
 calls = 0
 
