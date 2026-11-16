@@ -28,16 +28,17 @@ export function httpShape(request: HttpRequest, body: Uint8Array): { op: string;
   return { op: `${request.method.toUpperCase()} ${httpHost(request)}${url.pathname}`, path: url.pathname, args: { query: url.search, body: content } };
 }
 
-export function isReadOnly(policy: ConnectorPolicy, surface: Surface, op: string): boolean {
+export function isReadOnly(policy: ConnectorPolicy, surface: Surface, op: string, args?: unknown): boolean {
   if (surface === "mcp" && !op.startsWith("tools/call:")) return true;
-  return (policy.read_only ?? []).some(entry => entry.op === op);
+  const argv = surface === "cli" ? (args as { argv?: unknown[] } | undefined)?.argv : undefined;
+  return (policy.read_only ?? []).some(entry => entry.op === op || (Array.isArray(argv) && argv[0] === op && entry.op.split(" ").every((word, i) => argv[i] === word)));
 }
 
 export function toCall(input: { surface: Surface; layer?: "agent" | "under"; connector: string; op: string; args: unknown; raw: CallMessage }, policy: ConnectorPolicy): Call {
   return {
     surface: input.surface, layer: input.layer ?? "agent", connector: input.connector, op: input.op, args: input.args, raw: input.raw,
     key: callKey({ surface: input.surface, connector: input.connector, op: input.op, args: input.args }),
-    readOnly: isReadOnly(policy, input.surface, input.op),
+    readOnly: isReadOnly(policy, input.surface, input.op, input.args),
   };
 }
 

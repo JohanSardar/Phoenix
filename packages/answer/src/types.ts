@@ -34,6 +34,7 @@ export interface Call {
   readOnly: boolean;
   raw: CallMessage;
   history?: readonly string[];
+  stdin?: () => Promise<Uint8Array>;
 }
 
 export interface Exchange {
