@@ -83,7 +83,7 @@ async function serviceReads(o: MarkOptions & { recorded: { connector: string; op
         ]);
         await writeFile(join(scratch, "mark.jsonl"), events.map(event => JSON.stringify(event) + "\n").join(""));
         session = await startPlugin(plugin, "capture", { context: { segments: [join(scratch, "mark.jsonl")] } });
-        const plan = await session.request("capture", { phase: "plan", connector: plugin.descriptor.connector });
+        const plan = await session.request("capture", { phase: "plan", connector: plugin.descriptor.connector, surface: "mcp" });
         const calls = plan.status === "answer" ? (plan.value as { calls?: { op: string; args: unknown }[] }).calls : undefined;
         if (!Array.isArray(calls)) throw new Error("its plugin made no plan of reads");
         if (calls.some(call => !plugin.descriptor.read_only?.includes(call.op))) throw new Error("its plugin asked for a read that is not declared read-only");

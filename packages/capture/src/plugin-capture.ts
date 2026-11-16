@@ -31,11 +31,14 @@ export async function capturePlugin(options: PluginCaptureOptions): Promise<void
     const streams = new Set(capture.allEvents.filter(e => e.connector === connector).map(e => e.stream));
     const segments = (await readdir(join(root, "seg"))).filter(name => name.endsWith(".jsonl") && [...streams].some(stream => name.startsWith(`${stream}.`))).map(name => join(root, "seg", name));
     session = await startPlugin(plugin, "capture", { context: { segments }, env: options.env, timeoutMs: options.timeoutMs });
-    const plan = await session.request("capture", { phase: "plan", connector });
+    const plan = await session.request("capture", { phase: "plan", connector, surface: options.target.surface });
     if (plan.status !== "answer") throw new Error("Capture plugin did not produce a read plan");
     const calls = (plan.value as { calls?: { op: string; args: unknown }[] })?.calls;
     if (!Array.isArray(calls)) throw new Error("Capture plan needs calls");
-    if (calls.some(call => !call || typeof call.op !== "string" || !plugin.descriptor.read_only?.includes(call.op))) throw new Error("Capture request is not declared read-only");
+    const readOnly = (call: { op: string; args: unknown }): boolean => options.target.surface === "cli"
+      ? (plugin.descriptor.read_only ?? []).some(entry => entry.split(" ").every((word, i) => (call.args as { argv?: unknown[] } | null)?.argv?.[i] === word)) && (call.args as { argv: unknown[] }).argv[0] === call.op
+      : plugin.descriptor.read_only?.includes(call.op) ?? false;
+    if (calls.some(call => !call || typeof call.op !== "string" || !readOnly(call))) throw new Error("Capture request is not declared read-only");
     connection = await captureConnection(options.target, connector, options.timeoutMs ?? 30_000);
     const results: { op: string; args: unknown; observation: unknown }[] = [];
     for (const call of calls) {
@@ -54,6 +57,15 @@ export async function capturePlugin(options: PluginCaptureOptions): Promise<void
             if (text !== item.text) { item.text = text; changed = true; }
           }
           if (changed) bytes = Buffer.from(JSON.stringify(envelope) + "\n");
+        }
+        if (options.target.surface === "cli" && message === observation.response) {
+          const frames = JSON.parse(Buffer.from(bytes).toString()) as { bytes: string }[];
+          for (const f of frames) {
+            const stripped = await sanitizeMessage({ body: Buffer.from(f.bytes, "base64") }, policy);
+            embedded.push(stripped);
+            f.bytes = Buffer.from(stripped.msg.body!).toString("base64");
+          }
+          bytes = Buffer.from(JSON.stringify(frames));
         }
         const headers = message.head?.headers ?? [];
         const header = (name: string) => { for (let i = 0; i < headers.length; i += 2) if (headers[i]!.toLowerCase() === name) return headers[i + 1]; return undefined; };

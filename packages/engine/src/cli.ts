@@ -13,10 +13,17 @@ export function cliResponder(options: Responder & { invocation: CliInvocation })
   const run = async (): Promise<void> => {
     const invocation = Buffer.from(JSON.stringify(options.invocation));
     await trace.append(stream, { kind: "call", surface: "cli", connector, op: options.invocation.argv[0] ?? "", body: invocation });
-    const call = { ...toCall({ surface: "cli", connector, ...cliShape(options.invocation), raw: { body: invocation } }, options.policy), history };
+    let delivered = false;
+    const stdin = async (): Promise<Uint8Array> => {
+      delivered = true;
+      while (!aborted && !inputs.some(f => f.stream === CLI_STREAM.stdin && f.last)) await new Promise<void>(resolve => { wake = resolve; });
+      return Buffer.concat(inputs.filter(f => f.stream === CLI_STREAM.stdin).map(f => f.bytes));
+    };
+    const call = { ...toCall({ surface: "cli", connector, ...cliShape(options.invocation), raw: { body: invocation } }, options.policy), history, ...(options.invocation.terminals.stdin === null ? { stdin } : {}) };
     const answer = await options.respond(call);
     if (!answer) return;
     const frames = JSON.parse(Buffer.from(answer.raw.body).toString()) as CliReplayFrame[];
+    if (delivered && !frames.some(f => f.dir === "out" && f.stream === CLI_STREAM.stdin)) inputs.splice(0, inputs.length, ...inputs.filter(f => f.stream !== CLI_STREAM.stdin));
     let actual: Frame | undefined;
     let offset = 0;
     let stdinEnded = false;

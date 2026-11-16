@@ -13,6 +13,7 @@ export interface PluginCall {
   op: string;
   args: unknown;
   raw: { body: Uint8Array; head?: object };
+  stdin?: () => Promise<Uint8Array>;
 }
 
 export type ServingOptions = Omit<PluginStartOptions, "onConnection" | "replay"> & { replay: NonNullable<PluginStartOptions["replay"]> };
@@ -45,7 +46,8 @@ export async function startServingPlugin(plugin: InstalledPlugin, options: Servi
       const level = plugin.descriptor.serve!.level;
       if ((level === "http") !== (call.surface === "http") || !plugin.descriptor.operations.includes(call.op))
         return { status: "unsupported", reason: "Operation or surface is not covered by the plugin" };
-      const reply = await request("call", { surface: call.surface, layer: call.layer, op: call.op, args: call.args, raw: { ...call.raw, body: Buffer.from(call.raw.body).toString("base64") } }, time);
+      const stdin = call.surface === "cli" && call.stdin ? { stdin: Buffer.from(await call.stdin()).toString("base64") } : {};
+      const reply = await request("call", { surface: call.surface, layer: call.layer, op: call.op, args: call.args, raw: { ...call.raw, body: Buffer.from(call.raw.body).toString("base64"), ...stdin } }, time);
       if (reply.status !== "answer") return reply;
       const value = reply.value as { body?: unknown; head?: PluginWireMessage["head"] } | null;
       if (!value || typeof value.body !== "string" || Buffer.from(value.body, "base64").toString("base64") !== value.body)
