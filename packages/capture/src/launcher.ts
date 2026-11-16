@@ -1,7 +1,7 @@
 import { spawn, execFile, type ChildProcess } from "node:child_process";
-import { mkdtemp, readFile, rm, mkdir, writeFile, readdir, lstat, access } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, readdir, lstat, access } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { appendCoverage, createCapture, digest } from "@phoenix/store";
@@ -24,7 +24,16 @@ export async function launch(options: CaptureOptions) {
   const started = new Date().toISOString();
   let tree: Buffer;
   try { tree = (await promisify(execFile)("git", ["ls-tree", "-rz", "HEAD"], { cwd, encoding: "buffer" })).stdout; }
-  catch { tree = await readFile(contractPath); }
+  catch {
+    const repository = await mkdtemp(join(tmpdir(), "phoenix-harness-"));
+    try {
+      await promisify(execFile)("git", ["init", "-q", repository]);
+      const git = (args: string[]) => promisify(execFile)("git", ["--git-dir", join(repository, ".git"), "--work-tree", cwd, ...args], { cwd, encoding: "buffer", maxBuffer: 64 * 1024 * 1024 });
+      await git(["add", "-A"]);
+      const hash = (await git(["write-tree"])).stdout.toString().trim();
+      tree = (await git(["ls-tree", "-rz", hash])).stdout;
+    } finally { await rm(repository, { recursive: true, force: true }); }
+  }
   await createCapture(root, { capture: id, harness: { name: contract.name, tree: digest(tree) }, recipe: { name: recipe.name, version: String(recipe.phoenix_recipe) }, routes,
     ...(recipe.task_keys?.length ? { task_key: recipe.task_keys } : {}), started_at: started, boot_id: (await promisify(execFile)("sysctl", ["-n", "kern.boottime"]).catch(() => ({ stdout: "unknown" }))).stdout.trim() });
   await mkdir(join(home, "runtime"), { recursive: true, mode: 0o700 });
