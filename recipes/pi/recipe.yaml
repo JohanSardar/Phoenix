@@ -36,7 +36,7 @@ transcript_reader:
 task_keys: []
 image: "node:24-bookworm (install the same Pi version; pin the resulting image digest)"
 clock:
-  probe: [node, -e, "console.log(new Date().toISOString())"]
+  probe: [env, -u, LD_PRELOAD, PHOENIX_CLOCK_FILE=/phoenix-clock, node, --import, /phoenix/recipe/clock.mjs, -e, "console.log(new Date().toISOString())"]
   dont_fake_monotonic: true
 copy_ignored: false
 resume:

@@ -253,7 +253,6 @@ export class Runner {
     try {
       if (plan.runner.recipe) {
         outcome = await resumeAttempt({ id, directory, root, plan, bundle, sandbox, hmacKey, capture: `${id.slice(7)}-${sample.sample}-${attempt.attempt}`, started: async container => { attempt.container = container; await persist(); } });
-        await save(join(root, "clock-report.json"), { clock: "real", binaries: [] });
       } else {
       const endpoints = plan.runner.harness.endpoints, model = plan.runner.model;
       if (!endpoints || !model) throw new Error("This harness names no model endpoint to replay against");

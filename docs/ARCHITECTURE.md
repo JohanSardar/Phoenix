@@ -552,6 +552,8 @@ Stdio MCP entries point at a shim that relays to the engine, and CLI shims do th
 
 The container reaches only the engine, the engine forwards only inference operations, and no real credential enters the container. No flag turns any of these off.
 
+**Resumed replays (ADR 0007).** When the box resumes the harness's own session, the harness talks to its LLM itself, with its own login, and nothing from Phoenix is in that path. The relay looks up the recipe's LLM hosts once, before the harness starts, and the box may reach only those addresses on port 443. Every other connection, DNS included, goes to the engine, which answers tool calls and nothing else. Known limit, by Johan's decision on 2026-11-16: another site on the LLM provider's shared addresses can be reached on port 443. Closing it would put a gate in the LLM's path, which he ruled out. Don't add one.
+
 ### 3.10 Virtual clock
 
 The clock is a small state owned by the engine: a virtual anchor and a real anchor. It is set to the run's captured start time when a Replay starts. When the frozen prefix ends, it is re-anchored to the captured time at the start point. Plugin emulators read it from a `now` endpoint, and the engine uses it for the `Date` headers it writes.
@@ -563,6 +565,8 @@ A process that libfaketime can't reach still runs, on the host's real clock. Tha
 1. It runs the recipe's clock probe command, which asks the harness's own runtime for the time, and records whether it saw the virtual time.
 2. It checks the ELF header of the harness's entry binary and of every binary the recipe names. A binary with no program interpreter is statically linked, and is recorded as `clock: real`.
 3. A real MCP server run with `serve: real` is probed the same way. Processes the probe didn't cover are recorded as `clock: unknown`.
+
+A resumed replay (ADR 0007) sets the clock file to the moment's time. Its recipe can fake the clock inside the harness's runtime instead of with libfaketime. pi's recipe does that: libfaketime also moved the TLS library's clock, so the LLM's certificate failed as not yet valid for an older moment. The probe still records what the harness saw.
 
 The fidelity report lists these as information. The engine's own clock, the emulators and the `Date` headers it writes always use virtual time. Supervision and provider transport use the host's real monotonic time, outside the simulated world.
 

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { adapterCall } from "./adapter.mjs";
 
 const loadout = JSON.parse(readFileSync(process.env.PHOENIX_PI_LOADOUT, "utf8"));
 const url = process.env.PHOENIX_TOOLS_URL;
@@ -14,10 +15,11 @@ export default function standIn(pi) {
       parameters: tool.parameters,
       ...(tool.constrainedSampling ? { constrainedSampling: tool.constrainedSampling } : {}),
       async execute(toolCallId, params, signal) {
-        const response = await fetch(`${url}/${encodeURIComponent(tool.connector)}`, {
+        const { connector, op, args } = tool.adapter?.proxy ? adapterCall(tool.name, params, loadout.adapter) : { connector: tool.connector, op: tool.op, args: params };
+        const response = await fetch(`${url}/${encodeURIComponent(connector)}`, {
           method: "POST",
           headers: { "content-type": "application/json", "x-phoenix-tool-call": toolCallId },
-          body: JSON.stringify({ jsonrpc: "2.0", id: next++, method: "tools/call", params: { name: tool.op, arguments: params } }),
+          body: JSON.stringify({ jsonrpc: "2.0", id: next++, method: "tools/call", params: { name: op, arguments: args } }),
           signal,
         });
         const reply = await response.json();
@@ -27,11 +29,12 @@ export default function standIn(pi) {
       },
     });
   }
-  const names = loadout.tools.map(tool => tool.name);
-  pi.on("session_start", () => pi.setActiveTools(names));
+  const recorded = loadout.tools.map(tool => tool.name);
+  const names = () => [...recorded, ...pi.getAllTools().filter(tool => tool.sourceInfo?.path?.startsWith(`${process.cwd()}/extensions/`) && !recorded.includes(tool.name)).map(tool => tool.name)];
+  pi.on("session_start", () => pi.setActiveTools(names()));
   pi.on("before_agent_start", event => {
     const options = event.systemPromptOptions;
-    options.selectedTools = names;
+    options.selectedTools = names();
     const { preamble, ...sections } = loadout.sections;
     if (preamble !== undefined && !event.systemPrompt.startsWith(preamble)) options.customPrompt = preamble;
     for (const [name, text] of Object.entries(sections)) if (!loadout.harness_sections.includes(name)) options.sections[name] = unwrap(name, text);

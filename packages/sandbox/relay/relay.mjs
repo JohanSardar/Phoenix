@@ -22,27 +22,22 @@ if (process.argv[2] === "bridge") {
   const sockets = new Map();
   const send = (message) => engine?.write(JSON.stringify(message) + "\n");
   const direct = new Set(JSON.parse(process.env.PHOENIX_DIRECT_HOSTS ?? "[]").map((host) => host.toLowerCase()));
-  const allowed = new Set();
-  let upstream;
+  const resolved = new Map();
   if (direct.size) {
     const servers = fs.readFileSync("/etc/resolv.conf", "utf8").split("\n").flatMap((line) => /^nameserver\s+(\d+\.\d+\.\d+\.\d+)\s*$/.exec(line)?.[1] ?? []);
     if (!servers.length) throw new Error("No IPv4 nameserver for direct hosts");
-    upstream = new Resolver({ timeout: 3000, tries: 2 });
+    const upstream = new Resolver({ timeout: 3000, tries: 2 });
     upstream.setServers(servers);
+    for (const host of direct) resolved.set(host, (await upstream.resolve4(host)).slice(0, 8));
     const rule = (...args) => execFileSync("iptables", args, { stdio: "ignore" });
     rule("-N", "PHOENIX_DIRECT");
+    for (const ip of new Set([...resolved.values()].flat())) rule("-A", "PHOENIX_DIRECT", "-d", ip, "-p", "tcp", "--dport", "443", "-j", "ACCEPT");
     rule("-A", "OUTPUT", "-o", "lo", "-j", "ACCEPT");
     rule("-A", "OUTPUT", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT");
-    for (const server of servers) for (const protocol of ["udp", "tcp"]) rule("-A", "OUTPUT", "-d", server, "-p", protocol, "--dport", "53", "-j", "ACCEPT");
     rule("-A", "OUTPUT", "-j", "PHOENIX_DIRECT");
     rule("-P", "OUTPUT", "DROP");
     try { execFileSync("ip6tables", ["-P", "OUTPUT", "DROP"], { stdio: "ignore" }); } catch {}
   }
-  const allow = (ip) => {
-    if (allowed.has(ip)) return;
-    execFileSync("iptables", ["-A", "PHOENIX_DIRECT", "-d", ip, "-p", "tcp", "--dport", "443", "-j", "ACCEPT"], { stdio: "ignore" });
-    allowed.add(ip);
-  };
   const forward = (socket, key) => {
     sockets.set(key, socket);
     socket.on("data", (data) => send({ type: "data", id: key, data: data.toString("base64") }));
@@ -96,8 +91,7 @@ if (process.argv[2] === "bridge") {
       let answer = Buffer.alloc(0);
       if (direct.has(host)) {
         if (type === 1) {
-          const ips = (await upstream.resolve4(host)).slice(0, 8);
-          for (const ip of ips) allow(ip);
+          const ips = resolved.get(host);
           header.writeUInt16BE(ips.length, 6);
           answer = Buffer.concat(ips.map((ip) => Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 30, 0, 4, ...ip.split(".").map(Number)])));
         }
