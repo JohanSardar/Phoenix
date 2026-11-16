@@ -91,6 +91,13 @@ export interface ReplayPlan {
    */
   clock_probe: string[];
   /**
+   * The recipe's declared login context, copied from recipe.yaml model.login_context.
+   */
+  login_context?: {
+    name: string;
+    pattern: string;
+  }[];
+  /**
    * Version of the engine's matching rules.
    */
   matching_rules: string;

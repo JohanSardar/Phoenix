@@ -9,7 +9,7 @@ import { compareBaseline, customCheckHost, evaluateCheck, momentVerdict, sampleV
 import { fidelityReport, weakestTier, type FidelityContext, type FidelityReport } from "@phoenix/fidelity";
 import { BlobStore, bundleApproval, createTraceWriter, digest, readApprovalsLedger, readCapture, readMomentBundle, type MomentBundle } from "@phoenix/store";
 import type { ReplayResult, TraceEvent } from "@phoenix/formats";
-import { bundleBody, bundleEvidence, canonical, checked, claim, eventId, load, optional, save } from "./files.ts";
+import { bundleBody, bundleEvidence, canonical, checked, claim, echoDriftPath, eventId, load, optional, save } from "./files.ts";
 import { materialize, treeDigest } from "./materialize.ts";
 import { resolvePlan, type ReplayRequest, type ResolvedPlan } from "./plan.ts";
 import { submitTask } from "./server.ts";
@@ -116,9 +116,9 @@ export class Runner {
       for (const [index, plugin] of plan.runner.plugins.entries()) if (await treeDigest(join(directory, "inputs/plugins", String(index))) !== plugin.tree) throw new Error(`Resolved plugin changed: ${plugin.name}`);
       const plugins = plan.runner.plugins.map((plugin, index) => ({ name: plugin.name, version: plugin.version, directory: join(directory, "inputs/plugins", String(index)), image: plugin.image, snapshot: plugin.snapshot, seed: plugin.seed, env: plugin.env }));
       if (plan.start !== "echo" && bundleEvidence(bundle).length) {
-        const echoId = await this.plan({ moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: "echo", samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, env: plan.runner.env, plugins, simulator: plan.runner.simulator });
+        const echoId = await this.plan({ moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: "echo", samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, ...(plan.login_context ? { loginContext: plan.login_context } : {}), env: plan.runner.env, plugins, simulator: plan.runner.simulator });
         await this.resume(echoId);
-        const drift = await optional<{ result: string }>(join(this.#options.root, "echo-drift", plan.base_tree.slice(7) + ".json"));
+        const drift = await optional<{ result: string }>(echoDriftPath(this.#options.root, plan.base_tree, plan.login_context));
         if (plan.start !== "beginning" && drift) throw new Error(`This base tree supports only beginning; echo drift: ${drift.result}`);
       }
       let baseline: ReplayResult | undefined;
@@ -127,7 +127,7 @@ export class Runner {
         const baselineId = digest(canonical(baselinePlan));
         const baselineDirectory = this.directory(baselineId);
         if (!await optional(join(baselineDirectory, "plan.json"))) {
-          const request: ReplayRequest = { moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: plan.start, samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, env: plan.runner.env, plugins, simulator: plan.runner.simulator };
+          const request: ReplayRequest = { moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: plan.start, samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, ...(plan.login_context ? { loginContext: plan.login_context } : {}), env: plan.runner.env, plugins, simulator: plan.runner.simulator };
           const resolved = await this.plan(request);
           if (resolved !== baselineId) throw new Error("Baseline plan differs");
         }
@@ -217,7 +217,7 @@ export class Runner {
         Object.assign(sample, sampleVerdict({ ...assessment, diverged: completed.kind === "diverged" }), { expectations: assessment.expectations, complete: true });
         if (completed.kind === "finished" && completed.code !== 0) sample.status = "fail";
         previous.status = "finished";
-        if (plan.start === "echo" && completed.kind === "diverged") await save(join(this.#options.root, "echo-drift", plan.base_tree.slice(7) + ".json"), { result: id, cause: completed.detail });
+        if (plan.start === "echo" && completed.kind === "diverged") await save(echoDriftPath(this.#options.root, plan.base_tree, plan.login_context), { result: id, cause: completed.detail });
         await persist();
         return;
       }
@@ -269,7 +269,7 @@ export class Runner {
       engine = await startEngine({ evidence: { events: evidence, body: event => bundleBody(bundle, event) }, ...(recovering ? { resume: recovery } : {}), emulators, simulator, connectors: bundle.manifest.connectors, start,
         entityMaps: Object.fromEntries(plan.runner.plugins.map(plugin => [plugin.descriptor.connector, plugin.descriptor.entity_map])), volatile: Object.fromEntries(plan.runner.plugins.map(plugin => [plugin.descriptor.connector, plugin.descriptor.volatile ?? []])),
         clock: { start: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall }, routes: { ...tree.routes, http: { ...Object.fromEntries(plan.runner.plugins.flatMap(plugin => (plugin.descriptor.recognize.hosts ?? []).map(host => [host, plugin.descriptor.connector]))), ...tree.routes.http, "phoenix-model": plan.runner.model.connector, "phoenix-model:8080": plan.runner.model.connector } },
-        model: { connector: plan.runner.model.connector, dialect, selection: plan.model, provider: { url: plan.runner.model.url, headers } },
+        model: { connector: plan.runner.model.connector, dialect, selection: plan.model, provider: { url: plan.runner.model.url, headers }, ...(plan.login_context ? { loginContext: plan.login_context } : {}) },
         sample: { root: join(root, "trace"), metadata: { capture: `${id.slice(7)}-${sample.sample}-${attempt.attempt}`, harness: { name: plan.runner.harness.name, tree: plan.candidate_tree }, recipe: { name: "runner", version: "1" }, routes: ["tap"], started_at: bundle.manifest.clock?.time ?? evidence[0]?.ts.wall ?? new Date(0).toISOString(), boot_id: `${id}-${sample.sample}-${attempt.attempt}` } }, hmacKey });
       await writeClockFile(join(root, "clock"), engine.clock.now());
       engine.clock.onAnchor(time => { clockWrites = clockWrites.then(() => writeClockFile(join(root, "clock"), time)); });
@@ -348,7 +348,7 @@ export class Runner {
       sample.discounted = verdict.discounted;
       sample.expectations = assessed.expectations;
       if (outcome.kind === "finished" && outcome.code !== 0) { sample.status = "fail"; attempt.cause = `candidate exited ${outcome.code}`; }
-      if (plan.start === "echo" && outcome.kind === "diverged") await save(join(this.#options.root, "echo-drift", plan.base_tree.slice(7) + ".json"), { result: id, cause: outcome.detail });
+      if (plan.start === "echo" && outcome.kind === "diverged") await save(echoDriftPath(this.#options.root, plan.base_tree, plan.login_context), { result: id, cause: outcome.detail });
     }
     await persist();
   }

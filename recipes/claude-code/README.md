@@ -146,13 +146,21 @@ the authority, not a blanket promise that an unchanged binary can echo perfectly
 Observed on the existing subscription: a harmless real run captured `ls -1`,
 one stdio MCP call and one explicitly authorized HTTP MCP call. All three live
 surfaces recorded, and transcript import completed with 49 reader events.
-After-only import and immutable reimport also completed. The container echo
-replayed MCP discovery, then correctly stopped with `prefix-drift` at
-`history/0/content/0/text`: subscription account-context attachments differ from
-the fresh container's placeholder-key context. Both samples were incomplete,
-with a **blocked** fidelity grade, no synthesized answers and no live inference.
-This proof does not qualify later start points; don't hide that difference or
-copy login state into the container to force a pass.
+After-only import and immutable reimport also completed. The first container echo
+replayed MCP discovery, then stopped with `prefix-drift` at
+`history/0/content/0/text`: signed in with a Claude account, the CLI adds a
+block with the account email to the first user turn, and the placeholder-key
+container doesn't. `recipe.yaml` declares that block as `model.login_context`
+(`account-email`); copy its `name` and `pattern` into the request's
+`loginContext`. With it, the same capture echoes in the container with
+`meets-check` and a **recorded** grade, the fidelity report lists the missing
+block under `prefix_uncompared`, and a replay from the second model request
+also meets the check. The system-role environment turn, cache TTLs and
+`metadata` differ too and are reported as `prefix_edits`. An edited tool
+result still stops with `prefix-drift`. Keep
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` as it was at capture: the captured
+`HEAD /api/hello` connectivity check is part of the prefix. Never copy login
+state into the container.
 
 The tested native CLI also needed a fresh libfaketime shared-memory handle when
 started from Node: delete `FAKETIME_SHARED` from the child's environment while
