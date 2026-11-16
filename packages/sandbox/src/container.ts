@@ -90,7 +90,7 @@ export class ContainerSandbox implements Sandbox {
         "--mount", `type=bind,src=${clockFile},dst=/phoenix-clock,readonly`, ...envArgs,
         ...(spec.workdir ? ["--workdir", spec.workdir] : []), "--entrypoint", "/bin/sh", spec.image,
         "-c", "trap 'exit 0' TERM INT; while :; do sleep 3600 & wait $!; done"]);
-      await this.require(["exec", workload, "sh", "-c", "printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:1\n' > /etc/resolv.conf"]);
+      await this.require(["exec", workload, "/bin/sh", "-c", "printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:1\n' > /etc/resolv.conf"]);
       const exec = (argv: string[]) => this.command(["exec", workload, ...argv]);
       const clock: ClockReport = { clock: "unknown", binaries: [] };
       if (spec.clockProbe) {
@@ -101,7 +101,7 @@ export class ContainerSandbox implements Sandbox {
         }
       }
       for (const path of new Set([spec.argv[0]!, ...(spec.clockBinaries ?? [])])) {
-        const result = await exec(["sh", "-c", 'p=$(command -v "$1") || exit; head -c 65536 "$p" | base64', "probe", path]);
+        const result = await exec(["/bin/sh", "-c", 'p=$(command -v "$1") || exit; head -c 65536 "$p" | base64', "probe", path]);
         const kind = result.code === 0 ? inspectElf(Buffer.from(result.stdout, "base64")) : "unknown";
         clock.binaries.push({ path, clock: kind === "static" ? "real" : "unknown" });
         if (path === spec.argv[0] && kind === "static") clock.clock = "real";
