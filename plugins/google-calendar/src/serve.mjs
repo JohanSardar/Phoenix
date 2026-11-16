@@ -74,6 +74,7 @@ function accounts(answers) {
 // call/result events, each carrying its JSON-RPC message in body.inline.
 function readSnapshot(text) {
   const lines = text.split("\n").filter(line => line.trim());
+  if (!lines.length) return { answers: [] };
   const events = lines.length > 0 && lines.every(line => { try { return typeof JSON.parse(line).kind === "string"; } catch { return false; } });
   if (!events) {
     const snapshot = JSON.parse(text);
