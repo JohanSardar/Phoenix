@@ -1,8 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
 import { mkdir, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { readsOnly, recognizeCommand, startToolStandIn, type SimulatorOptions, type ToolStandIn, type ToolStandInOptions } from "@phoenix/engine";
 import { parse } from "yaml";
@@ -134,11 +133,7 @@ export async function resumeAttempt(input: {
       const cwd = typeof givenCwd === "string" ? givenCwd : undefined;
       const rest = found.around.replace(/\u0000\d+\u0000/g, "true");
       const guarded = project ? readsOnly(rest, project.root, cwd, join(box, "project")) : /^true(?: [12]>& '[12]'| (?:[12]?>>?|&>) '\/dev\/null')*$/.test(rest);
-      if (!guarded) return undefined;
-      const start = cwd ?? project?.root ?? "/";
-      const dirs = found.calls.map(c => (c.cd ?? []).reduce((at, dir) => resolve(at, dir), start));
-      if (project && dirs.some((dir, i) => found.calls[i]!.cd && !statSync(join(box, "project", relative(project.root, dir)), { throwIfNoEntry: false })?.isDirectory())) return undefined;
-      return { calls: found.calls.map((c, i) => ({ connector: c.connector, argv: c.argv, env: c.env ?? {}, cwd: dirs[i]!, ...(c.stdin === undefined ? {} : { stdin: c.stdin }) })), around: found.around };
+      return guarded ? { calls: found.calls.map(c => ({ connector: c.connector, argv: c.argv, env: c.env ?? {}, cwd: cwd ?? project?.root ?? "/", ...(c.stdin === undefined ? {} : { stdin: c.stdin }) })), around: found.around } : undefined;
     },
     ...(input.simulator ? { simulator: input.simulator } : {}),
     cutTime: bundle.manifest.clock?.time ?? new Date().toISOString(),

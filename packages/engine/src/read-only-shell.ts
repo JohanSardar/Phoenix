@@ -112,7 +112,6 @@ function parse(spec: Spec, args: string[]): { operands: string[]; values: Map<st
  * Whether a shell command only reads files and folders under root, so it can run for real on a copy of them.
  * root is the folder as the session saw it; copy is where those files are on this machine (root itself by default),
  * used to refuse paths that leave the copy through a symlink.
- * After a cd followed by ;, a later path must stay inside the copy from both folders, since a failed cd leaves the old one.
  */
 export function readsOnly(command: string, root: string, cwd: string = root, copy: string = root): boolean {
   const tokens = lex(command);
@@ -136,7 +135,7 @@ export function readsOnly(command: string, root: string, cwd: string = root, cop
     }
     return at;
   };
-  const here = locate(top, isAbsolute(cwd) ? cwd : root + "/" + cwd, false);
+  let here = locate(top, isAbsolute(cwd) ? cwd : root + "/" + cwd, false);
   if (!here) return false;
   const commands: { words: string[]; before?: string; after?: string }[] = [{ words: [] }];
   for (let at = 0; at < tokens.length; at++) {
@@ -155,9 +154,7 @@ export function readsOnly(command: string, root: string, cwd: string = root, cop
   }
   if (!commands.at(-1)!.words.length) commands.pop();
   const changesDirectory = commands.some(({ words }) => words[0] === "cd");
-  if (changesDirectory && tokens.some(token => "op" in token && token.op === "||")) return false;
-  const either = tokens.some(token => "op" in token && token.op === ";");
-  let heres = [here];
+  if (changesDirectory && tokens.some(token => "op" in token && (token.op === "||" || token.op === ";"))) return false;
   for (const { words: [name, ...args], before, after } of commands) {
     if (!Object.hasOwn(SPECS, name!)) return false;
     const spec = SPECS[name!]!;
@@ -182,16 +179,12 @@ export function readsOnly(command: string, root: string, cwd: string = root, cop
         else if (!FIND_PLAIN.has(arg)) return false;
       }
     } else if (spec.operands === "dir") {
-      if (operands.length !== 1 || operands[0] === "-" || (before && before !== "&&" && before !== ";") || (after !== "&&" && after !== ";")) return false;
+      if (operands.length !== 1 || operands[0] === "-" || (before && before !== "&&") || after !== "&&") return false;
       paths.push(operands[0]!);
     }
     if (spec.max !== undefined && operands.length > spec.max) return false;
-    if (!paths.every(path => path === "/dev/null" || heres.every(at => locate(at, path)))) return false;
-    if (name === "cd") {
-      const next = heres.map(at => locate(at, operands[0]!, false));
-      if (!next.every(Boolean)) return false;
-      heres = either ? [...new Set([...heres, ...next as string[]])] : next as string[];
-    }
+    if (!paths.every(path => path === "/dev/null" || locate(here!, path))) return false;
+    if (name === "cd") { here = locate(here, operands[0]!, false); if (!here) return false; }
   }
   return true;
 }

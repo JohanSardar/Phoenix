@@ -25,12 +25,3 @@ test("a working directory outside the project is not run on the copy", () => {
   assert.equal(readsOnly("ls", root, "/Users/j/elsewhere"), false);
   assert.equal(readsOnly("cat ../README.md", root, "/Users/j/project/src"), true);
 });
-
-test("after cd and ;, a path must stay inside the copy from both folders", () => {
-  assert.equal(readsOnly("cd src; ls", root), true);
-  assert.equal(readsOnly("cd src; cat a.ts", root), true);
-  assert.equal(readsOnly("cd src; cat ../README.md", root), false);
-  assert.equal(readsOnly("cd src && cat ../README.md", root), true);
-  assert.equal(readsOnly("cd /tmp; ls", root), false);
-  assert.equal(readsOnly("cd src || ls", root), false);
-});
