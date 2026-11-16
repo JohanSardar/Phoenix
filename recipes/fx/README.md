@@ -36,7 +36,7 @@ Limits:
 - The box can reach only `chatgpt.com` on port 443. Other calls fx makes, such as its update check, are refused.
 - fx doesn't save its system prompt in the session. The resumed turn gets fx's own prompt and the harness's `AGENTS.md`.
 - MCP servers aren't started in the box, so the resumed fx doesn't see MCP tools.
-- The resumed run uses the real clock.
+- fx runs on the real clock, even when the moment has its own time. fx checks the LLM host's TLS certificate against its clock, and an old time can fail that check.
 
 ## After the fact: no live proxy
 

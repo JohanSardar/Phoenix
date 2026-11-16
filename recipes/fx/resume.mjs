@@ -47,9 +47,11 @@ if (existsSync("/worktree/fx.patch") && statSync("/worktree/fx.patch").size > 0)
   process.stderr.write(`fx built from source with fx.patch ${createHash("sha256").update(readFileSync("/worktree/fx.patch")).digest("hex").slice(0, 12)}\n`);
 }
 mkdirSync("/tmp/phoenix-calls", { recursive: true, mode: 0o700 });
+const { LD_PRELOAD: _faketime, ...env } = process.env;
+process.stderr.write("fx runs on the real clock, because its TLS checks need it\n");
 const child = spawn(fx, ["acp", ...(settings.model ? ["--model", settings.model] : [])], {
   cwd: moment.cwd, stdio: ["pipe", "pipe", "inherit"],
-  env: { ...process.env, HOME: home, FX_DISABLE_KEYCHAIN: "1", FX_NO_OPEN_BROWSER: "1", FX_SKIP_ONBOARDING: "1", PHOENIX_FX_TOOL_DIR: "/tmp/phoenix-calls", PHOENIX_FX_TOOL_HELPER: "/phoenix/recipe/tool.mjs" },
+  env: { ...env, HOME: home, FX_DISABLE_KEYCHAIN: "1", FX_NO_OPEN_BROWSER: "1", FX_SKIP_ONBOARDING: "1", PHOENIX_FX_TOOL_DIR: "/tmp/phoenix-calls", PHOENIX_FX_TOOL_HELPER: "/phoenix/recipe/tool.mjs" },
 });
 let next = 0;
 const pending = new Map();
