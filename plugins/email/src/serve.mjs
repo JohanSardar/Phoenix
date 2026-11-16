@@ -34,7 +34,7 @@ function readSnapshot(text) {
       if (event.kind === "prefetch") {
         const read = JSON.parse(event.body.inline);
         if (Array.isArray(read.args?.argv)) output.push({ argv: read.args.argv, stdout: stdoutOf(JSON.parse(read.response.body)), at: event.ts?.wall });
-      } else if (event.kind === "call" && !/^(frame|fragment):/.test(event.op ?? "")) {
+      } else if ((event.kind === "call" || (event.kind === "meta" && event.op === "open")) && !/^(frame|fragment):/.test(event.op ?? "")) {
         const value = JSON.parse(event.body.inline);
         const argv = event.op === "open" ? value.meta?.argv : value.argv;
         if (Array.isArray(argv)) { const run = { argv, stdout: "", at: event.ts?.wall }; runs.set(event.stream, run); output.push(run); }

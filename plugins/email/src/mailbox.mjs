@@ -114,7 +114,7 @@ export class Mailbox {
     const ms = Number(m.internalDate ?? 0);
     const from = { name: f.addressDisplayNames?.find(a => a.emailAddress === f.sender)?.displayName ?? "", email: f.sender ?? "" };
     const style = from.email === this.account.email ? this.apiStyle() : {};
-    m.raw = buildMessage({ from, to: (f.toRecipients ?? []).map(email => ({ name: "", email })), cc: (f.ccRecipients ?? []).map(email => ({ name: "", email })), subject: f.subject ?? "", text: f.plaintextBody ?? htmlText(f.htmlBody ?? "").trim(), html: f.htmlBody ?? "", date: rfc2822(new Date(ms), this.timezone, style.offset), messageId: `<${m.id}@mail.gmail.com>`, boundary: `000000000000${m.id}`, receivedFrom: style.receivedFrom });
+    m.raw = buildMessage({ from, to: (f.toRecipients ?? []).map(email => ({ name: m.names?.[email] ?? "", email })), cc: (f.ccRecipients ?? []).map(email => ({ name: m.names?.[email] ?? "", email })), subject: f.subject ?? "", text: f.plaintextBody ?? htmlText(f.htmlBody ?? "").trim(), html: f.htmlBody ?? "", date: rfc2822(new Date(ms), this.timezone, style.offset), messageId: `<${m.id}@mail.gmail.com>`, boundary: `000000000000${m.id}`, receivedFrom: style.receivedFrom });
     m.rawWritten = true;
     return m.raw;
   }

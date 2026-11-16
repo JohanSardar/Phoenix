@@ -54,7 +54,7 @@ function envelopes(box, folder, list) {
     const f = m.fields;
     if (e.subject !== undefined) f.subject ??= e.subject;
     if (e.from?.addr) { f.sender ??= e.from.addr; if (e.from.name) f.addressDisplayNames ??= [{ displayName: e.from.name, emailAddress: e.from.addr }]; }
-    if (e.to?.addr) f.toRecipients ??= [e.to.addr];
+    if (e.to?.addr) { f.toRecipients ??= [e.to.addr]; if (e.to.name) m.names = { ...m.names, [e.to.addr]: e.to.name }; }
     f.date ??= new Date(Number(m.internalDate)).toISOString().replace(".000Z", "Z");
   }
 }
