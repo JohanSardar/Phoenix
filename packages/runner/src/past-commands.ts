@@ -17,13 +17,14 @@ const pointer = (value: unknown, path: string): unknown => path.split("/").slice
 /**
  * A session's shell call from before the cut that is one command a plugin's recognize.commands claims, alone on its
  * line, as capture events of that command: its argv as recognized, stdin when the line gave it, what it printed, and
- * its exit code when the session has it. A line the recognizer cannot read exactly gives nothing.
+ * its exit code when the session has it. A line the recognizer cannot read exactly gives nothing. The command belongs
+ * to the first of the claimants that claims it, the same order a new command is routed by.
  */
-export function pastCommand(answer: PastAnswer, shell: ShellTool | undefined, plugin: CommandPlugin, cwd: string | undefined, base: { capture: string; stream: string; connector: string }): object[] {
+export function pastCommand(answer: PastAnswer, shell: ShellTool | undefined, plugin: CommandPlugin, cwd: string | undefined, base: { capture: string; stream: string; connector: string }, claimants: CommandPlugin[] = [plugin]): object[] {
   if (!shell || !answer.before_cut) return [];
   const given = answer.args as Record<string, unknown>;
   const command = given?.[shell.command];
-  const line = typeof command === "string" ? recognizeCommand(command, [plugin]) : undefined;
+  const line = typeof command === "string" ? recognizeCommand(command, claimants) : undefined;
   const call = line?.calls.length === 1 && line.around === "\u00000\u0000" ? line.calls[0]! : undefined;
   if (!call || call.connector !== plugin.connector) return [];
   const result = answer.result as { content?: { type?: string; text?: string }[]; isError?: boolean } | undefined;

@@ -216,3 +216,29 @@ test("S31: ambiguous envelope matches must not answer with extra mail", async t 
   const stdout = frames.filter(frame => frame.stream === 1).map(frame => Buffer.from(frame.bytes, "base64").toString()).join("");
   assert.equal(JSON.parse(stdout).length, real.length);
 });
+
+test("S29b: a contradictory known HTML body must not claim another send", async t => {
+  const id = ((BigInt(Date.parse("2026-11-16T20:33:50Z")) << 20n) | 1n).toString(16);
+  const message = { id, threadId: id, labelIds: ["SENT"], internalDate: String(Date.parse("2026-11-16T20:33:50Z")), sender: me, toRecipients: ["ana@example.com"], subject: "[phoenix-test] t57 Html", htmlBody: "<p>Different HTML.</p>", viewUrl: "https://mail.google.com/mail/?authuser=" + me };
+  const html = raw("Html", "<p>Original HTML.</p>").replace("Content-Type: text/plain; charset=utf-8", "Content-Type: text/html; charset=utf-8");
+  const copy = await copyOf(t, [
+    ...cliEvents([{ argv: ["himalaya", "message", "send"], stdin: html, stdout: "Message successfully sent!\n" }]),
+    ...mcpEvents("get_message", { messageId: id, messageFormat: "FULL_CONTENT" }, message, "2026-11-16T20:33:55Z"),
+  ]);
+  assert.equal(JSON.parse(await copy.cli(list(sent))).length, 2);
+});
+
+test("S32: claiming a metadata placeholder preserves a known incomplete thread count", async t => {
+  const id = ((BigInt(Date.parse("2026-11-16T20:33:40Z")) << 20n) | 1n).toString(16);
+  const replyId = ((BigInt(Date.parse("2026-11-16T20:33:43Z")) << 20n) | 1n).toString(16);
+  const metadata = { id, threadId: id, labelIds: ["SENT"], internalDate: String(Date.parse("2026-11-16T20:33:40Z")), sender: me, toRecipients: ["ana@example.com"], viewUrl: "https://mail.google.com/mail/?authuser=" + me };
+  const message = { ...metadata, subject: "[phoenix-test] t57 Count", plaintextBody: "Count once." };
+  const reply = { id: replyId, threadId: id, labelIds: ["INBOX"], internalDate: String(Date.parse("2026-11-16T20:33:43Z")), sender: "ana@example.com", toRecipients: [me], subject: "Re: [phoenix-test] t57 Count", snippet: "Reply" };
+  const copy = await copyOf(t, [
+    ...cliEvents([{ argv: ["himalaya", "message", "send"], stdin: raw("Count", "Count once."), stdout: "Message successfully sent!\n" }]),
+    ...mcpEvents("search_threads", { query: "t57", view: "THREAD_VIEW_SUMMARY" }, { resultCountEstimate: "1", threads: [{ id, messageCount: 6, messages: [reply] }] }, "2026-11-16T20:33:45Z"),
+    ...mcpEvents("get_message", { messageId: id, messageFormat: "METADATA_ONLY" }, metadata, "2026-11-16T20:33:46Z").map(event => ({ ...event, stream: "mcp-metadata" })),
+    ...mcpEvents("get_message", { messageId: id, messageFormat: "FULL_CONTENT" }, message, "2026-11-16T20:33:50Z").map(event => ({ ...event, stream: "mcp-full" })),
+  ]);
+  await assert.rejects(() => copy.tool("get_thread", { threadId: id, messageFormat: "METADATA_ONLY" }), /only part of thread/);
+});

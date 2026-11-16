@@ -345,20 +345,22 @@ export class Connector {
     if (known && (known.provisional || known.know?.has("body") || known.know?.has("raw"))) return;
     const to = [...(fields.toRecipients ?? [])].sort().join(","), at = Number(fields.internalDate);
     const text = s => s === undefined ? undefined : String(s).replace(/\r\n/g, "\n").trim();
+    const html = s => s === undefined ? undefined : textOfHtml(s).replace(/\s+/g, " ").trim();
+    const agree = (norm, key, m) => norm(fields[key]) === undefined || norm(m.fields[key]) === undefined || norm(fields[key]) === norm(m.fields[key]);
     const found = [...this.box.messages.values()].filter(m => m.provisional && m.fields.subject === fields.subject && m.fields.sender === fields.sender
       && (fields.toRecipients === undefined || [...(m.fields.toRecipients ?? [])].sort().join(",") === to) && (!Number.isFinite(at) || Math.abs(Number(m.internalDate) - at) < 120000)
-      && (text(fields.plaintextBody) === undefined || text(m.fields.plaintextBody) === undefined || text(fields.plaintextBody) === text(m.fields.plaintextBody)));
+      && agree(text, "plaintextBody", m) && agree(html, "htmlBody", m));
     if (found.length !== 1) return;
     const m = found[0];
     delete m.provisional;
+    const thread = fields.threadId ?? known?.threadId, counts = this.box.threadCounts, count = counts.get(thread);
     if (known) {
       for (const [folder, uid] of Object.entries(known.uids ?? {})) if (known.realUids?.has(folder)) { m.uids[folder] = uid; (m.realUids ??= new Set()).add(folder); }
-      const counts = this.box.threadCounts;
-      if (counts.has(known.threadId) && !known.labelIds.includes("DRAFT")) counts.set(known.threadId, counts.get(known.threadId) - 1);
       this.box.messages.delete(known.id);
     }
     this.adopt(m.id, fields.id);
-    this.rethread(m, fields.threadId ?? known?.threadId);
+    this.rethread(m, thread);
+    if (known && count !== undefined) counts.set(thread, count);
   }
 
   // Learns the mailbox from one recorded connector answer.
