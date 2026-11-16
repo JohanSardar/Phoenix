@@ -2,5 +2,4 @@ export { startEngine, type Engine, type EngineOptions, type EngineStop } from ".
 export { VirtualClock } from "./clock.ts";
 export { startToolStandIn, type RecordedToolAnswer, type ToolStandIn, type ToolStandInOptions } from "./stand-in.ts";
 export { SampleTrace, type TraceEntry } from "./trace.ts";
-export { isModelDialect, resolveModelDialect, type ModelDialectName } from "@phoenix/answer";
 export { createSimulator, type SimulatorOptions } from "@phoenix/answer";
