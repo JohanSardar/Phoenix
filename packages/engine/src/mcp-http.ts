@@ -78,12 +78,20 @@ export function mcpHttpResponder(options: Responder & {
     }
     const head = { ...responseHead, headers };
     await trace.append(stream, { kind: "meta", surface: "mcp", connector, head });
+    const sse = header(headers, "content-type")?.toLowerCase().includes("text/event-stream") ?? false;
+    if (!raw.body.length && !sse) {
+      await trace.append(stream, { kind: "result", surface: "mcp", connector, op: "frame:back:2", body: raw.body, provenance: answer.provenance, resolver: answer.resolver });
+      await options.advance(answer);
+      out.push(HTTP_STREAM.responseHead, encodeHttpHead(head), true);
+      out.push(HTTP_STREAM.responseBody, raw.body, true);
+      out.end();
+      return;
+    }
     out.push(HTTP_STREAM.responseHead, encodeHttpHead(head), true);
     const actualId = rpc?.id;
     const recordedId = recorded?.id;
     const token = (rpc?.params as { _meta?: { progressToken?: unknown } } | undefined)?._meta?.progressToken;
     const recordedToken = (recorded?.params as { _meta?: { progressToken?: unknown } } | undefined)?._meta?.progressToken;
-    const sse = header(headers, "content-type")?.toLowerCase().includes("text/event-stream") ?? false;
     const chunks = raw.chunks ?? [{ bytes: raw.body, waitFor: [] }];
     const sent: Uint8Array[] = [];
     const timing: { offset: number; at: string }[] = [];
