@@ -52,7 +52,7 @@ The serve command refuses a snapshot from another Postgres major version. The im
 
 Side by side with the real Supabase (48 calls on a real project), the copy's answers differ in these ways:
 
-- `list_tables`: the order of the tables and of the foreign keys can differ. Postgres returns them in the order they sit on disk, and the copy creates them in a different order. The content is the same.
-- `query_logs`: the copy answers only for the exact recorded time window. In the 48-call comparison the window had moved, so the copy missed.
+- `list_tables`: the order of the tables and of the foreign keys can differ. The query that Supabase's server sends has no `ORDER BY`. So the order comes from the plan Postgres picks and from where rows sit on disk. It is not table oid order, and a copy built from a snapshot can't reproduce it. Sorted by name, the answers are the same.
+- `query_logs`: the copy answers only for the exact recorded request. Logs for any other time window are a miss, because the snapshot does not hold them, and an answer built from other logs would be made up. In the 48-call comparison the window had moved, so the copy missed.
 
 Not compared with the real thing: a write on the real Supabase. Nothing was ever written to a real project. The write answers were compared with a real Supabase Postgres 17.6 instead. The read-write mode was only seen on a moment whose read-only setting was changed by hand. Johan's own settings run Supabase read-only.
