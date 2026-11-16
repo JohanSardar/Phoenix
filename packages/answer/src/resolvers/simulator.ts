@@ -12,10 +12,10 @@ const cliResult = {
   properties: {
     stdout: { type: "string" }, stderr: { type: "string" },
     exit: {
-      type: "object", required: ["code", "signal"], additionalProperties: false,
+      type: "object", required: ["code", "signal"],
       oneOf: [
-        { properties: { code: { type: "integer", minimum: 0, maximum: 255 }, signal: { type: "null" } } },
-        { properties: { code: { type: "null" }, signal: { type: "string", minLength: 1 } } },
+        { additionalProperties: false, properties: { code: { type: "integer", minimum: 0, maximum: 255 }, signal: { type: "null" } } },
+        { additionalProperties: false, properties: { code: { type: "null" }, signal: { type: "string", minLength: 1 } } },
       ],
     },
   },
