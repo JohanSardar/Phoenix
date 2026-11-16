@@ -1,0 +1,188 @@
+{
+  "phoenix_recipe": 1,
+  "name": "fx",
+  "harness_versions": [
+    "0.0.16"
+  ],
+  "login_modes": [
+    "gateway-api-key",
+    "gateway-oauth",
+    "gateway-oidc",
+    "codex-subscription",
+    "grok-subscription",
+    "custom-bearer",
+    "custom-none"
+  ],
+  "routes": [
+    {
+      "versions": "0.0.16",
+      "login_mode": "gateway-api-key",
+      "surfaces": {
+        "model": [
+          "gateway",
+          "transcript"
+        ],
+        "mcp": [
+          "mcp-proxy",
+          "transcript"
+        ],
+        "cli": [
+          "cli-proxy",
+          "transcript"
+        ]
+      }
+    },
+    {
+      "versions": "0.0.16",
+      "login_mode": "gateway-oauth",
+      "surfaces": {
+        "model": [
+          "gateway",
+          "transcript"
+        ],
+        "mcp": [
+          "mcp-proxy",
+          "transcript"
+        ],
+        "cli": [
+          "cli-proxy",
+          "transcript"
+        ]
+      }
+    },
+    {
+      "versions": "0.0.16",
+      "login_mode": "gateway-oidc",
+      "surfaces": {
+        "model": [
+          "gateway",
+          "transcript"
+        ],
+        "mcp": [
+          "mcp-proxy",
+          "transcript"
+        ],
+        "cli": [
+          "cli-proxy",
+          "transcript"
+        ]
+      }
+    },
+    {
+      "versions": "0.0.16",
+      "login_mode": "codex-subscription",
+      "surfaces": {
+        "model": [
+          "transcript"
+        ],
+        "mcp": [
+          "mcp-proxy",
+          "transcript"
+        ],
+        "cli": [
+          "cli-proxy",
+          "transcript"
+        ]
+      },
+      "limitations": [
+        "Pinned subscription endpoint; no supported model URL override or TLS interception"
+      ]
+    },
+    {
+      "versions": "0.0.16",
+      "login_mode": "grok-subscription",
+      "surfaces": {
+        "model": [
+          "transcript"
+        ],
+        "mcp": [
+          "mcp-proxy",
+          "transcript"
+        ],
+        "cli": [
+          "cli-proxy",
+          "transcript"
+        ]
+      },
+      "limitations": [
+        "Pinned subscription endpoint; no supported model URL override or TLS interception"
+      ]
+    },
+    {
+      "versions": "0.0.16",
+      "login_mode": "custom-bearer",
+      "surfaces": {
+        "model": [
+          "gateway",
+          "transcript"
+        ],
+        "mcp": [
+          "mcp-proxy",
+          "transcript"
+        ],
+        "cli": [
+          "cli-proxy",
+          "transcript"
+        ]
+      }
+    },
+    {
+      "versions": "0.0.16",
+      "login_mode": "custom-none",
+      "surfaces": {
+        "model": [
+          "gateway",
+          "transcript"
+        ],
+        "mcp": [
+          "mcp-proxy",
+          "transcript"
+        ],
+        "cli": [
+          "cli-proxy",
+          "transcript"
+        ]
+      }
+    }
+  ],
+  "model": {
+    "setting": "PHOENIX_FX_MODEL_URL via route-model.mjs; FX_GATEWAY_CHAT_URL or providers.<name>.base_url",
+    "dialect": "gateway: Vercel AI SDK v4 wire (capture only); custom: openai-chat-completions"
+  },
+  "mcp": {
+    "file": ".mcp.json",
+    "format": "mcpServers"
+  },
+  "shim": [
+    "ls",
+    "cat",
+    "date"
+  ],
+  "transcript_reader": {
+    "command": [
+      "node",
+      "transcript-reader.mjs",
+      "v2"
+    ],
+    "harness_versions": [
+      "0.0.16"
+    ]
+  },
+  "clock": {
+    "probe": [
+      "node",
+      "-e",
+      "console.log(new Date().toISOString())"
+    ],
+    "dont_fake_monotonic": true
+  },
+  "image": "phoenix-fx:0.0.16",
+  "copy_ignored": false,
+  "limitations": [
+    "ACP capture uses acp.mjs; explicit client MCP entries and opted-in profile entries are proxied",
+    "Streamable HTTP requires explicit http-stdio opt-in and static or no authentication; remote OAuth and legacy SSE stay direct with transcript fallback",
+    "Absolute commands, shell builtins, native filesystem tools, direct APIs and provider-native tools bypass PATH shims",
+    "Session exports are semantic evidence, not model request/response wire recordings; missing evidence is never invented",
+    "No fx binary is bundled; use an independently prepared, digest-pinned Linux image for container Replay"
+  ]
+}
