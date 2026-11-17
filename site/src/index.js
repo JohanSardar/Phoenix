@@ -1,4 +1,4 @@
-const repo = "https://github.com/jujdontbudge/Phoenix";
+const repo = "https://github.com/JohanSardar/Phoenix";
 
 export default {
   async fetch(request) {

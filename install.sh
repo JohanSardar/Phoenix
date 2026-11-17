@@ -3,7 +3,7 @@
 # Pin a version with PHOENIX_VERSION=v0.1.0 or `sh -s -- v0.1.0`. Install elsewhere with PHOENIX_INSTALL=<dir>.
 set -eu
 
-repo="https://github.com/jujdontbudge/Phoenix"
+repo="https://github.com/JohanSardar/Phoenix"
 install_dir="${PHOENIX_INSTALL:-$HOME/.phoenix}"
 version="${1:-${PHOENIX_VERSION:-}}"
 
