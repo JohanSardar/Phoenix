@@ -23,6 +23,7 @@ export interface ReplayRequest {
   loginContext?: NonNullable<ReplayPlan["login_context"]>;
   env?: Record<string, string>;
   plugins?: { name: string; version: string; directory: string; image: string; snapshot?: string; seed?: string; env?: Record<string, string> }[];
+  network?: "off" | NonNullable<ReplayPlan["network"]>["level"];
   simulator?: { model: Pick<ReplayPlan["model"], "id" | "alias">; config: Omit<SimulatorOptions["provider"]["configuration"], "model"> & { attempts?: number; outputSchemas?: SimulatorOptions["outputSchemas"] }; improverModel: string; headers?: Record<string, { env: string }> };
 }
 
@@ -94,12 +95,19 @@ export async function resolvePlan(root: string, ledger: string, request: ReplayR
     const { directory: _, ...settings } = plugin;
     plugins.push({ ...settings, descriptor, tree: await treeDigest(plugin.directory) });
   }
+  const level = request.network ?? "off";
+  if (!["off", "packages", "open"].includes(level)) throw new Error(`Unknown network level: ${level}. Use off, packages or open`);
+  if (level !== "off" && !resume) throw new Error("The network option needs a moment that resumes its own session");
+  const registries = level === "packages" ? (JSON.parse(await readFile(new URL("../network.json", import.meta.url), "utf8")) as { packages: string[] }).packages : [];
+  const covered = [...new Set(plugins.flatMap(p => (p.descriptor.recognize.hosts ?? []).map(host => host.toLowerCase())))].sort();
+  const network: ReplayPlan["network"] = level === "off" ? undefined : level === "packages" ? { level, allow: registries } : { level, deny: covered };
   const plan: ResolvedPlan = {
     phoenix_plan: 1, bundle: bundle.lockHash, check: bundle.lock.check, base_tree: request.base.digest, candidate_tree: request.candidate.digest,
     harness_image: request.image, model: request.model ? { id: request.model.id, ...(request.model.alias !== undefined ? { alias: request.model.alias } : {}), ...(request.model.parameters ? { parameters: request.model.parameters } : {}) } : { id: bundle.manifest.model?.id ?? "unknown" },
     start: request.start, samples: request.samples ?? bundle.check.samples ?? { base: 2, tiebreak: 1 }, plugins: Object.fromEntries(plugins.map(p => [p.name, p.version])),
     container_runtime: request.runtime?.version ?? "docker", clock_probe: request.clockProbe ?? ["node", "-e", "console.log(Date.now())"], ...(request.loginContext?.length ? { login_context: request.loginContext } : {}), matching_rules: "2",
     ...(request.simulator ? { simulator: { model: request.simulator.model, config: request.simulator.config } } : {}),
+    ...(network ? { network } : {}),
     runner: { harness: request.harness, ...(request.bindings ? { bindings: request.bindings } : {}), ...(request.model ? { model: request.model } : {}), ...(recipe ? { recipe } : {}), env: request.env ?? {}, cli: request.runtime?.cli ?? ["docker"], plugins, ...(request.simulator ? { simulator: request.simulator } : {}) },
   };
   checked("plan", plan);

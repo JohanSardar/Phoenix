@@ -122,7 +122,9 @@ export async function resumeAttempt(input: {
       const shell = moment.shell?.[connector]?.[op];
       const given = args as Record<string, unknown>;
       const command = shell && given[shell.command], cwd = (shell?.cwd ? given[shell.cwd] : undefined) ?? moment.cwd;
-      return typeof command === "string" && readsOnly(command, project.root, typeof cwd === "string" ? cwd : undefined, join(box, "project"));
+      if (typeof command !== "string") return false;
+      if (plan.network && !recognizeCommand(command, commandPlugins, project.home)) return true;
+      return readsOnly(command, project.root, typeof cwd === "string" ? cwd : undefined, join(box, "project"));
     },
     pluginCommand: (connector, op, args) => {
       const shell = moment.shell?.[connector]?.[op];
@@ -136,6 +138,7 @@ export async function resumeAttempt(input: {
       return guarded ? { calls: found.calls.map(c => ({ connector: c.connector, argv: c.argv, env: c.env ?? {}, cwd: cwd ?? project?.root ?? "/", ...(c.stdin === undefined ? {} : { stdin: c.stdin }) })), around: found.around } : undefined;
     },
     ...(input.simulator ? { simulator: input.simulator } : {}),
+    ...(plan.network ? { network: plan.network } : {}),
     cutTime: bundle.manifest.clock?.time ?? new Date().toISOString(),
     policy: connector => {
       const plugin = plugins.get(connector)?.plugin.descriptor;

@@ -101,4 +101,21 @@ export interface ReplayPlan {
    * Version of the engine's matching rules.
    */
   matching_rules: string;
+  /**
+   * Live internet for shell lines the box runs. Absent means off: the box reaches only the LLM.
+   */
+  network?: {
+    /**
+     * packages: only the package registry hosts in allow. open: every public host except those in deny.
+     */
+    level: "packages" | "open";
+    /**
+     * With packages: the registry hosts the box may reach, from the runner's network config.
+     */
+    allow?: string[];
+    /**
+     * With open: hosts a plan's plugins cover. They keep their copies and are never reached live.
+     */
+    deny?: string[];
+  };
 }

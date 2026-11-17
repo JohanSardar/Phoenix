@@ -52,8 +52,17 @@ async function sampleTrace(root: string): Promise<{ events: TraceEvent[]; body(e
   } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return { events: [], body, blobs: {} }; throw error; }
 }
 
-function answerSources(trace: readonly TraceEvent[]): NonNullable<Sample["answers"]> {
+type NetworkConnection = { host: string; allowed: boolean; calls: { connector: string; op: string; call: number }[] };
+const networkConnections = async (trace: Awaited<ReturnType<typeof sampleTrace>>): Promise<NetworkConnection[]> =>
+  Promise.all(trace.events.filter(e => e.kind === "meta" && e.op === "network.connection").map(async e => JSON.parse(Buffer.from(await trace.body(e)).toString("utf8")) as NetworkConnection));
+
+function answerSources(trace: readonly TraceEvent[], network: readonly NetworkConnection[]): NonNullable<Sample["answers"]> {
   const results = trace.filter(e => e.kind === "result" && e.stream.startsWith("stand-in") && e.layer !== "under");
+  const live = new Map<number, { connector: string; op: string; hosts: string[] }>();
+  for (const connection of network.filter(c => c.allowed)) for (const { call, connector, op } of connection.calls) {
+    if (!live.has(call)) live.set(call, { connector, op, hosts: [] });
+    if (!live.get(call)!.hosts.includes(connection.host)) live.get(call)!.hosts.push(connection.host);
+  }
   const madeUp = results.filter(e => e.provenance === "synthesized");
   const afterUntaken = results.filter(e => e.after_untaken_write);
   return {
@@ -62,6 +71,7 @@ function answerSources(trace: readonly TraceEvent[]): NonNullable<Sample["answer
     working_copy: results.filter(e => e.resolver === "overlay" || e.resolver === "emulator").length,
     made_up: madeUp.length,
     made_up_calls: madeUp.map(e => ({ connector: e.connector ?? "", op: e.op ?? "" })),
+    ...(live.size ? { live: live.size, live_calls: [...live.values()] } : {}),
     ...(afterUntaken.length ? { after_untaken_write_calls: afterUntaken.map(e => ({ connector: e.connector ?? "", op: e.op ?? "" })) } : {}),
   };
 }
@@ -143,7 +153,7 @@ export class Runner {
         const baselineId = digest(canonical(baselinePlan));
         const baselineDirectory = this.directory(baselineId);
         if (!await optional(join(baselineDirectory, "plan.json"))) {
-          const request: ReplayRequest = { ...(plan.runner.recipe ? { recipe: join(directory, "inputs/recipe", plan.runner.recipe.file) } : {}), moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: plan.start, samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, ...(plan.login_context ? { loginContext: plan.login_context } : {}), env: plan.runner.env, plugins, simulator: plan.runner.simulator };
+          const request: ReplayRequest = { ...(plan.runner.recipe ? { recipe: join(directory, "inputs/recipe", plan.runner.recipe.file) } : {}), moment: join(directory, "inputs/bundle"), base: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, candidate: { digest: plan.base_tree, directory: join(directory, "inputs/base") }, harness: plan.runner.harness, bindings: plan.runner.bindings, image: plan.harness_image, model: plan.runner.model, start: plan.start, samples: plan.samples, runtime: { cli: plan.runner.cli, version: plan.container_runtime }, clockProbe: plan.clock_probe, ...(plan.login_context ? { loginContext: plan.login_context } : {}), env: plan.runner.env, plugins, simulator: plan.runner.simulator, ...(plan.network ? { network: plan.network.level } : {}) };
           const resolved = await this.plan(request);
           if (resolved !== baselineId) throw new Error("Baseline plan differs");
         }
@@ -189,10 +199,13 @@ export class Runner {
         if (report) { reports.push(report); for (const edit of report.context?.prefix_edits ?? []) edits.add(edit.field); }
       }
       const grades = reports.flatMap(r => r.grade ? [r.grade] : []);
+      const connections = plan.network ? (await Promise.all(status.samples.map(sample => sample.attempts.at(-1) ? optional<NetworkConnection[]>(join(directory, "samples", String(sample.sample), String(sample.attempts.at(-1)!.attempt), "network.json")) : undefined))).flatMap(list => list ?? []) : [];
+      const hosts = (allowed: boolean) => [...new Set(connections.filter(c => c.allowed === allowed).map(c => c.host))].sort();
       const result: ReplayResult = {
         phoenix_result: 1, plan: id, check: plan.check, ledger_entry: approval, start: plan.start, prefix_edits: [...edits].sort().map(field => ({ field })),
         samples: status.samples.map(({ complete: _, ...sample }) => sample), tiebreak_ran: status.samples.some(s => s.tiebreak),
         leaned_on_made_up: status.samples.some(s => s.status !== "unassessed" && s.leaned_on_made_up),
+        ...(plan.network ? { network: { level: plan.network.level, used_live_internet: hosts(true).length > 0, hosts: hosts(true), refused: hosts(false) } } : {}),
         ...(bundle.manifest.resume?.project ? { files_copy: { source: bundle.manifest.resume.project.source, ...(bundle.manifest.resume.project.commit ? { commit: bundle.manifest.resume.project.commit } : {}), taken_at: bundle.manifest.resume.project.taken_at, left_out: bundle.manifest.resume.project.left_out?.length ?? 0 } } : {}),
         verdict: verdict.verdict, discount: verdict.discount, ...(verdict.meets_check !== undefined ? { meets_check: verdict.meets_check } : {}),
         ...(grades.length ? { fidelity_grade: weakestTier(...grades) } : {}),
@@ -375,7 +388,8 @@ export class Runner {
       sample.discounted = verdict.discounted;
       sample.leaned_on_made_up = verdict.leaned_on_made_up;
       sample.expectations = assessed.expectations;
-      if (plan.runner.recipe) sample.answers = answerSources(trace);
+      if (plan.runner.recipe) sample.answers = answerSources(trace, await networkConnections(recorded));
+      if (plan.network) await save(join(root, "network.json"), await networkConnections(recorded));
       if (outcome.kind === "finished" && outcome.code !== 0) { sample.status = "fail"; attempt.cause = `candidate exited ${outcome.code}`; }
       if (plan.start === "echo" && outcome.kind === "diverged") await save(echoDriftPath(this.#options.root, plan.base_tree, plan.login_context), { result: id, cause: outcome.detail });
     }

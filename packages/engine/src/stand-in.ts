@@ -6,6 +6,7 @@ import type { CaptureMetadata } from "@phoenix/store";
 import { CLI_STREAM } from "@phoenix/taps";
 import { VirtualClock } from "./clock.ts";
 import { SampleTrace, streamName } from "./trace.ts";
+import { relayLive, type NetworkRule } from "./live-network.ts";
 
 export interface RecordedToolAnswer {
   id: string;
@@ -26,6 +27,7 @@ export interface ToolStandInOptions {
   pluginCommand?(connector: string, op: string, args: unknown): { calls: { connector: string; argv: string[]; env: Record<string, string>; cwd: string; stdin?: string }[]; around: string } | undefined;
   simulator?: Omit<SimulatorOptions, "clock">;
   emulators?: readonly EmulatorConfig[];
+  network?: NetworkRule;
   cutTime?: string;
   sample: { root: string; metadata: CaptureMetadata };
   hmacKey: Uint8Array;
@@ -60,6 +62,9 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
   const ctx = replayCtx(index, policy, emulators, options.simulator ? { ...options.simulator, clock: () => cutTime } : undefined);
   for (const exchange of index.frozen) if (!exchange.readOnly) ctx.histories = { ...ctx.histories, [exchange.connector]: [...(ctx.histories[exchange.connector] ?? []), exchange.key] };
   let served = 0;
+  const running = new Map<string, number[]>();
+  let boxed = 0;
+  const shellKey = (connector: string, op: string) => JSON.stringify([connector, op]);
   let stop!: (divergence: Divergence) => void;
   const stopped = new Promise<Divergence>(resolve => { stop = resolve; });
   const server = createServer((request, response) => {
@@ -70,6 +75,9 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
       const stream = streamName("stand-in", connector);
       response.setHeader("content-type", "application/json");
       if (message.method === "phoenix/ran") {
+        const key = shellKey(connector, message.params.name);
+        running.get(key)?.shift();
+        if (!running.get(key)?.length) running.delete(key);
         await trace.append(stream, { kind: "meta", connector, op: "files-copy.output", body: Buffer.from(JSON.stringify({ tool: message.params.name, result: message.params.result ?? null })) });
         response.end(rpc(message.id, { result: {} }));
         return;
@@ -116,6 +124,8 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
         const reply = rpc(message.id, { run_in_box: true });
         answeredOutside(call, { raw: { body: reply }, provenance: "real", resolver: "files-copy" }, ctx);
         served++;
+        const key = shellKey(connector, message.params.name);
+        running.set(key, [...running.get(key) ?? [], boxed++]);
         await trace.append(stream, { kind: "result", surface: "mcp", layer: "agent", connector, op: call.op, body: reply, provenance: "real", resolver: "files-copy" });
         response.end(reply);
         return;
@@ -140,6 +150,13 @@ export async function startToolStandIn(options: ToolStandInOptions): Promise<Too
   return {
     accept({ destination, stream }) {
       if (destination.host === options.host) { server.emit("connection", stream); return; }
+      if (options.network) {
+        const calls = [...running].flatMap(([key, ids]) => { const [connector, op] = JSON.parse(key) as [string, string]; return ids.map(call => ({ connector, op, call })); });
+        const record = (connection: object) => void trace.append("sandbox", { kind: "meta", op: "network.connection", body: Buffer.from(JSON.stringify({ ...connection, level: options.network!.level, calls })) });
+        if (calls.length) relayLive(stream, destination, options.network, record);
+        else { record({ host: destination.host, port: destination.port, method: null, allowed: false, why: "no shell line was running in the box" }); stream.destroy(); }
+        return;
+      }
       void trace.append("sandbox", { kind: "meta", op: "refused-connection", body: Buffer.from(JSON.stringify(destination)) });
       stream.destroy();
     },
