@@ -11,7 +11,7 @@ import { capturePlugin } from "./index.ts";
 
 test("S4: prefetch preserves a UTF-8 response's leading byte-order mark", async () => {
   const scratch = await mkdtemp(join(tmpdir(), "phoenix-prefetch-utf8-"));
-  const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("calendar data")]);
+  const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("example data")]);
   const server = createServer((_req, res) => {
     res.setHeader("content-type", "text/plain; charset=utf-8");
     res.end(bytes);

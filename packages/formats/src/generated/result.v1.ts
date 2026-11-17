@@ -38,20 +38,7 @@ export interface ReplayResult {
     who: string;
     at: string;
   };
-  start:
-    | ("beginning" | "mark" | "echo")
-    | {
-        /**
-         * An event id within a capture.
-         */
-        at: string;
-      };
-  prefix_edits: {
-    /**
-     * The configuration field that differs from the recording.
-     */
-    field: string;
-  }[];
+  start: "beginning" | "mark";
   samples: {
     sample: number;
     tiebreak: boolean;
@@ -74,7 +61,7 @@ export interface ReplayResult {
        */
       files_copy: number;
       /**
-       * Answered by a service's working copy, such as the calendar plugin.
+       * Answered by a service's working copy.
        */
       working_copy: number;
       /**

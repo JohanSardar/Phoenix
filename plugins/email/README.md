@@ -77,7 +77,7 @@ Merged with a gap (JOH-57 stays open). Not proven or not built yet:
 - himalaya against the real Gmail. Its output is compared only with the copy's own IMAP so far. This waits for Johan's app password.
 - pi on the resume path, the pi half of steps 2 to 4 and 6. pi reaches email only through himalaya.
 - The copy does not yet build its snapshot from what a command-line capture read. The reads are stored, but serve does not use them. The same is true for MCP prefetch.
-- The resume path does not yet send a new shell command, one the session never made, to a plugin's copy.
+- A new `himalaya` command line, one the session never ran, reaches the copy only when it is plain, piped, redirected or a `;` list whose other parts could run on the files copy. After `&&` or `||` it gets the next answer instead. The fx recipe can't read the copy's output, so this works for pi, Claude Code, Codex and OpenCode only.
 
 Other limits:
 
