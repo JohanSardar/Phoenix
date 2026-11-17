@@ -142,9 +142,11 @@ export class Mailbox {
     const id = header(splitHead(raw).headers, "message-id");
     const same = id && [...this.messages.values()].find(m => m.raw && this.messageIdOf(m) === id);
     const self = recipients.some(r => r.toLowerCase() === this.account.email.toLowerCase());
-    if (same) { this.relabel(same, ["SENT", ...(self ? ["INBOX", "UNREAD"] : [])]); return same.id; }
     const stripped = Buffer.from(raw.toString("latin1").replace(/^Bcc:.*(?:\r\n[ \t].*)*\r\n/im, ""), "latin1");
-    return this.file(stripped, ["SENT", ...(self ? ["INBOX", "UNREAD"] : [])]).id;
+    const filed = same ? (this.relabel(same, ["SENT", ...(self ? ["INBOX", "UNREAD"] : [])]), same) : this.file(stripped, ["SENT", ...(self ? ["INBOX", "UNREAD"] : [])]);
+    // Gmail filed himalaya's saved copy, appended right after the send, one second later (2026-11-16).
+    this.nowMs = nowMs + 1000;
+    return filed.id;
   }
 
   file(raw, labels) {
