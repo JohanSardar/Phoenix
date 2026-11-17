@@ -85,6 +85,7 @@ A real send through himalaya with no Date and no Message-ID (2026-11-16) is the 
 - Gmail's SMTP adds a `Message-ID: <…@mx.google.com>` and a `Date` in Pacific time to a message that has none; the copy's SMTP does the same.
 - A message with no Date header is listed at its arrival time, in Pacific time, not as 1970.
 - himalaya's saved copy without a Message-ID stays a second entry in Sent Mail; one with a Message-ID merges into the sent message, which then gets a new UID (each such send used two ids).
+- The saved copy arrives one second after the sent message (2026-11-17), so a listing shows it first; the copy files it the same way, so two listings never disagree on their order.
 
 ## Limits
 
