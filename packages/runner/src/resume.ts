@@ -133,7 +133,7 @@ export async function resumeAttempt(input: {
       if (!found || found.calls.some(c => c.conditional)) return undefined;
       const cwd = typeof givenCwd === "string" ? givenCwd : undefined;
       const rest = found.around.replace(/\u0000\d+\u0000/g, "true");
-      const guarded = project ? runsOnCopy(rest, project.root, { ...(cwd ? { cwd } : {}), ...(project.home ? { home: project.home } : {}), commands: pluginWords }) : /^true(?: [12]>& '[12]'| (?:[12]?>>?|&>) '\/dev\/null')*$/.test(rest);
+      const guarded = !/(^|[;&|] )'(cd|pushd|popd)'( |$)/.test(rest) && (project ? runsOnCopy(rest, project.root, { ...(cwd ? { cwd } : {}), ...(project.home ? { home: project.home } : {}), commands: pluginWords }) : /^true(?: [12]>& '[12]'| (?:[12]?>>?|&>) '\/dev\/null')*$/.test(rest));
       return guarded ? { calls: found.calls.map(c => ({ connector: c.connector, argv: c.argv, env: c.env ?? {}, cwd: cwd ?? project?.root ?? "/", ...(c.stdin === undefined ? {} : { stdin: c.stdin }) })), around: found.around } : undefined;
     },
     ...(input.simulator ? { simulator: input.simulator } : {}),
