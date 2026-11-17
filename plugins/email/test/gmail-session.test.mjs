@@ -128,6 +128,6 @@ test("a snapshot cut just after himalaya writes holds them", async t => {
   ]);
   await assert.rejects(() => copy(list()), /unsupported/);
   await assert.rejects(() => copy(list("[Gmail]/Sent Mail")), /unsupported/);
-  assert.deepEqual(brief(await copy(list("[Gmail]/Trash"))).map(([, subject]) => subject), ["Invoice"]);
+  await assert.rejects(() => copy(list("[Gmail]/Trash")), /unsupported/);
   await assert.rejects(() => copy(["himalaya", "message", "read", "--preview", "-f", "[Gmail]/Sent Mail", "429"]), /unsupported/);
 });

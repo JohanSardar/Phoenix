@@ -178,6 +178,14 @@ export class Mailbox {
   draftUrl(draftId, threadId) { return `https://mail.google.com/mail/?authuser=${this.account.email}#all?compose=thread-f:${BigInt("0x" + threadId).toString()}%2Bmsg-a:${draftId}`; }
 
   // Changes labels and keeps the label counters in step, as Gmail does.
+  // Whether a past himalaya write left a folder's content unknown, by label. All Mail (null), Starred and
+  // Important span folders, so they are unknown while any folder is.
+  unknown(label) {
+    const unsettled = this.unsettled ?? new Set();
+    if (label === null || label === "STARRED" || label === "IMPORTANT") return unsettled.size > 0;
+    return unsettled.has(label) || (unsettled.has("*") && !this.relearned?.has(label));
+  }
+
   relabel(message, add = [], remove = []) {
     const before = new Set(message.labelIds);
     const after = new Set([...before].filter(l => !remove.includes(l)));

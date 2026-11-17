@@ -45,8 +45,8 @@ export function reads(argv, entries) {
   });
 }
 
-// A UID the real service printed. The copy gives its own UIDs to mail it made, such as a replayed send,
-// and a later real listing replaces them.
+// A UID the real service printed. The copy gives its own UIDs to mail it made, and a later real listing
+// replaces them.
 function realUid(box, m, folder, uid) {
   for (const o of box.messages.values()) if (o !== m && o.uids[folder] === uid) { delete o.uids[folder]; o.realUids?.delete(folder); }
   m.uids[folder] = uid;
@@ -80,10 +80,9 @@ function envelopes(box, folder, list, newestFirst) {
     const minute = newestFirst && dateMs(e.date) !== undefined ? list.filter(o => o?.date === e.date).length : 0;
     const later = minute ? list.slice(i + 1).filter(o => o?.date === e.date).length : 0;
     const ms = dateMs(e.date) === undefined ? box.nowMs ?? 0 : dateMs(e.date) + Math.min(later, 59) * 1000;
-    // Recorded observations of one message in different folders are joined by their envelope. A record
-    // a replayed write made is never joined this way: only a recorded id ties it to anything.
+    // Recorded observations of one message in different folders are joined by their envelope.
     const alike = [...box.messages.values()].filter(o => {
-      if (o.provisional || o.realUids?.has(folder) || o.fields.subject !== e.subject || !minutes(o).has(Math.floor(ms / 60000))) return false;
+      if (o.realUids?.has(folder) || o.fields.subject !== e.subject || !minutes(o).has(Math.floor(ms / 60000))) return false;
       const { sender, to } = heads(o);
       return sender === e.from?.addr && (!e.to?.addr || to.includes(e.to.addr));
     });
@@ -160,7 +159,7 @@ export function takeUids(box, argv, ours, theirs, aliases = {}) {
   const identity = e => JSON.stringify([e?.subject, e?.from?.addr, e?.from?.name, e?.to?.addr, e?.date, e?.has_attachment]);
   if (new Set(copy.map(identity)).size !== copy.length) return;
   const pairs = copy.map((e, i) => [byUid(box, folder, Number(e?.id)), Number(real[i]?.id), identity(e) === identity(real[i])]);
-  if (pairs.some(([m, uid, same]) => !m || m.provisional || !Number.isInteger(uid) || !same)) return;
+  if (pairs.some(([m, uid, same]) => !m || !Number.isInteger(uid) || !same)) return;
   const moving = new Set(pairs.map(([m]) => m));
   if (pairs.some(([, uid]) => { const holder = byUid(box, folder, uid); return holder && !moving.has(holder); })) return;
   for (const [m, uid] of pairs) realUid(box, m, folder, uid);
@@ -180,7 +179,8 @@ export function listShape(argv, stdout, aliases = {}) {
 }
 
 // The folders a himalaya write puts mail into or takes it out of, by name; undefined when the copy can't tell.
-// All Mail, Starred and Important follow from the others.
+// All Mail, Starred and Important follow from the others. A flag change and a move into Trash or Spam
+// change the message in every folder that holds it, which the copy can't name.
 export function touches(box, argv, stdin, aliases = {}) {
   const { words, folder } = command(argv, aliases);
   const name = word => aliases[String(word ?? "").toLowerCase()] ?? word;
@@ -193,11 +193,28 @@ export function touches(box, argv, stdin, aliases = {}) {
     return verb === "send" && me && !to.includes(me) ? [sent] : [sent, "INBOX"];
   }
   if ((noun === "message" || noun === "template") && verb === "save") return [folder];
-  if (noun === "message" && verb === "move" && target) return [folder, name(target)];
-  if (noun === "message" && verb === "copy" && target) return [name(target)];
-  if (noun === "message" && verb === "delete") return folder === trash ? [folder] : [folder, trash];
-  if (noun === "flag" && ["add", "set", "remove"].includes(verb)) return [folder];
+  const bin = f => f === trash || folderLabel(box, f).label === "TRASH" || folderLabel(box, f).label === "SPAM";
+  if (noun === "message" && verb === "move" && target && !bin(name(target))) return [folder, name(target)];
+  if (noun === "message" && verb === "copy" && target && !bin(name(target))) return [name(target)];
+  if (noun === "message" && verb === "delete" && bin(folder)) return [folder];
   if (noun === "folder" && ["expunge", "purge", "delete", "add", "create"].includes(verb) && target) return [name(target)];
+}
+
+// A list that shows a whole folder: the folder holds exactly the listed messages. A message it no
+// longer shows loses the folder, and one gone from Trash or Spam is gone. False when a listed message
+// has no record, so the folder can't be known.
+export function wholeFolder(box, folder, list) {
+  const { label } = folderLabel(box, folder);
+  const listed = new Set(list.map(e => Number(e?.id)));
+  if ([...listed].some(uid => !byRealUid(box, folder, uid))) return false;
+  for (const m of [...box.messages.values()]) {
+    if (!m.labelIds.includes(label) || (m.realUids?.has(folder) && listed.has(m.uids[folder]))) continue;
+    if (label === "TRASH" || label === "SPAM") { box.remove(m); continue; }
+    delete m.uids[folder];
+    m.realUids?.delete(folder);
+    box.relabel(m, [], [label]);
+  }
+  return true;
 }
 
 // The label a folder name stands for (null for All Mail), or undefined for a folder the copy doesn't know.

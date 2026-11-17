@@ -155,6 +155,7 @@ export class Connector {
 
   listLabels() {
     if (!this.box.labels) throw new Unsupported("the copy never saw the label list");
+    if (this.box.unsettled?.size) throw new Unsupported("the copy can't tell what some folders hold after a past himalaya write, so it gives no label counts");
     const known = this.box.labels.map(l => {
       const d = this.box.labelDeltas.get(l.labelId);
       if (!d || l.messagesTotal === undefined) return l;

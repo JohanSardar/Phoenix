@@ -282,7 +282,7 @@ export function startImap(box, { log } = {}) {
   // A folder a past write changed after the session last saw all of it answers nothing.
   const unsure = name => {
     const entry = folders.find(name);
-    if (!entry || !(box.unsettled?.has(entry[1]) || box.unsettled?.has("*"))) return false;
+    if (!entry || !box.unknown(entry[1])) return false;
     box.missed = `the copy can't tell what ${entry[0]} holds after a past himalaya write`;
     return true;
   };

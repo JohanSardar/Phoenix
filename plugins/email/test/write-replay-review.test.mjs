@@ -76,6 +76,7 @@ test("S22: a non-preview JSON read still teaches the captured body", async t => 
   const copy = await copyOf(t, cliEvents([
     { argv: list(), stdout: [envelope("10", "[phoenix-test] t57 Invoice")] },
     { argv: ["himalaya", "message", "read", "-o", "json", "10"], stdout: JSON.stringify("From: Test Person <" + me + ">\nTo: ana@example.com\nSubject: [phoenix-test] t57 Invoice\n\nInvoice due.\n") },
+    { argv: [...list(), "-s", "10"], stdout: [{ ...envelope("10", "[phoenix-test] t57 Invoice"), flags: ["Seen"] }] },
   ]));
   assert.match(await copy.cli(["himalaya", "message", "read", "--preview", "10"]), /Invoice due\./);
 });
@@ -131,7 +132,7 @@ test("S27: a later MCP unread change must win over an earlier CLI seen change", 
     ...cliEvents([{ argv: list(), stdout: [envelope("10", message.subject)] }, { argv: ["himalaya", "flag", "add", "10", "seen"], stdout: "Flags successfully added!\n" }]),
     ...mcpEvents("label_message", { messageId: id, labelIds: ["UNREAD"] }, {}, "2026-11-16T20:33:50Z"),
   ]);
-  assert.ok(!JSON.parse(await copy.cli(list()))[0].flags.includes("Seen"));
+  assert.equal((await copy.response(list())).status, "unsupported");
 });
 
 test("S26: historical envelope matching must distinguish same-minute recipients", async t => {
@@ -286,7 +287,7 @@ test("S35: a mirrored list must not attach an unread real UID to a provisional b
   const real = JSON.parse(await source.cli(argv));
   assert.equal(real[0].id, "777");
   const copy = await copyOf(t, cliEvents([{ argv: ["himalaya", "message", "send"], stdin: raw("Bound", "Provisional body."), stdout: "Message successfully sent!\n" }]));
-  await copy.cli(argv, "", real);
+  assert.equal((await copy.response(argv)).status, "unsupported");
   const response = await copy.response(["himalaya", "message", "read", "--preview", "-f", sent, real[0].id]);
   if (response.status === "answer") {
     const frames = JSON.parse(Buffer.from(response.value.body, "base64").toString());
@@ -374,4 +375,84 @@ test("S40: separate sends without a Message-ID must get separate server-generate
   assert.equal(JSON.parse(await copy.cli(list(sent))).length, 2);
   await copy.cli(["himalaya", "message", "send"], message);
   assert.equal(JSON.parse(await copy.cli(list(sent))).length, 4);
+});
+
+test("S41: an unmappable past write must refuse every folder even without later observations", async t => {
+  const copy = await copyOf(t, cliEvents([
+    { argv: ["himalaya", "flag", "add", "-f", "Work", "10", "seen"], stdout: "Flags successfully added!\n" },
+  ]));
+  const response = await copy.response(list());
+  t.diagnostic(JSON.stringify(response));
+  assert.equal(response.status, "unsupported");
+});
+
+test("S42: whole lists after a skipped move must remove old source membership", async t => {
+  const initial = { argv: list(), stdout: [envelope("10", "Moved")] };
+  const source = await copyOf(t, cliEvents([initial]));
+  const move = ["himalaya", "message", "move", "-f", "INBOX", sent, "10"];
+  const moved = await source.cli(move);
+  const inboxList = [...list(), "-s", "100"], sentList = [...list(sent), "-s", "100"];
+  const inboxOutput = await source.cli(inboxList), sentOutput = await source.cli(sentList);
+  assert.deepEqual(JSON.parse(inboxOutput), []);
+  const copy = await copyOf(t, cliEvents([
+    initial,
+    { argv: move, stdout: moved },
+    { argv: inboxList, stdout: inboxOutput },
+    { argv: sentList, stdout: sentOutput },
+  ]));
+  const shown = await optionalList(copy, inboxList);
+  t.diagnostic(JSON.stringify(shown) ?? "unsupported");
+  if (shown) assert.deepEqual(shown, JSON.parse(inboxOutput));
+});
+
+test("S43: an unsettled Sent folder must not give a false empty All Mail answer", async t => {
+  const source = await copyOf(t, { account: { email: me } });
+  const send = ["himalaya", "message", "send"], message = raw("Unseen", "Sent but not listed.");
+  const sentOutput = await source.cli(send, message);
+  const query = [...list(sent), "subject", "Absent"];
+  const partial = await source.cli(query);
+  assert.deepEqual(JSON.parse(partial), []);
+  const allMail = list("[Gmail]/All Mail");
+  const expected = JSON.parse(await source.cli(allMail));
+  assert.equal(expected.length, 1);
+  const copy = await copyOf(t, { account: { email: me }, himalaya_output: [
+    { argv: send, stdin: message, stdout: sentOutput, code: 0, at: "2026-11-16T20:33:40Z" },
+    { argv: query, stdout: partial, code: 0, at: "2026-11-16T20:33:41Z" },
+  ] });
+  const shown = await optionalList(copy, allMail);
+  t.diagnostic(JSON.stringify(shown) ?? "unsupported");
+  if (shown) assert.equal(shown.length, expected.length);
+});
+
+test("S44: a JSON read using --folder must stop replaying the observed send", async t => {
+  const source = await copyOf(t, { account: { email: me } });
+  const send = ["himalaya", "message", "send"], message = raw("LongFolder", "Read after sending.");
+  const sentOutput = await source.cli(send, message);
+  const [listed] = JSON.parse(await source.cli(list(sent)));
+  const read = ["himalaya", "message", "read", "--preview", "--folder", sent, "-o", "json", listed.id];
+  const output = await source.cli(read);
+  const copy = await copyOf(t, { account: { email: me }, himalaya_output: [
+    { argv: send, stdin: message, stdout: sentOutput, code: 0, at: "2026-11-16T20:33:40Z" },
+    { argv: read, stdout: output, code: 0, at: "2026-11-16T20:33:41Z" },
+  ] });
+  const shown = await optionalList(copy, list(sent));
+  t.diagnostic(JSON.stringify(shown) ?? "unsupported");
+  if (shown) assert.equal(shown.length, 1);
+});
+
+test("S45: an IDS_ONLY connector search of Sent must prevent inventing another observed thread id", async t => {
+  const source = await copyOf(t, { account: { email: me } });
+  const send = ["himalaya", "message", "send"], message = raw("IdOnly", "Already observed thread.");
+  const sentOutput = await source.cli(send, message);
+  const args = { query: "in:sent subject:IdOnly", view: "THREAD_VIEW_IDS_ONLY" };
+  const expected = await source.tool("search_threads", args);
+  assert.equal(expected.threads.length, 1);
+  const copy = await copyOf(t, [
+    ...cliEvents([{ argv: send, stdin: message, stdout: sentOutput }]),
+    ...mcpEvents("search_threads", args, expected, "2026-11-16T20:33:41Z"),
+  ]);
+  await copy.tool("search_threads", args).then(actual => {
+    t.diagnostic(JSON.stringify({ expected, actual }));
+    assert.deepEqual(actual, expected);
+  }, error => assert.match(error.message, /unsupported/));
 });
