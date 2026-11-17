@@ -41,4 +41,10 @@ Side by side with mcp.sentry.dev, the copy's answers differ in these ways. mcp.s
 - `update_issue`: the real answer also reports the issue's priority.
 - Notes and activity entries made in a replay have new ids and the replay's times.
 
-The copy covers Sentry's MCP server only. A `sentry` or `sentry-cli` command run in a shell is not served by it.
+## The sentry command line
+
+A `sentry` command run in a shell is answered by the real `sentry` CLI (0.44.1, a dependency of this plugin) in the box, with its Sentry API calls sent to the copy. `sentry-cli` is not served.
+
+The copy answers from a mark's reads. When `phoenix mark` marks a live session that ran sentry lines, the capture command plans each read-only sentry line the session ran, again and in full (help and version need no data and are left out), then `issue view` by org/short id and by short id for each issue those lines listed (at most 10). The host runs each through `src/cli-snapshot.mjs` (`capture.reads`): the same CLI with the person's stored login and `route.mjs` in snapshot mode, so only GET reaches Sentry. It prints what the line printed and the API replies behind it, and the copy loads those replies. A sentry line whose API calls the snapshot does not hold comes back unsupported, and the reason names them. The read-only entries for the CLI are its list and view commands; nothing under `sentry auth` is read.
+
+`SENTRY_ORG` and `SENTRY_PROJECT` set in front of a sentry line are not used: the mark re-runs the line without them and the copy answers it without them, so such a line comes back unsupported. Name the org and project in the line instead.

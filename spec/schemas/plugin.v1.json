@@ -176,6 +176,17 @@
             "http"
           ],
           "description": "Newline-delimited JSON on stdio, or plain HTTP."
+        },
+        "reads": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "description": "By recognized command: the argv the host runs, in the plugin's folder, for a planned command-line read of that command instead of the command itself. The read's argv after its first word is appended."
         }
       }
     },

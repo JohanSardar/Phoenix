@@ -10,8 +10,64 @@ const descriptor = JSON.parse(await readFile(new URL("../phoenix-plugin.json", i
 const MESSAGE_RESULTS = new Set(["get_message", "send_message", "reply", "forward"]);
 const DRAFT_RESULTS = new Set(["create_draft", "update_draft", "get_draft"]);
 const HEADERS = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "In-Reply-To", "References"];
-let calls = { mcp: [], cli: [] };
+// A mark's command-line reads: page 1 of each folder the session touched, then the content of the mail in those
+// pages that is dated from the session's first himalaya call on. Caps keep the snapshot to what the session touched.
+const MAX_FOLDERS = 6, PAGE = 20, READS_PER_FOLDER = 10, MAX_READS = 20;
+let calls = { mcp: [], cli: undefined };
 let initialized = false;
+
+// The -c and -a options a session gave himalaya, so the mark reads the same account.
+function globalOptions(argv) {
+  const out = [];
+  for (let i = 1; i < argv.length; i++) {
+    const eq = /^(--config|--account)=(.*)$/.exec(argv[i]);
+    if (eq) out.push(eq[1], eq[2]);
+    else if (["-c", "--config", "-a", "--account"].includes(argv[i]) && argv[i + 1] !== undefined) out.push(argv[i], argv[++i]);
+  }
+  return out;
+}
+
+// The folders a himalaya call reads or changes: its own folder (INBOX unless -f names one), a move or copy's
+// target, Trash for a delete, and Sent for anything that sends. Folder aliases such as "sent" are resolved by himalaya.
+function touched(argv) {
+  const words = [];
+  let folder;
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    const eq = /^(--[a-z-]+)=(.*)$/.exec(a);
+    if (eq) { if (eq[1] === "--folder") folder = eq[2]; continue; }
+    if (valued(argv, a)) { if (a === "-f" || a === "--folder") folder = argv[i + 1]; i++; continue; }
+    if (!a.startsWith("-")) words.push(a);
+  }
+  const [group, action, target] = words;
+  const folders = [];
+  if (["envelope", "flag", "attachment"].includes(group) || (group === "message" && ["read", "move", "copy", "delete", "save", "thread", "export", "reply", "forward"].includes(action))) folders.push(folder ?? "INBOX");
+  if (group === "message" && ["move", "copy"].includes(action) && target) folders.push(target);
+  if (group === "message" && action === "delete") folders.push("trash");
+  if ((group === "message" && ["send", "write", "reply", "forward"].includes(action)) || (group === "template" && action === "send")) folders.push("sent");
+  return folders;
+}
+
+// The reads for this round: the first round's, plus, once the folder pages are in, a --preview read of each listed
+// message dated from the session's start.
+function cliPlan(results) {
+  if (!calls.cli) return [];
+  const { base, listings, globals, since } = calls.cli;
+  const more = [];
+  for (const result of results ?? []) {
+    const folder = listings.get(JSON.stringify(result.args?.argv ?? []));
+    if (folder === undefined) continue;
+    let list;
+    try {
+      const frames = JSON.parse(result.observation.response.body);
+      list = JSON.parse(Buffer.concat(frames.filter(f => f.dir === "back" && f.stream === 1).map(f => Buffer.from(f.bytes, "base64"))).toString("utf8"));
+    } catch { continue; }
+    if (!Array.isArray(list)) continue;
+    const fresh = list.filter(e => /^\d+$/.test(String(e?.id)) && Date.parse(String(e.date ?? "").replace(" ", "T")) >= since).slice(0, READS_PER_FOLDER);
+    for (const e of fresh) more.push(["himalaya", "message", "read", "--preview", ...globals, "-f", folder, "-o", "json", ...HEADERS.flatMap(h => ["-H", h]), String(e.id)]);
+  }
+  return [...base, ...more.slice(0, MAX_READS).map(argv => ({ op: "himalaya", args: { argv } }))];
+}
 
 async function plan(segments) {
   const events = [], commands = [];
@@ -30,7 +86,7 @@ async function plan(segments) {
         let value;
         try { value = JSON.parse(await bodyOf(event, segment) ?? ""); } catch { continue; }
         const argv = event.op === "open" ? value?.meta?.argv : value?.argv;
-        if (Array.isArray(argv) && argv.every(a => typeof a === "string")) commands.push(argv);
+        if (Array.isArray(argv) && argv.every(a => typeof a === "string")) commands.push({ argv, at: Date.parse(event.ts?.wall ?? "") });
       }
     }
   }
@@ -71,7 +127,7 @@ async function plan(segments) {
     for (const d of value.drafts ?? []) { add(drafts, d.id); add(messages, d.messageId); add(threads, d.threadId); }
   }
   const reads = new Map();
-  for (const argv of commands) {
+  for (const { argv } of commands) {
     const at = argv.findIndex((word, i) => i > 0 && ((word === "envelope" && argv[i + 1] === "list") || (word === "message" && argv[i + 1] === "read")));
     if (at < 0) continue;
     const [group, action] = argv.slice(at, at + 2);
@@ -87,7 +143,15 @@ async function plan(segments) {
     const plan = group === "envelope" ? [["himalaya", group, action, ...options, "-o", "json"]] : ids.map(id => ["himalaya", group, action, "--preview", ...options, "-o", "json", ...HEADERS.flatMap(h => ["-H", h]), id]);
     for (const read of plan) reads.set(JSON.stringify(read), read);
   }
-  const cli = commands.length ? [["himalaya", "folder", "list"], ...reads.values()].map(argv => ({ op: "himalaya", args: { argv: ["himalaya", ...argv.slice(1)] } })) : [];
+  const globals = commands.map(({ argv }) => globalOptions(argv)).find(options => options.length) ?? [];
+  const folders = new Map();
+  for (const { argv } of commands) for (const folder of touched(argv)) if (folders.size < MAX_FOLDERS && !folders.has(folder.toLowerCase())) folders.set(folder.toLowerCase(), folder);
+  const listings = new Map([...folders.values()].map(folder => [JSON.stringify(["himalaya", "envelope", "list", ...globals, "-f", folder, "--page-size", String(PAGE), "-o", "json"]), folder]));
+  const times = commands.map(c => c.at).filter(Number.isFinite);
+  const cli = commands.length ? {
+    base: [["himalaya", "folder", "list", ...globals, "-o", "json"], ...[...listings.keys()].map(key => JSON.parse(key)), ...reads.values()].map(argv => ({ op: "himalaya", args: { argv: ["himalaya", ...argv.slice(1)] } })),
+    listings, globals, since: times.length ? Math.floor(Math.min(...times) / 60000) * 60000 - 60000 : Infinity,
+  } : undefined;
   if (!used) return { mcp: [], cli };
   return { cli, mcp: [
     { op: "tools/call:list_labels", args: {} },
@@ -110,7 +174,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       initialized = true;
       value = null;
     } else if (!initialized) throw new Error("Initialize first");
-    else if (request.method === "capture" && request.params.phase === "plan") value = { calls: request.params.surface === "cli" ? calls.cli : request.params.surface === "mcp" ? calls.mcp : [] };
+    else if (request.method === "capture" && request.params.phase === "plan") value = { calls: request.params.surface === "cli" ? cliPlan(request.params.results) : request.params.surface === "mcp" ? calls.mcp : [] };
     else if (request.method === "capture" && request.params.phase === "complete") value = { collections: [{ entity: "message", complete: false }, { entity: "draft", complete: false }] };
     else {
       console.log(JSON.stringify({ phoenix_plugin: 1, id: request.id, status: "unsupported", reason: "The capture command does not answer " + request.method }));
