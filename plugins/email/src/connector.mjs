@@ -27,15 +27,7 @@ export class Connector {
     throw new Unsupported(`message ${id} is not in the copy`);
   }
 
-  // A folder a past himalaya write changed, after the session last saw all of it, answers nothing.
-  settled(m) {
-    const unsettled = this.box.unsettled ?? new Set();
-    const inTrash = m.labelIds.includes("TRASH") || m.labelIds.includes("SPAM");
-    if (unsettled.has("*") || (unsettled.has(null) && !inTrash) || m.labelIds.some(l => unsettled.has(l))) throw new Unsupported(`the copy can't tell what the folders of message ${m.id} hold after a past himalaya write`);
-  }
-
   render(m, format = "PLAIN_TEXT") {
-    this.settled(m);
     const level = knowsFor(format);
     if (!knows(m, level)) throw new Unsupported(`the copy does not hold the ${format} form of message ${m.id}`);
     const full = { ...m.fields, id: m.id, threadId: m.threadId, labelIds: m.labelIds, historyId: m.historyId, internalDate: m.internalDate, viewUrl: m.fields.viewUrl ?? this.box.viewUrl(m), ...(format === "RAW" ? { raw: m.raw.toString("base64url") } : {}) };
@@ -46,7 +38,6 @@ export class Connector {
 
   threadView(threadId, format, subset) {
     const messages = this.box.thread(threadId);
-    for (const m of messages) this.settled(m);
     const shown = subset ? messages.slice(-subset) : messages;
     return { id: threadId, messageCount: messages.length, messages: shown.map(m => format === "IDS" ? { id: m.id } : this.render(m, format)), viewUrl: this.box.threadUrl(threadId) };
   }
@@ -132,7 +123,6 @@ export class Connector {
   }
 
   search(a, nowMs) {
-    if (this.box.unsettled?.size) throw new Unsupported("the copy can't tell what some folders hold after a past himalaya write, so it answers no search");
     const { match, mentionsBin, unknown } = compileQuery(a.query ?? "", this.box, nowMs);
     const visible = m => !m.labelIds.includes("DRAFT") && (a.includeTrash || mentionsBin || (!m.labelIds.includes("TRASH") && !m.labelIds.includes("SPAM")));
     const threads = new Map();
@@ -155,7 +145,6 @@ export class Connector {
 
   listLabels() {
     if (!this.box.labels) throw new Unsupported("the copy never saw the label list");
-    if (this.box.unsettled?.size) throw new Unsupported("the copy can't tell what some folders hold after a past himalaya write, so it gives no label counts");
     const known = this.box.labels.map(l => {
       const d = this.box.labelDeltas.get(l.labelId);
       if (!d || l.messagesTotal === undefined) return l;
@@ -173,7 +162,6 @@ export class Connector {
 
   draftView(draftId, view) {
     const m = this.draftMessage(draftId);
-    this.settled(m);
     if (view !== "metadata" && !knows(m, "body")) throw new Unsupported(`the copy does not hold the body of draft ${draftId}`);
     const f = m.fields;
     const out = { date: f.date, id: draftId, labelIds: m.labelIds, messageId: m.id, sender: f.sender, threadId: m.threadId, toRecipients: f.toRecipients, ccRecipients: f.ccRecipients, bccRecipients: f.bccRecipients, viewUrl: this.box.draftUrl(draftId, m.threadId) };
@@ -182,7 +170,6 @@ export class Connector {
   }
 
   listDrafts(a, nowMs) {
-    if (this.box.unsettled?.size) throw new Unsupported("the copy can't tell what some folders hold after a past himalaya write, so it lists no drafts");
     const { match } = compileQuery(a.query ?? "", this.box, nowMs);
     const drafts = [...this.box.drafts.entries()].map(([id, messageId]) => [id, this.box.messages.get(messageId)]).filter(([, m]) => m && match(m));
     if (!drafts.length) return {};

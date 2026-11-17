@@ -165,63 +165,6 @@ export function takeUids(box, argv, ours, theirs, aliases = {}) {
   for (const [m, uid] of pairs) realUid(box, m, folder, uid);
 }
 
-// What a recorded JSON envelope list shows: its folder and account, how many entries it printed, its
-// page size when the call gave one, and whether it is the first page with no search.
-export function listShape(argv, stdout, aliases = {}) {
-  const { words, folder, json } = command(argv, aliases);
-  if (!json || words[0] !== "envelope" || words[1] !== "list") return;
-  const option = names => { for (let i = argv.length - 1; i > 0; i--) { if (names.includes(argv[i])) return argv[i + 1]; const eq = names.map(n => argv[i].startsWith(n + "=") && argv[i].slice(n.length + 1)).find(Boolean); if (eq) return eq; } };
-  let list;
-  try { list = JSON.parse(stdout); } catch { return; }
-  if (!Array.isArray(list)) return;
-  const size = option(["--page-size", "-s"]);
-  return { folder, account: option(["--account", "-a"]) ?? "", count: list.length, size: size === undefined ? undefined : Number(size), first: Number(option(["--page", "-p"]) ?? 1) === 1 && words.length === 2 };
-}
-
-// The folders a himalaya write puts mail into or takes it out of, by name; undefined when the copy can't tell.
-// All Mail, Starred and Important follow from the others. A flag change and a move into Trash or Spam
-// change the message in every folder that holds it, which the copy can't name.
-export function touches(box, argv, stdin, aliases = {}) {
-  const { words, folder } = command(argv, aliases);
-  const name = word => aliases[String(word ?? "").toLowerCase()] ?? word;
-  const sent = aliases.sent ?? "[Gmail]/Sent Mail", trash = aliases.trash ?? "[Gmail]/Trash";
-  const [noun, verb, target] = words;
-  if ((noun === "message" || noun === "template") && ["send", "reply", "forward"].includes(verb)) {
-    const { headers } = splitHead(Buffer.from(String(stdin ?? "")));
-    const to = ["to", "cc", "bcc"].flatMap(h => addresses(header(headers, h) ?? "").map(x => x.email.toLowerCase()));
-    const me = box.account.email?.toLowerCase();
-    return verb === "send" && me && !to.includes(me) ? [sent] : [sent, "INBOX"];
-  }
-  if ((noun === "message" || noun === "template") && verb === "save") return [folder];
-  const bin = f => f === trash || folderLabel(box, f).label === "TRASH" || folderLabel(box, f).label === "SPAM";
-  if (noun === "message" && verb === "move" && target && !bin(name(target))) return [folder, name(target)];
-  if (noun === "message" && verb === "copy" && target && !bin(name(target))) return [name(target)];
-  if (noun === "message" && verb === "delete" && bin(folder)) return [folder];
-  if (noun === "folder" && ["expunge", "purge", "delete", "add", "create"].includes(verb) && target) return [name(target)];
-}
-
-// A list that shows a whole folder: the folder holds exactly the listed messages. A message it no
-// longer shows loses the folder, and one gone from Trash or Spam is gone. False when a listed message
-// has no record, so the folder can't be known.
-export function wholeFolder(box, folder, list) {
-  const { label } = folderLabel(box, folder);
-  const listed = new Set(list.map(e => Number(e?.id)));
-  if ([...listed].some(uid => !byRealUid(box, folder, uid))) return false;
-  for (const m of [...box.messages.values()]) {
-    if (!m.labelIds.includes(label) || (m.realUids?.has(folder) && listed.has(m.uids[folder]))) continue;
-    if (label === "TRASH" || label === "SPAM") { box.remove(m); continue; }
-    delete m.uids[folder];
-    m.realUids?.delete(folder);
-    box.relabel(m, [], [label]);
-  }
-  return true;
-}
-
-// The label a folder name stands for (null for All Mail), or undefined for a folder the copy doesn't know.
-export function labelOf(box, folder) {
-  const place = folderLabel(box, folder);
-  return place.known ? place.label : undefined;
-}
 export function learnHimalaya(box, observations, aliases = {}) {
   for (const { argv, stdout } of observations) {
     const { words, folder, json, newestFirst } = command(argv, aliases);

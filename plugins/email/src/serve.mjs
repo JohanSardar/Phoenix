@@ -5,13 +5,12 @@ import { createInterface } from "node:readline";
 import { Mailbox } from "./mailbox.mjs";
 import { Connector, TOOLS, ToolError, Unsupported } from "./connector.mjs";
 import { Himalaya, folderAliases } from "./himalaya.mjs";
-import { labelOf, learnHimalaya, listShape, reads, takeUids, touches, wholeFolder } from "./learn.mjs";
-import { addresses } from "./mime.mjs";
+import { learnHimalaya, reads, takeUids, VALUED } from "./learn.mjs";
 
 let box, connector, himalaya, aliases;
 const READ_ONLY = JSON.parse(await readFile(new URL("../phoenix-plugin.json", import.meta.url), "utf8")).read_only.filter(entry => entry.startsWith("himalaya "));
 
-const DERIVED = [null, "STARRED", "IMPORTANT"];
+const READ_OPTIONS = new Set([...VALUED, "--preview"]);
 const stdoutOf = frames => Buffer.concat(frames.filter(f => f.dir === "back" && f.stream === 1).map(f => Buffer.from(f.bytes, "base64"))).toString("utf8");
 
 // When the engine runs a recorded call against the copy, it also sends the recorded answer.
@@ -80,24 +79,16 @@ async function initialize(params) {
   await himalaya.start();
   // Connector answers and himalaya calls are one history, in time order; what any himalaya call printed
   // is learned. A step without a time keeps its place after the step before it in its own list.
-  // A past himalaya write is never run again in the copy. Each folder it touches becomes unknown, and
-  // every folder does when the copy can't name them. A later list that shows a whole folder makes that
-  // folder known again, holding exactly what the list shows. An unknown folder answers unsupported.
+  // A session that changed mail through himalaya before this moment can't be followed: the copy can't
+  // know what that write did, so it answers nothing. Only the plugin's read-only himalaya commands,
+  // with options the copy knows, count as reads; any other himalaya call counts as a write.
   const timed = (list, time, key) => { let last = -Infinity; return list.map(item => { const at = Date.parse(time(item)); last = Number.isFinite(at) ? at : last; return { order: last, at, [key]: item }; }); };
   const history = [
     ...timed(snapshot.answers ?? [], a => a.observed_at, "answer"),
     ...timed((snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)), o => o.at, "o"),
   ].sort((a, b) => a.order - b.order);
-  const pageSize = Number(/^\s*envelope\.list\.page-size\s*=\s*(\d+)/m.exec([...((snapshot.himalaya?.accounts ?? []).find(a => a.default)?.lines ?? []), ...(snapshot.himalaya?.top ?? [])].join("\n"))?.[1]) || undefined;
-  const longest = new Map();
-  for (const { o } of history) {
-    const shape = o && (o.code ?? 0) === 0 ? listShape(o.argv, o.stdout, aliases) : undefined;
-    if (shape && shape.size === undefined) longest.set(shape.account, Math.max(longest.get(shape.account) ?? 0, shape.count));
-  }
-  const whole = shape => shape.first && shape.count < (shape.size ?? pageSize ?? ((longest.get(shape.account) ?? 0) > shape.count ? Infinity : 0));
-  const unsettled = new Set(), relearned = new Set();
-  box.unsettled = unsettled;
-  box.relearned = relearned;
+  const known = argv => argv.slice(1).every(a => !a.startsWith("-") || READ_OPTIONS.has(a.split("=")[0]));
+  box.blocked = undefined;
   for (const { at, answer, o } of history) {
     if (answer) {
       const tool = answer.op.replace(/^tools\/call:/, "");
@@ -105,18 +96,7 @@ async function initialize(params) {
       continue;
     }
     learnHimalaya(box, [o], aliases);
-    const shape = (o.code ?? 0) === 0 ? listShape(o.argv, o.stdout, aliases) : undefined;
-    const label = shape && whole(shape) ? labelOf(box, shape.folder) : undefined;
-    if (label !== undefined && !DERIVED.includes(label) && (at <= cut || !Number.isFinite(at)) && box.unknown(label) && wholeFolder(box, shape.folder, JSON.parse(o.stdout))) {
-      unsettled.delete(label);
-      if (unsettled.has("*")) relearned.add(label);
-    }
-    if (reads(o.argv, READ_ONLY) || o.code !== 0 || !(at <= cut)) continue;
-    const from = /^from:\s*(.*)$/im.exec(String(o.stdin ?? "").split(/\r?\n\r?\n/)[0] ?? "")?.[1];
-    if (!box.account.email && o.argv.includes("send") && from) box.account.email = addresses(from)[0]?.email ?? "";
-    const changed = touches(box, o.argv, o.stdin, aliases)?.map(folder => labelOf(box, folder));
-    if (!changed || changed.includes(undefined)) { unsettled.add("*"); relearned.clear(); continue; }
-    for (const l of changed) { unsettled.add(l); relearned.delete(l); }
+    if (!(reads(o.argv, READ_ONLY) && known(o.argv)) && (at <= cut || !Number.isFinite(at))) box.blocked = "the session changed mail through himalaya before this moment, so the copy can't tell what the mailbox holds";
   }
   box.missed = undefined;
   for (const m of box.messages.values()) box.fromRaw(m);
@@ -126,6 +106,7 @@ async function initialize(params) {
 const rpc = (request, body) => ({ body: Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: request.id, ...body })).toString("base64") });
 
 async function call(params) {
+  if (box.blocked) return { status: "unsupported", reason: box.blocked };
   const nowMs = Date.parse(params.now ?? new Date().toISOString());
   if (params.surface === "cli") {
     box.missed = undefined;

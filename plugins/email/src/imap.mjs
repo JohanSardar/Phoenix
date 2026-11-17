@@ -279,13 +279,6 @@ function sequence(set, members, uid, folderName) {
 
 export function startImap(box, { log } = {}) {
   const folders = new Folders(box);
-  // A folder a past write changed after the session last saw all of it answers nothing.
-  const unsure = name => {
-    const entry = folders.find(name);
-    if (!entry || !box.unknown(entry[1])) return false;
-    box.missed = `the copy can't tell what ${entry[0]} holds after a past himalaya write`;
-    return true;
-  };
   const server = createServer(socket => {
     let selected = null, readOnly = false;
     const send = line => { log?.("S: " + line.slice(0, 300)); socket.write(line + "\r\n"); };
@@ -329,7 +322,6 @@ export function startImap(box, { log } = {}) {
           }
           case "STATUS": {
             const name = String(args[0]);
-            if (unsure(name)) return no(`[UNAVAILABLE] ${box.missed}`);
             const members = folders.messages(name);
             if (!members) return no("[NONEXISTENT] Unknown Mailbox");
             const st = folders.status(name);
@@ -340,7 +332,6 @@ export function startImap(box, { log } = {}) {
           }
           case "SELECT": case "EXAMINE": {
             const name = String(args[0]);
-            if (unsure(name)) { selected = null; return no(`[UNAVAILABLE] ${box.missed}`); }
             const members = folders.messages(name);
             if (!members) { selected = null; return no("[NONEXISTENT] Unknown Mailbox"); }
             selected = folders.find(name)[0]; readOnly = cmd === "EXAMINE";
