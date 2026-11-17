@@ -4,9 +4,17 @@ import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { Mailbox } from "./mailbox.mjs";
 import { Connector, TOOLS, ToolError, Unsupported } from "./connector.mjs";
-import { Himalaya } from "./himalaya.mjs";
+import { Himalaya, folderAliases } from "./himalaya.mjs";
+import { learnHimalaya, reads, takeUids, VALUED } from "./learn.mjs";
 
-let box, connector, himalaya;
+let box, connector, himalaya, aliases;
+const READ_ONLY = JSON.parse(await readFile(new URL("../phoenix-plugin.json", import.meta.url), "utf8")).read_only.filter(entry => entry.startsWith("himalaya "));
+
+const READ_OPTIONS = new Set([...VALUED, "--preview"]);
+const stdoutOf = frames => Buffer.concat(frames.filter(f => f.dir === "back" && f.stream === 1).map(f => Buffer.from(f.bytes, "base64"))).toString("utf8");
+
+// When the engine runs a recorded call against the copy, it also sends the recorded answer.
+const recordedBody = recorded => { try { return recorded?.body === undefined ? undefined : JSON.parse(Buffer.from(recorded.body, "base64").toString("utf8")); } catch { return undefined; } };
 
 const valueOf = result => {
   if (!result || typeof result !== "object") return undefined;
@@ -15,23 +23,39 @@ const valueOf = result => {
   try { return text === undefined ? undefined : JSON.parse(text); } catch { return undefined; }
 };
 
-// A snapshot is either the plugin's own JSON or capture events (one JSON object per line) that
-// pair each recorded tools/call with its result.
+// A snapshot is either the plugin's own JSON or capture events (one JSON object per line). Capture
+// events pair each recorded tools/call with its result, and collect what each himalaya call printed:
+// a recorded call's stdout frames, or a command-line capture read's response frames.
 function readSnapshot(text) {
   try {
     const value = JSON.parse(text);
     if (value && typeof value === "object" && !Array.isArray(value) && value.kind === undefined) return value;
   } catch { /* capture events */ }
-  const calls = new Map(), answers = [];
+  const calls = new Map(), answers = [], runs = new Map(), output = [];
   for (const line of text.split("\n").filter(Boolean)) {
     const event = JSON.parse(line);
-    const body = event.body?.inline === undefined ? undefined : JSON.parse(event.body.inline);
+    if (event.body?.inline === undefined) continue;
+    if (event.surface === "cli") {
+      const frame = /^(frame|fragment):back:1$/.test(event.op ?? "");
+      if (event.kind === "prefetch") {
+        const read = JSON.parse(event.body.inline);
+        if (Array.isArray(read.args?.argv)) output.push({ argv: read.args.argv, stdout: stdoutOf(JSON.parse(read.response.body)), at: event.ts?.wall });
+      } else if ((event.kind === "call" || (event.kind === "meta" && event.op === "open")) && !/^(frame|fragment):/.test(event.op ?? "")) {
+        const value = JSON.parse(event.body.inline);
+        const argv = event.op === "open" ? value.meta?.argv : value.argv;
+        if (Array.isArray(argv)) { const run = { argv, stdin: "", stdout: "", at: event.ts?.wall }; runs.set(event.stream, run); output.push(run); }
+      } else if (/^(frame|fragment):out:0$/.test(event.op ?? "") && runs.has(event.stream)) runs.get(event.stream).stdin += event.body.inline;
+      else if (event.kind === "result" && event.op === "frame:back:3" && runs.has(event.stream)) runs.get(event.stream).code = JSON.parse(event.body.inline).code;
+      else if (event.kind === "result" && frame && runs.has(event.stream)) runs.get(event.stream).stdout += event.body.inline;
+      continue;
+    }
+    const body = JSON.parse(event.body.inline);
     if (!body) continue;
     const key = JSON.stringify([event.stream, body.id]);
     if (event.kind === "call" && body.method === "tools/call") calls.set(key, body.params);
     if (event.kind === "result" && calls.has(key) && body.result) answers.push({ op: `tools/call:${calls.get(key).name}`, args: calls.get(key).arguments ?? {}, result: body.result, observed_at: event.ts?.wall });
   }
-  return { answers };
+  return { answers, himalaya_output: output };
 }
 
 async function initialize(params) {
@@ -44,33 +68,52 @@ async function initialize(params) {
   connector = new Connector(box);
   for (const m of snapshot.messages ?? []) {
     const message = box.upsert(m, { at: 0, know: m.raw ? [] : ["body"] });
-    if (m.uids) message.uids = { ...m.uids };
+    if (m.uids) { message.uids = { ...m.uids }; message.realUids = new Set(Object.keys(m.uids)); }
     box.fromRaw(message);
     if (m.threadCount !== undefined) box.threadCounts.set(message.threadId, m.threadCount);
   }
   for (const d of snapshot.drafts ?? []) box.drafts.set(d.id, d.messageId);
   const cut = snapshot.cut_at ? Date.parse(snapshot.cut_at) : Infinity;
-  const answers = [...(snapshot.answers ?? [])].sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
-  for (const answer of answers) {
-    const tool = answer.op.replace(/^tools\/call:/, "");
-    if (!TOOLS.includes(tool) || answer.result?.isError) continue;
-    const at = Date.parse(answer.observed_at);
-    connector.ingest(tool, answer.args, valueOf(answer.result), at, answer.before_cut !== false && at <= cut);
-  }
-  for (const m of box.messages.values()) box.fromRaw(m);
-  box.changes = [];
+  aliases = folderAliases(snapshot.himalaya);
   himalaya = new Himalaya(box, snapshot.himalaya);
   await himalaya.start();
+  // Connector answers and himalaya calls are one history, in time order; what any himalaya call printed
+  // is learned. A step without a time keeps its place after the step before it in its own list.
+  // A session that changed mail through himalaya before this moment can't be followed: the copy can't
+  // know what that write did, so it answers nothing. Only the plugin's read-only himalaya commands,
+  // with options the copy knows, count as reads; any other himalaya call counts as a write.
+  const timed = (list, time, key) => { let last = -Infinity; return list.map(item => { const at = Date.parse(time(item)); last = Number.isFinite(at) ? at : last; return { order: last, at, [key]: item }; }); };
+  const history = [
+    ...timed(snapshot.answers ?? [], a => a.observed_at, "answer"),
+    ...timed((snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)), o => o.at, "o"),
+  ].sort((a, b) => a.order - b.order);
+  const known = argv => argv.slice(1).every(a => !a.startsWith("-") || READ_OPTIONS.has(a.split("=")[0]));
+  box.blocked = undefined;
+  for (const { at, answer, o } of history) {
+    if (answer) {
+      const tool = answer.op.replace(/^tools\/call:/, "");
+      if (TOOLS.includes(tool) && !answer.result?.isError) connector.ingest(tool, answer.args, valueOf(answer.result), at, answer.before_cut !== false && at <= cut);
+      continue;
+    }
+    learnHimalaya(box, [o], aliases);
+    if (!(reads(o.argv, READ_ONLY) && known(o.argv)) && (at <= cut || !Number.isFinite(at))) box.blocked = "the session changed mail through himalaya before this moment, so the copy can't tell what the mailbox holds";
+  }
+  box.missed = undefined;
+  for (const m of box.messages.values()) box.fromRaw(m);
+  box.changes = [];
 }
 
 const rpc = (request, body) => ({ body: Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: request.id, ...body })).toString("base64") });
 
 async function call(params) {
+  if (box.blocked) return { status: "unsupported", reason: box.blocked };
   const nowMs = Date.parse(params.now ?? new Date().toISOString());
   if (params.surface === "cli") {
     box.missed = undefined;
     const { stdout, stderr, code } = await himalaya.run((params.args?.argv ?? []).slice(1), Buffer.from(params.raw?.stdin ?? "", "base64"), nowMs);
     if (box.missed) return { status: "unsupported", reason: box.missed };
+    const recorded = recordedBody(params.recorded);
+    if (Array.isArray(recorded)) takeUids(box, (params.args?.argv ?? []), stdout.toString("utf8"), stdoutOf(recorded), aliases);
     const frame = (stream, bytes, last = true) => ({ dir: "back", stream, bytes: Buffer.from(bytes).toString("base64"), last });
     const frames = [frame(1, stdout), frame(2, stderr), frame(3, JSON.stringify({ type: "exit", code, signal: null }))];
     return { status: "answer", value: { body: Buffer.from(JSON.stringify(frames)).toString("base64") } };
@@ -78,7 +121,9 @@ async function call(params) {
   const request = JSON.parse(Buffer.from(params.raw.body, "base64").toString("utf8"));
   const tool = params.op.replace(/^tools\/call:/, "");
   try {
-    const value = connector.call(tool, params.args, nowMs);
+    const made = connector.call(tool, params.args, nowMs);
+    const recorded = recordedBody(params.recorded)?.result;
+    const value = recorded && !recorded.isError ? connector.takeIds(tool, made, valueOf(recorded)) : made;
     return { status: "answer", value: rpc(request, { result: { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value } }) };
   } catch (error) {
     if (error instanceof Unsupported) return { status: "unsupported", reason: error.message };
