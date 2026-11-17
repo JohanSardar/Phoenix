@@ -77,12 +77,15 @@ function envelopes(box, folder, list, newestFirst) {
     if (place.label === "SENT" && e.from?.addr && !box.account.email) Object.assign(box.account, { email: e.from.addr, name: box.account.name || (e.from.name ?? "") });
     const flags = new Set(e.flags ?? []);
     const labels = [...(place.label ? [place.label] : []), ...(flags.has("Seen") ? [] : ["UNREAD"]), ...(flags.has("Flagged") ? ["STARRED"] : [])];
-    const minute = newestFirst && dateMs(e.date) !== undefined ? list.filter(o => o?.date === e.date).length : 0;
-    const later = minute ? list.slice(i + 1).filter(o => o?.date === e.date).length : 0;
+    // The same minute, whatever UTC offset each Date header printed it in.
+    const sameMinute = o => dateMs(o?.date) !== undefined && Math.floor(dateMs(o.date) / 60000) === Math.floor(dateMs(e.date) / 60000);
+    const minute = newestFirst && dateMs(e.date) !== undefined ? list.filter(sameMinute).length : 0;
+    const later = minute ? list.slice(i + 1).filter(sameMinute).length : 0;
     const ms = dateMs(e.date) === undefined ? box.nowMs ?? 0 : dateMs(e.date) + Math.min(later, 59) * 1000;
     // Recorded observations of one message in different folders are joined by their envelope.
     const alike = [...box.messages.values()].filter(o => {
-      if (o.realUids?.has(folder) || o.fields.subject !== e.subject || !minutes(o).has(Math.floor(ms / 60000))) return false;
+      // Gmail keeps one Seen flag per message, so a listing with another Seen state is another message.
+      if (o.realUids?.has(folder) || o.fields.subject !== e.subject || !minutes(o).has(Math.floor(ms / 60000)) || o.labelIds.includes("UNREAD") === flags.has("Seen")) return false;
       const { sender, to } = heads(o);
       return sender === e.from?.addr && (!e.to?.addr || to.includes(e.to.addr));
     });
@@ -115,8 +118,10 @@ function read(box, folder, uid, text) {
   const head = text.slice(0, split).split("\n").map(line => { const at = line.indexOf(": "); return [line.slice(0, at).toLowerCase(), line.slice(at + 2)]; });
   const get = name => head.find(([n]) => n === name)?.[1];
   let body = text.slice(split + 2);
-  if (/^<#(multi)?part/m.test(body)) return;
-  body = body.replace(/\n+$/, "\n");
+  // A message with no Content-Type, as himalaya prints it: one application/octet-stream part holding the body as sent.
+  const bare = /^<#part type=application\/octet-stream>\n([\s\S]*)<#\/part>\n*$/.exec(body)?.[1];
+  if (bare === undefined && /^<#(multi)?part/m.test(body)) return;
+  body = bare ?? body.replace(/\n+$/, "\n");
   const from = addresses(get("from") ?? "")[0];
   const date = get("date");
   const ms = dateMs(date) ?? (date ? Date.parse(date) : undefined);
@@ -143,7 +148,9 @@ function read(box, folder, uid, text) {
   if (get("subject") !== undefined) f.subject = decodeWords(get("subject"));
   f.plaintextBody = body;
   f.snippet = snippetOf(body);
-  m.raw = buildMessage({ from: from ?? { name: "", email: "" }, to, cc, subject: f.subject ?? "", text: body, html: "", date: date ?? rfc2822(new Date(Number(m.internalDate)), "UTC", m.dateOffset), messageId, inReplyTo, references, boundary: `000000000000${m.id}` });
+  m.raw = bare !== undefined
+    ? Buffer.from(text.slice(0, split).split("\n").join("\r\n") + "\r\n\r\n" + bare.replace(/\n/g, "\r\n"), "utf8")
+    : buildMessage({ from: from ?? { name: "", email: "" }, to, cc, subject: f.subject ?? "", text: body, html: "", date: date ?? rfc2822(new Date(Number(m.internalDate)), "UTC", m.dateOffset), messageId, inReplyTo, references, boundary: `000000000000${m.id}` });
   m.rawWritten = true;
   for (const k of ["metadata", "minimal", "body"]) m.know.add(k);
 }

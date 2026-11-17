@@ -13,7 +13,7 @@ export function runCli(argv, { stdin = "", cwd, token, mode, copy, log }) {
   const child = spawn(process.execPath, [bin, ...argv], {
     cwd: cwd ?? home,
     env: {
-      PATH: process.env.PATH ?? "", HOME: home, SENTRY_CONFIG_DIR: join(home, ".sentry"), SENTRY_AUTH_TOKEN: token, TZ: process.env.TZ ?? "UTC",
+      PATH: process.env.PATH ?? "", HOME: home, SENTRY_CONFIG_DIR: join(home, ".sentry"), SENTRY_AUTH_TOKEN: token, ...(process.env.TZ ? { TZ: process.env.TZ } : {}),
       SENTRY_NO_CACHE: "1", SENTRY_CLI_NO_TELEMETRY: "1", SENTRY_CLI_NO_UPDATE_CHECK: "1",
       NODE_OPTIONS: `--import ${join(import.meta.dirname, "route.mjs")}`, PHOENIX_SENTRY_MODE: mode,
       ...(copy ? { PHOENIX_SENTRY_COPY: copy } : {}), ...(log ? { PHOENIX_SENTRY_LOG: log } : {}),
