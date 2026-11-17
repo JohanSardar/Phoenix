@@ -5,9 +5,9 @@
 ```ts
 routes: {
   cli: { "phoenix-date": "date" },
-  mcp: { "phoenix-calendar-stdio": "calendar" },
-  mcpHttp: { "/mcp/calendar": "remote-calendar" },
-  http: { "calendar.example.test": "calendar-http" },
+  mcp: { "phoenix-example-stdio": "example" },
+  mcpHttp: { "/mcp/example": "remote-example" },
+  http: { "service.example.test": "example-http" },
 }
 ```
 

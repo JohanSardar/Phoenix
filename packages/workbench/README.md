@@ -5,9 +5,9 @@
 ## Workspaces
 
 ```sh
-phoenix workbench init --name calendar --harness <harness dir> --moments <moment set dir> --settings replay-settings.json [--base <commit>]
-phoenix workbench --mcp --workspace calendar          # stdio MCP server
-phoenix workbench listMoments --workspace calendar    # any operation, arguments as --<name> <value> (JSON for non-strings)
+phoenix workbench init --name my-workspace --harness <harness dir> --moments <moment set dir> --settings replay-settings.json [--base <commit>]
+phoenix workbench --mcp --workspace my-workspace          # stdio MCP server
+phoenix workbench listMoments --workspace my-workspace    # any operation, arguments as --<name> <value> (JSON for non-strings)
 ```
 
 A workspace lives at `PHOENIX_HOME/workspaces/<name>/`. A harness inside a git repository gets a detached git worktree of that repository at the base commit (`HEAD` unless `--base` names one), and the harness is its subdirectory there. A harness outside git is copied into a private git repository inside the workspace, and gets a patch file only. The harness contract is always read from the base commit, so editing it in the tree changes nothing. A contract whose editable globs match a file of the moment set is refused when the set sits inside the harness.

@@ -34,18 +34,18 @@ test("S1: capture sidecar strips secret fields inside recorded response bodies",
       }
     `);
     await writeFile(join(scratch, "phoenix-plugin.json"), JSON.stringify({
-      phoenix_plugin: 1, connector: "calendar", recognize: { hosts: ["127.0.0.1"] },
+      phoenix_plugin: 1, connector: "example", recognize: { hosts: ["127.0.0.1"] },
       tier: "recorded", operations: [op], read_only: [op],
       capture: { command: [process.execPath, "capture.mjs"], protocol: "stdio" },
     }));
     const root = join(scratch, "capture");
     await createCapture(root, {
-      capture: "prefetch-secrets", harness: { name: "calendar", tree: digest(Buffer.from("proof")) },
+      capture: "prefetch-secrets", harness: { name: "example", tree: digest(Buffer.from("proof")) },
       recipe: { name: "generic", version: "1" }, routes: [],
       started_at: new Date().toISOString(), boot_id: "proof",
     });
     const plugin = await readPlugin(join(scratch, "phoenix-plugin.json"));
-    await capturePlugin({ root, home: join(scratch, "home"), connector: "calendar", plugin, target: { surface: "http", url: target } });
+    await capturePlugin({ root, home: join(scratch, "home"), connector: "example", plugin, target: { surface: "http", url: target } });
     const capture = await readCapture(root);
     const event = capture.allEvents.find(event => event.kind === "prefetch");
     assert.ok(event?.body && "blob" in event.body);

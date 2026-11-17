@@ -37,7 +37,7 @@ export interface MadeUpMoment {
      */
     name: string;
     /**
-     * The service the tool reaches, such as calendar. Checks name the tool as <service>.<op>.
+     * The service the tool reaches. Checks name the tool as <service>.<op>.
      */
     service: string;
     /**

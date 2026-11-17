@@ -163,7 +163,7 @@
               "working_copy": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "Answered by a service's working copy, such as the calendar plugin."
+                "description": "Answered by a service's working copy."
               },
               "made_up": {
                 "type": "integer",

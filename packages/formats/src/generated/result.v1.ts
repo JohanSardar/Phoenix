@@ -61,7 +61,7 @@ export interface ReplayResult {
        */
       files_copy: number;
       /**
-       * Answered by a service's working copy, such as the calendar plugin.
+       * Answered by a service's working copy.
        */
       working_copy: number;
       /**
