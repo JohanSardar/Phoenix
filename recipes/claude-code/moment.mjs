@@ -98,5 +98,6 @@ process.stdout.write(JSON.stringify({
   loadout: { system, mcp, tools: (shape.tools ?? []).map(tool => tool.name), world: [...world].filter(([, content]) => typeof content === "string" && content.length <= 1 << 20).map(([path, content]) => ({ path, content })) },
   answers,
   read_only: { [CONNECTOR]: READ_ONLY },
+  in_box: { [CONNECTOR]: ["Read", "Write", "Edit", "Glob", "Grep"] },
   shell: { [CONNECTOR]: { Bash: { command: "command" } } },
 }) + "\n");

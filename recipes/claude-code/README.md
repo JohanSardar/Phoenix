@@ -206,9 +206,12 @@ In the box, `resume.mjs` puts the cut session where Claude Code looks for it and
 starts it with the moment's prompt. Tool calls go to Phoenix this way:
 
 - Built-in tools go through Claude Code's own hooks (`stand-in.mjs`, on
-  PreToolUse and PostToolUse). Bash never runs: it becomes a `cat` of the
+  PreToolUse and PostToolUse). A Bash call the session made never runs: it becomes a `cat` of the
   answer Phoenix gives. Read, Write, Edit, Glob and Grep act on files inside
-  the box only, and Claude Code then gets the recorded result.
+  the box only, and Claude Code then gets the recorded result. A new Read,
+  Write, Edit, Glob or Grep call the session never made, and a new Bash line
+  that reaches no network, plugin command or path outside the copy, runs for
+  real in the box on the copy of the project's files.
   Other built-ins are refused with the recorded answer as the reason.
 - Each MCP server of the session is replaced by `mcp.mjs`, which lists the
   tool definitions the session recorded and sends every call to Phoenix.
