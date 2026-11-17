@@ -54,6 +54,7 @@ function needsNetwork([name, ...args]: string[]): boolean {
   if (NETWORK.has(name!)) return true;
   const subcommands = NETWORK_SUBCOMMANDS.get(name!);
   if (!subcommands) return false;
+  if (name === "yarn" && args.every(arg => arg.startsWith("-"))) return true;
   for (let at = 0; at < args.length; at++) {
     if (name === "git" && GIT_VALUED.has(args[at]!)) { at++; continue; }
     if (!args[at]!.startsWith("-")) return subcommands.includes(args[at]!);
@@ -80,10 +81,12 @@ export function runsOnCopy(command: string, root: string, options: { cwd?: strin
   for (const words of commandsIn(command)) {
     const [name, ...args] = words;
     if (needsNetwork(words) || options.commands?.includes(name!)) return false;
-    if (SHELLS.has(name!) && /^-[a-z]*c[a-z]*$/.test(args[0] ?? "") && args[1] !== undefined && !runsOnCopy(args[1], root, { ...options, cwd: here })) return false;
+    const flag = SHELLS.has(name!) ? args.findIndex(arg => !arg.startsWith("-") || /^-[a-z]*c[a-z]*$/.test(arg)) : -1;
+    if (flag >= 0 && args[flag]!.startsWith("-") && args[flag + 1] !== undefined && !runsOnCopy(args[flag + 1]!, root, { ...options, cwd: here })) return false;
     for (const word of args.flatMap(arg => arg.split(/[=<>]/)))
       if (!word.startsWith("/") && word.split("/").includes("..") && !inside(posix.resolve(here, word))) return false;
     if (name === "cd" && args[0] && !args[0].startsWith("-")) here = posix.resolve(here, args[0]);
+    if (!inside(here)) return false;
   }
   return true;
 }
