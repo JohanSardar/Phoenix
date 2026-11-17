@@ -114,6 +114,22 @@ async function projectCopy(cwd: string | undefined, time: string, out: string): 
       };
       const queue = [...blobs];
       await Promise.all(Array.from({ length: 8 }, async () => { for (let blob = queue.shift(); blob; blob = queue.shift()) await write(blob); }));
+      const branch = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], root).catch(() => "");
+      const remotes = (await Promise.all([`${branch}@{upstream}`, "refs/remotes/origin/HEAD"].map(async name => {
+        const ref = await git(["rev-parse", "--symbolic-full-name", name], root).catch(() => "");
+        const at = ref.startsWith("refs/remotes/") ? await git(["rev-list", "-1", `--before=${time}`, ref], root).catch(() => "") : "";
+        return at ? [{ ref, at }] : [];
+      }))).flat();
+      await execute("git", ["init", "-q", "--template=", ...(branch ? ["-b", branch] : []), files]);
+      const pack = execute("git", ["pack-objects", "-q", "--revs", join(files, ".git/objects/pack/pack")], { cwd: root });
+      pack.child.stdin!.end([commit!, ...remotes.map(remote => remote.at)].join("\n") + "\n");
+      await pack;
+      for (const { ref, at } of remotes) await git(["update-ref", ref, at], files);
+      await git(branch ? ["update-ref", `refs/heads/${branch}`, commit!] : ["update-ref", "--no-deref", "HEAD", commit!], files);
+      await git(["read-tree", commit!], files);
+      let history = 0;
+      for (const name of await readdir(join(files, ".git/objects/pack"))) history += (await stat(join(files, ".git/objects/pack", name))).size;
+      if (bytes + history > limit.bytes) { await rm(join(files, ".git"), { recursive: true }); left_out.push(".git"); }
     } else {
       for (const { path, kind } of found) {
         if (kind === "folder") await mkdir(join(files, path));

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { readsOnly, recognizeCommand, startToolStandIn, type SimulatorOptions, type ToolStandIn, type ToolStandInOptions } from "@phoenix/engine";
+import { recognizeCommand, runsOnCopy, startToolStandIn, type SimulatorOptions, type ToolStandIn, type ToolStandInOptions } from "@phoenix/engine";
 import { parse } from "yaml";
 import type { RecipeDescriptor } from "@phoenix/formats";
 import { writeClockFile, type Sandbox, type SandboxProcess } from "@phoenix/sandbox";
@@ -94,6 +94,7 @@ export async function resumeAttempt(input: {
   for (const [index, plugin] of plan.runner.plugins.entries())
     if (plugin.descriptor.recognize.commands?.length && !plugins.has(plugin.descriptor.connector) && ![...plugins.values()].some(p => p.index === index)) plugins.set(plugin.descriptor.connector, { plugin, index });
   const commandPlugins = [...plugins].filter(([, { plugin }]) => plugin.descriptor.serve).map(([name, { plugin }]) => ({ ...plugin.descriptor, connector: name }));
+  const pluginWords = plan.runner.plugins.flatMap(plugin => plugin.descriptor.recognize.commands ?? []);
   const time = bundle.manifest.clock?.time ?? new Date().toISOString();
   const emulators: NonNullable<ToolStandInOptions["emulators"]>[number][] = [];
   for (const [name, { plugin, index }] of plugins) {
@@ -122,7 +123,7 @@ export async function resumeAttempt(input: {
       const shell = moment.shell?.[connector]?.[op];
       const given = args as Record<string, unknown>;
       const command = shell && given[shell.command], cwd = (shell?.cwd ? given[shell.cwd] : undefined) ?? moment.cwd;
-      return typeof command === "string" && readsOnly(command, project.root, typeof cwd === "string" ? cwd : undefined, join(box, "project"));
+      return typeof command === "string" && runsOnCopy(command, project.root, { ...(typeof cwd === "string" ? { cwd } : {}), ...(project.home ? { home: project.home } : {}), commands: pluginWords });
     },
     pluginCommand: (connector, op, args) => {
       const shell = moment.shell?.[connector]?.[op];
@@ -132,7 +133,7 @@ export async function resumeAttempt(input: {
       if (!found || found.calls.some(c => c.conditional)) return undefined;
       const cwd = typeof givenCwd === "string" ? givenCwd : undefined;
       const rest = found.around.replace(/\u0000\d+\u0000/g, "true");
-      const guarded = project ? readsOnly(rest, project.root, cwd, join(box, "project")) : /^true(?: [12]>& '[12]'| (?:[12]?>>?|&>) '\/dev\/null')*$/.test(rest);
+      const guarded = project ? runsOnCopy(rest, project.root, { ...(cwd ? { cwd } : {}), ...(project.home ? { home: project.home } : {}), commands: pluginWords }) : /^true(?: [12]>& '[12]'| (?:[12]?>>?|&>) '\/dev\/null')*$/.test(rest);
       return guarded ? { calls: found.calls.map(c => ({ connector: c.connector, argv: c.argv, env: c.env ?? {}, cwd: cwd ?? project?.root ?? "/", ...(c.stdin === undefined ? {} : { stdin: c.stdin }) })), around: found.around } : undefined;
     },
     ...(input.simulator ? { simulator: input.simulator } : {}),

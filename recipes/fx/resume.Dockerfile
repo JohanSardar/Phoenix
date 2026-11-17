@@ -19,3 +19,4 @@ RUN git init -q /opt/fx-src && cd /opt/fx-src && \
 COPY stand-in.patch /opt/fx-stand-in.patch
 RUN cd /opt/fx-src && git apply /opt/fx-stand-in.patch && \
     zig build -Doptimize=ReleaseSafe && install zig-out/bin/fx /usr/local/bin/fx && fx --version
+RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*

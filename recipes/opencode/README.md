@@ -92,8 +92,10 @@ Put the image ID and the path to `recipe.yaml` in the Workbench settings.
   descriptions.
 - A `read`, `glob`, `grep`, `edit`, `write` or `apply_patch` call the session
   made gets the session's own answer, and the tool does not run. A new one runs
-  for real in the box, on the copy of the project's files. Any other new call
-  gets a made-up answer, labeled in the result.
+  for real in the box, on the copy of the project's files. So does a new
+  `bash` line, unless it reaches the network, names a plugin's command, or
+  names a path outside the copy. Any other new call gets a made-up answer,
+  labeled in the result.
 - To skip the tool for a call the session made, the box runs OpenCode from its
   source with `stand-in.patch` applied. This is slower to start than the built
   OpenCode.
