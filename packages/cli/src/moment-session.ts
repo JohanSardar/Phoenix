@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { readMark } from "@phoenix/capture";
+import { readMark, type CommandRead } from "@phoenix/capture";
 import { composeMadeUp, createSessionMoment, type SessionAnswer } from "@phoenix/setup";
 import { digest } from "@phoenix/store";
 import { stripSecrets } from "@phoenix/redact";
@@ -24,12 +24,13 @@ export async function runMomentSessionCommand(args: string[]): Promise<number> {
   if (!out || rest.length || sources.length !== 1 || !v.id || (v.at !== undefined && v["from-beginning"])) throw new Error(USAGE);
   const home = resolve(v.home ?? process.env.PHOENIX_HOME ?? join(homedir(), ".phoenix"));
   let session = v.session, recipePath = v.recipe, at = v.at === undefined ? undefined : Number(v.at), fromBeginning = !!v["from-beginning"], check = v.check, timezone = v.timezone;
-  let answers: SessionAnswer[] = [], marked, project, madeUp = false, world: Record<string, unknown> | undefined, readOnly: Record<string, string[]> | undefined;
+  let answers: SessionAnswer[] = [], commandReads: CommandRead[] = [], marked, project, madeUp = false, world: Record<string, unknown> | undefined, readOnly: Record<string, string[]> | undefined;
   if (v.mark) {
     const read = await readMark(resolve(v.mark));
     session = read.session; recipePath ??= read.mark.recipe;
     if (at === undefined && !fromBeginning) at = read.mark.line;
     answers = read.services.map((answer, index) => ({ id: `mark-${index + 1}`, ...answer, before_cut: false, world: "exact" as const }));
+    commandReads = read.commands;
     readOnly = read.mark.read_only;
     marked = { at: read.mark.at, ...(read.mark.note ? { note: read.mark.note } : {}), world: read.mark.world };
     if (read.project && read.mark.world.files === "saved") project = { ...read.project, taken_at: read.mark.at };
@@ -59,8 +60,13 @@ export async function runMomentSessionCommand(args: string[]): Promise<number> {
     if (msg.secrets === "unscanned") throw new Error("A saved tool answer could not be scanned for secrets");
     answer.result = JSON.parse(Buffer.from(msg.body!).toString("utf8"));
   }
+  for (const [index, read] of commandReads.entries()) {
+    const { msg } = await stripSecrets({ body: Buffer.from(JSON.stringify(read)) }, capture.policy);
+    if (msg.secrets === "unscanned") throw new Error("A saved command-line read could not be scanned for secrets");
+    commandReads[index] = JSON.parse(Buffer.from(msg.body!).toString("utf8")) as CommandRead;
+  }
   const manifest = await createSessionMoment({
-    recipe, session: session!, capture: capture.root, ...(fromBeginning ? { fromBeginning } : { at: at! }), changes, answers, ...(readOnly ? { readOnly } : {}), ...(marked ? { marked } : {}), ...(project ? { project } : {}), madeUp,
+    recipe, session: session!, capture: capture.root, ...(fromBeginning ? { fromBeginning } : { at: at! }), changes, answers, ...(commandReads.length ? { commandReads } : {}), ...(readOnly ? { readOnly } : {}), ...(marked ? { marked } : {}), ...(project ? { project } : {}), madeUp,
     id: v.id, check: check!, out, policy: capture.policy, ...(timezone ? { timezone } : {}),
   });
   process.stdout.write(JSON.stringify({ moment: manifest.id, bundle: out, resumes: manifest.resume, ...(world ? { world } : {}), next: `Read ${out}/check.draft.yaml, then run phoenix check approve ${out}` }) + "\n");

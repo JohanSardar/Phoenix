@@ -2,22 +2,12 @@
 // A stdio MCP server for the moment's snapshot. It is Sentry's own MCP server, reading the real Sentry with GET only:
 // route.mjs refuses every other method before it leaves this machine.
 // Each tool answer carries the Sentry API replies behind it in _meta, so the working copy can answer from them later.
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { token } from "./login.mjs";
 import { startSentryServer } from "./server.mjs";
-
-function token() {
-  const { SENTRY_AUTH_TOKEN: given, ...env } = process.env;
-  try {
-    const stored = execFileSync("sentry", ["auth", "token"], { cwd: tmpdir(), env: { PATH: env.PATH ?? "", HOME: env.HOME ?? homedir() }, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    if (stored) return stored;
-  } catch {}
-  if (given) return given;
-  throw new Error("No Sentry login: sign in with the sentry CLI (sentry auth login) or set SENTRY_AUTH_TOKEN");
-}
 
 const scratch = mkdtempSync(join(tmpdir(), "phoenix-sentry-snapshot-"));
 const log = join(scratch, "api.jsonl");

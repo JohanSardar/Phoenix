@@ -20,6 +20,8 @@ export interface SessionMomentOptions {
   fromBeginning?: boolean;
   changes?: readonly { line: number; file: string }[];
   answers?: readonly SessionAnswer[];
+  /** Read-only command-line reads made at a live mark; the replay starts the plugin copies from them. */
+  commandReads?: readonly unknown[];
   readOnly?: Readonly<Record<string, readonly string[]>>;
   marked?: NonNullable<MomentManifest["resume"]>["marked"];
   project?: { root: string; tar: Buffer; taken_at: string };
@@ -32,7 +34,7 @@ export interface SessionMomentOptions {
 }
 
 export interface SessionAnswer { id: string; connector: string; op: string; args: unknown; result: unknown; observed_at: string; before_cut: boolean; world?: "exact" | "any-args" }
-interface Reading { at: number; prompt: string; time: string; cwd?: string; model: { provider: string; id: string }; answers: SessionAnswer[]; read_only?: Record<string, string[]>; files?: string[]; edits?: { line: number; text: string }[] }
+interface Reading { at: number; prompt: string; time: string; cwd?: string; model: { provider: string; id: string }; answers: SessionAnswer[]; command_reads?: unknown[]; read_only?: Record<string, string[]>; files?: string[]; edits?: { line: number; text: string }[] }
 type ProjectCopy = Omit<NonNullable<NonNullable<MomentManifest["resume"]>["project"]>, "tar" | "more"> & { parts: Buffer[] };
 
 const PART_LIMIT = 1536 * 1024 * 1024;
@@ -226,6 +228,7 @@ export async function createSessionMoment(o: SessionMomentOptions): Promise<Mome
   for (const path of reading.files ?? []) if (!stripped.has(path)) throw new Error(`The ${o.recipe.descriptor.name} recipe named a file it was not given: ${path}`);
   for (const edit of reading.edits ?? []) lines[edit.line - 1] = edit.text;
   reading.answers.push(...o.answers ?? []);
+  if (o.commandReads?.length) reading.command_reads = [...o.commandReads];
   const session = Buffer.from(lines.join("\n"));
   const view = await readCapture(o.capture);
   let mark: TraceEvent | undefined, task = "";

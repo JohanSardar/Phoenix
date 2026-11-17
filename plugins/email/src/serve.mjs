@@ -39,7 +39,7 @@ function readSnapshot(text) {
       const frame = /^(frame|fragment):back:1$/.test(event.op ?? "");
       if (event.kind === "prefetch") {
         const read = JSON.parse(event.body.inline);
-        if (Array.isArray(read.args?.argv)) output.push({ argv: read.args.argv, stdout: stdoutOf(JSON.parse(read.response.body)), at: event.ts?.wall });
+        if (Array.isArray(read.args?.argv)) output.push({ argv: read.args.argv, stdout: stdoutOf(JSON.parse(read.response.body)), at: event.ts?.wall, prefetched: true });
       } else if ((event.kind === "call" || (event.kind === "meta" && event.op === "open")) && !/^(frame|fragment):/.test(event.op ?? "")) {
         const value = JSON.parse(event.body.inline);
         const argv = event.op === "open" ? value.meta?.argv : value.argv;
@@ -82,10 +82,14 @@ async function initialize(params) {
   // A session that changed mail through himalaya before this moment can't be followed: the copy can't
   // know what that write did, so it answers nothing. Only the plugin's read-only himalaya commands,
   // with options the copy knows, count as reads; any other himalaya call counts as a write.
+  // Command-line capture reads (a mark's, or a capture's prefetch) were made after the session's own calls, so they
+  // show the mailbox as those calls left it. When there are any, the copy learns himalaya mail from them alone, and
+  // an earlier himalaya write no longer blocks it.
+  const prefetched = (snapshot.himalaya_output ?? []).some(o => o.prefetched);
   const timed = (list, time, key) => { let last = -Infinity; return list.map(item => { const at = Date.parse(time(item)); last = Number.isFinite(at) ? at : last; return { order: last, at, [key]: item }; }); };
   const history = [
     ...timed(snapshot.answers ?? [], a => a.observed_at, "answer"),
-    ...timed((snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv)), o => o.at, "o"),
+    ...timed((snapshot.himalaya_output ?? []).filter(o => Array.isArray(o.argv) && (!prefetched || o.prefetched)), o => o.at, "o"),
   ].sort((a, b) => a.order - b.order);
   const known = argv => argv.slice(1).every(a => !a.startsWith("-") || READ_OPTIONS.has(a.split("=")[0]));
   box.blocked = undefined;
