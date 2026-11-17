@@ -97,6 +97,7 @@ Not proven or not built yet (JOH-57 stays open):
 Other limits:
 
 - Attachment bytes are not held.
+- Two Sent entries with exactly the same date, such as a send with a Date header but no Message-ID and himalaya's saved copy of it, can list in either order; real himalaya on real Gmail orders that tie at random too (2026-11-17).
 - From himalaya output alone, the copy learns messages in INBOX and Gmail's own folders. A label folder needs the label list from the connector.
 - A message new to a folder gets the next id the copy knows for that folder. The copy never sees the ids of folders the session didn't list, such as All Mail or Trash. Ids the session saw are kept.
 - `create_label` and `update_label` answer only plain labels: a color or a nested name (with `/`) falls through, because no real answer for those has been recorded.
