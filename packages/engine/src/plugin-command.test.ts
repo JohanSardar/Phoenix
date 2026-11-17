@@ -5,7 +5,7 @@ import { marker, recognizeCommand, type CommandPlugin } from "./plugin-command.t
 const plugins: CommandPlugin[] = [
   { connector: "mail", recognize: { commands: ["mailer"] }, read_only: ["mailer folder list", "mailer envelope list", "mailer message read --preview"] },
   { connector: "errors", recognize: { mcp_servers: ["errors-mcp"], commands: ["errs"] } },
-  { connector: "calendar", recognize: { mcp_servers: ["cal"] } },
+  { connector: "example", recognize: { mcp_servers: ["ex"] } },
 ];
 const [M0, M1] = [marker(0), marker(1)];
 
@@ -40,7 +40,7 @@ test("text piped or written into the command is its stdin", () => {
 
 test("a line with no plugin command, or one that cannot be taken apart exactly, gives nothing", () => {
   for (const command of [
-    "ls -la", "git status", "calendar list", "mailerx envelope list", "", "echo mailer", "X=1", "/usr/local/bin/mailer envelope list",
+    "ls -la", "git status", "example list", "mailerx envelope list", "", "echo mailer", "X=1", "/usr/local/bin/mailer envelope list",
     "mailer message read $ID", "mailer message read \"$(cat id)\"", "cd ~/app; errs issue list", "errs issue list | head -${N}",
     "cat body.txt | mailer message send", "echo hi | grep h | mailer message send", "echo -e 'a\\nb' | mailer message send", "mailer message send < body.txt",
     "mailer folder list | mailer message send", "mailer template send <<EOF\nTotal: $AMOUNT\nEOF", "mailer template send <<EOF\nno end",
