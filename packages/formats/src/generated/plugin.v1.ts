@@ -60,6 +60,15 @@ export interface PluginDescriptor {
      * Newline-delimited JSON on stdio, or plain HTTP.
      */
     protocol: "stdio" | "http";
+    /**
+     * By recognized command: the argv the host runs, in the plugin's folder, for a planned command-line read of that command instead of the command itself. The read's argv after its first word is appended.
+     */
+    reads?: {
+      /**
+       * @minItems 1
+       */
+      [k: string]: string[];
+    };
   };
   serve?: {
     /**

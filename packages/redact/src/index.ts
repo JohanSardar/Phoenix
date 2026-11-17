@@ -69,6 +69,13 @@ async function scanSecrets(text: string, policy: SecretPolicy): Promise<{ text: 
     spans.push({ start, end: start + match[2]!.length, replacement: encodeURIComponent(placeholder(original, "secret", policy.hmacKey)), rule: "secret-query" });
   }
   spans.push(...secretAssignments(text, policy));
+  for (const match of text.matchAll(/"([^"\\\r\n]{1,64})"[ \t]*:[ \t]*"((?:[^"\\\r\n]|\\.)+)"/g)) {
+    if (!secretName(match[1]!)) continue;
+    const start = match.index + match[0].length - match[2]!.length - 1;
+    spans.push({ start, end: start + match[2]!.length, replacement: placeholder(match[2]!, "secret", policy.hmacKey), rule: "secret-json-field" });
+  }
+  for (const match of text.matchAll(/(?<![\w-])(?:sntry[su]_[\w+/=-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_\w{20,}|sk-[\w-]{20,}|xox[a-z]-[\w-]{10,}|AKIA[0-9A-Z]{16})/g))
+    spans.push({ start: match.index, end: match.index + match[0].length, replacement: placeholder(match[0], "secret", policy.hmacKey), rule: "token-prefix" });
   const result = await lintSource({
     source: { content: text, contentType: "text", filePath: "message.txt" },
     options: { noPhysicFilePath: true, maskSecrets: true, config: { rules: [{ id: "recommended", rule: creator }] } },

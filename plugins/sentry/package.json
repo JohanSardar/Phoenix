@@ -1,12 +1,12 @@
 {
   "name": "@phoenix/plugin-sentry",
   "version": "0.0.0",
-  "description": "A working copy of Sentry for Phoenix replays: Sentry's own MCP server over a copy of the Sentry API",
+  "description": "A working copy of Sentry for Phoenix replays: Sentry's own MCP server and command line over a copy of the Sentry API",
   "type": "module",
   "engines": { "node": ">=24" },
   "files": ["phoenix-plugin.json", "src/*.mjs", "README.md"],
   "bin": { "phoenix-sentry-snapshot": "src/snapshot.mjs" },
-  "dependencies": { "@sentry/mcp-server": "0.49.0" },
+  "dependencies": { "@sentry/mcp-server": "0.49.0", "sentry": "0.44.1" },
   "exports": { "./phoenix-plugin.json": "./phoenix-plugin.json" },
   "license": "MIT"
 }

@@ -24,6 +24,7 @@ interface SessionMoment {
   shell?: Record<string, Record<string, { command: string; cwd?: string }>>;
   cwd?: string;
   answers: { id: string; connector: string; op: string; args: unknown; result: unknown; observed_at: string; before_cut: boolean; world?: "exact" | "any-args" }[];
+  command_reads?: { connector: string; op: string; args: unknown; request: unknown; response: unknown; observed_at: string }[];
 }
 
 async function fileHashes(root: string): Promise<Map<string, string>> {
@@ -106,7 +107,8 @@ export async function resumeAttempt(input: {
     const snapshot = own.flatMap((a, seq) => [
       { v: 1, capture: input.capture, stream: "session", seq: seq * 2, ts: { wall: a.observed_at }, kind: "call", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: seq, method: "tools/call", params: { name: a.op, arguments: a.args } }) } },
       { v: 1, capture: input.capture, stream: "session", seq: seq * 2 + 1, ts: { wall: a.observed_at }, kind: "result", connector: plugin.descriptor.connector, surface: "mcp", op: `tools/call:${a.op}`, body: { inline: JSON.stringify({ jsonrpc: "2.0", id: seq, result: a.result }) } },
-    ].map(event => JSON.stringify(event) + "\n")).join("");
+    ].map(event => JSON.stringify(event) + "\n")).join("")
+      + (moment.command_reads ?? []).filter(read => read.connector === plugin.descriptor.connector).map((read, at) => JSON.stringify({ v: 1, capture: input.capture, stream: "mark", seq: at, ts: { wall: read.observed_at }, kind: "prefetch", connector: plugin.descriptor.connector, surface: "cli", op: read.op, body: { inline: JSON.stringify({ op: read.op, args: read.args, request: read.request, response: read.response }) } }) + "\n").join("");
     await writeFile(join(pluginRoot, "inputs/snapshot"), plugin.snapshot ? bundle.files.get(plugin.snapshot)! : snapshot, { mode: 0o600 });
     await writeFile(join(pluginRoot, "inputs/seed"), plugin.seed ? bundle.files.get(plugin.seed)! : JSON.stringify({ seed: `sha256:${createHash("sha256").update(`${input.id}:${input.capture}`).digest("hex")}` }), { mode: 0o600 });
     await writeClockFile(join(pluginRoot, "clock"), time);
