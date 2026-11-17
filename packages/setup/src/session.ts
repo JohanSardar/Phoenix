@@ -115,10 +115,12 @@ async function projectCopy(cwd: string | undefined, time: string, out: string): 
       const queue = [...blobs];
       await Promise.all(Array.from({ length: 8 }, async () => { for (let blob = queue.shift(); blob; blob = queue.shift()) await write(blob); }));
       const branch = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], root).catch(() => "");
-      const remotes = (await Promise.all([`${branch}@{upstream}`, "refs/remotes/origin/HEAD"].map(async name => {
-        const ref = await git(["rev-parse", "--symbolic-full-name", name], root).catch(() => "");
-        const at = ref.startsWith("refs/remotes/") ? await git(["rev-list", "-1", `--before=${time}`, ref], root).catch(() => "") : "";
-        return at ? [{ ref, at }] : [];
+      const remote = branch && await git(["config", `branch.${branch}.remote`], root).catch(() => "");
+      const upstream = branch && await git(["rev-parse", "--symbolic-full-name", `${branch}@{upstream}`], root).catch(() => "");
+      const remoteHead = remote && await git(["symbolic-ref", `refs/remotes/${remote}/HEAD`], root).catch(() => "");
+      const remotes = (await Promise.all([...new Set([upstream, remoteHead])].filter(ref => ref?.startsWith("refs/remotes/")).map(async ref => {
+        const at = await git(["rev-list", "-1", `--before=${time}`, ref!], root).catch(() => "");
+        return at ? [{ ref: ref!, at }] : [];
       }))).flat();
       await execute("git", ["init", "-q", "--template=", ...(branch ? ["-b", branch] : []), files]);
       const pack = execute("git", ["pack-objects", "-q", "--revs", join(files, ".git/objects/pack/pack")], { cwd: root });
@@ -126,6 +128,15 @@ async function projectCopy(cwd: string | undefined, time: string, out: string): 
       await pack;
       for (const { ref, at } of remotes) await git(["update-ref", ref, at], files);
       await git(branch ? ["update-ref", `refs/heads/${branch}`, commit!] : ["update-ref", "--no-deref", "HEAD", commit!], files);
+      if (remote) {
+        const url = await git(["config", `remote.${remote}.url`], root).catch(() => "");
+        if (url) await git(["config", `remote.${remote}.url`, url.replace(/\/\/[^/@]*@/, "//")], files);
+        for (const fetch of (await git(["config", "--get-all", `remote.${remote}.fetch`], root).catch(() => "")).split("\n").filter(Boolean)) await git(["config", "--add", `remote.${remote}.fetch`, fetch], files);
+        await git(["config", `branch.${branch}.remote`, remote], files);
+        const merge = await git(["config", `branch.${branch}.merge`], root).catch(() => "");
+        if (merge) await git(["config", `branch.${branch}.merge`, merge], files);
+        if (remotes.some(({ ref }) => ref === remoteHead)) await git(["symbolic-ref", `refs/remotes/${remote}/HEAD`, remoteHead!], files);
+      }
       await git(["read-tree", commit!], files);
       let history = 0;
       for (const name of await readdir(join(files, ".git/objects/pack"))) history += (await stat(join(files, ".git/objects/pack", name))).size;

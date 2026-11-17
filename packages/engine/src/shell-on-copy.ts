@@ -17,7 +17,8 @@ const NETWORK_SUBCOMMANDS = new Map<string, readonly string[]>([
   ["go", ["get", "install"]],
 ]);
 const GIT_VALUED = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace"]);
-const WRAPPERS = new Set(["sudo", "env", "exec", "time", "nohup", "nice", "xargs", "timeout", "then", "do", "else", "elif", "if", "while", "until", "!", "builtin"]);
+const WRAPPERS = new Set(["sudo", "env", "exec", "time", "nohup", "nice", "xargs", "timeout", "then", "do", "else", "elif", "if", "while", "until", "!", "builtin", "command"]);
+const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
 
 function commandsIn(line: string): string[][] {
   const parts: string[][] = [[]];
@@ -40,6 +41,7 @@ function commandsIn(line: string): string[][] {
       while (at < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[at]!)) at++;
       if (!WRAPPERS.has(words[at] ?? "")) break;
       const wrapper = words[at++];
+      if (wrapper === "command" && /^-[vV]$/.test(words[at] ?? "")) return [];
       while (at < words.length && words[at]!.startsWith("-")) at++;
       if (wrapper === "timeout" && /^\d/.test(words[at] ?? "")) at++;
     }
@@ -67,7 +69,7 @@ function needsNetwork([name, ...args]: string[]): boolean {
  */
 export function runsOnCopy(command: string, root: string, options: { cwd?: string; home?: string; commands?: readonly string[] } = {}): boolean {
   const inside = (path: string) => path === root || path.startsWith(root.endsWith("/") ? root : root + "/");
-  const here = posix.resolve(root, options.cwd ?? root);
+  let here = posix.resolve(root, options.cwd ?? root);
   if (!command.trim() || !inside(here)) return false;
   if (/(^|[\s=:'"(])~(?=$|[\s/'":;|&)])/.test(command) || /\$\{?HOME\b/.test(command)) return false;
   const { home } = options;
@@ -75,7 +77,13 @@ export function runsOnCopy(command: string, root: string, options: { cwd?: strin
     const path = /^[^\s'";|&()<>\x60]*/.exec(command.slice(at))![0];
     if ((path === home || path[home.length] === "/") && !inside(posix.normalize(path))) return false;
   }
-  for (const word of command.split(/[\s'"=;|&()<>\x60]+/))
-    if (!word.startsWith("/") && word.split("/").includes("..") && !inside(posix.resolve(here, word))) return false;
-  return !commandsIn(command).some(words => needsNetwork(words) || !!options.commands?.includes(words[0]!));
+  for (const words of commandsIn(command)) {
+    const [name, ...args] = words;
+    if (needsNetwork(words) || options.commands?.includes(name!)) return false;
+    if (SHELLS.has(name!) && /^-[a-z]*c[a-z]*$/.test(args[0] ?? "") && args[1] !== undefined && !runsOnCopy(args[1], root, { ...options, cwd: here })) return false;
+    for (const word of args.flatMap(arg => arg.split(/[=<>]/)))
+      if (!word.startsWith("/") && word.split("/").includes("..") && !inside(posix.resolve(here, word))) return false;
+    if (name === "cd" && args[0] && !args[0].startsWith("-")) here = posix.resolve(here, args[0]);
+  }
+  return true;
 }
