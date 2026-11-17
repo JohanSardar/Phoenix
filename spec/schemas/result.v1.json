@@ -182,6 +182,15 @@
               "files_copy": { "type": "integer", "minimum": 0, "description": "Run for real inside the box, on the copy of the project's files." },
               "working_copy": { "type": "integer", "minimum": 0, "description": "Answered by a service's working copy, such as the calendar plugin." },
               "made_up": { "type": "integer", "minimum": 0, "description": "Made up by the simulator LLM. Never real." },
+              "live": { "type": "integer", "minimum": 0, "description": "Shell lines that ran in the box and reached the live internet. Their answers are today's internet, not the moment's." },
+              "live_calls": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["connector", "op", "hosts"],
+                  "properties": { "connector": { "type": "string" }, "op": { "type": "string" }, "hosts": { "type": "array", "items": { "type": "string" } } }
+                }
+              },
               "made_up_calls": {
                 "type": "array",
                 "items": {
@@ -282,6 +291,17 @@
     "leaned_on_made_up": {
       "type": "boolean",
       "description": "True when a sample that counts toward the verdict passed or failed on a made-up tool answer."
+    },
+    "network": {
+      "type": "object",
+      "description": "Present when the plan let the box reach the internet. The replay was not a frozen world when used_live_internet is true.",
+      "required": ["level", "used_live_internet", "hosts", "refused"],
+      "properties": {
+        "level": { "enum": ["packages", "open"] },
+        "used_live_internet": { "type": "boolean", "description": "True when any sample's shell line reached a live host." },
+        "hosts": { "type": "array", "items": { "type": "string" }, "description": "Hosts reached live, across all samples." },
+        "refused": { "type": "array", "items": { "type": "string" }, "description": "Hosts the box tried and was refused, across all samples." }
+      }
     },
     "files_copy": {
       "type": "object",

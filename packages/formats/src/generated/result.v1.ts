@@ -81,6 +81,15 @@ export interface ReplayResult {
        * Made up by the simulator LLM. Never real.
        */
       made_up: number;
+      /**
+       * Shell lines that ran in the box and reached the live internet. Their answers are today's internet, not the moment's.
+       */
+      live?: number;
+      live_calls?: {
+        connector: string;
+        op: string;
+        hosts: string[];
+      }[];
       made_up_calls: {
         connector: string;
         op: string;
@@ -117,6 +126,24 @@ export interface ReplayResult {
    * True when a sample that counts toward the verdict passed or failed on a made-up tool answer.
    */
   leaned_on_made_up?: boolean;
+  /**
+   * Present when the plan let the box reach the internet. The replay was not a frozen world when used_live_internet is true.
+   */
+  network?: {
+    level: "packages" | "open";
+    /**
+     * True when any sample's shell line reached a live host.
+     */
+    used_live_internet: boolean;
+    /**
+     * Hosts reached live, across all samples.
+     */
+    hosts: string[];
+    /**
+     * Hosts the box tried and was refused, across all samples.
+     */
+    refused: string[];
+  };
   /**
    * Which copy of the project's files the box used.
    */
