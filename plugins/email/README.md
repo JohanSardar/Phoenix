@@ -52,7 +52,7 @@ For himalaya, read-only entries are the first words of a command: `himalaya fold
 
 `src/capture.mjs` plans reads of everything the session touched through the connector: `list_labels`, then `get_thread` (FULL_CONTENT) for each thread, `get_message` (RAW) for each message, and `get_draft` for each draft. Every planned read is a declared read-only tool. The sidecar makes no network calls.
 
-For a command-line target it plans `himalaya folder list`, page 1 (20 envelopes) of each folder the session touched (at most 6: a folder it listed or read, a move or copy's source and target, `trash` for a delete, `sent` for a send), the session's own `envelope list` calls, and one `message read --preview` per id the session read, all as JSON with the headers the copy needs and the session's own `-c` and `-a`. Once the folder pages are in, it plans a `message read --preview` of each message in them dated from the session's first himalaya call on (at most 10 per folder, 20 in all). It never plans a send or another write.
+For a command-line target it plans `himalaya folder list`, page 1 (20 envelopes) of each folder the session touched (at most 6: a folder it listed or read, a move or copy's source and target, `trash` for a delete, `sent` for a send), the session's own `envelope list` calls, and one `message read --preview` per id the session read, all as JSON with the headers the copy needs and the session's own `-c` and `-a`. Once the folder pages are in, it plans a `message read --preview` of each message in them dated from the start of the minute before the session's first himalaya call (at most 10 per folder, 20 in all). It never plans a send or another write.
 
 `phoenix mark` makes these reads on the real mailbox right after the session, with the person's own himalaya settings. When a snapshot holds such reads, the copy learns himalaya mail from them alone: they show the mailbox after the session's own himalaya calls, so a past himalaya write no longer makes the copy answer `unsupported`. The snapshot is the mailbox at the mark, and it holds real mail text, kept on the machine that made the mark.
 
@@ -94,7 +94,7 @@ A real send through himalaya with no Date and no Message-ID (2026-11-16) is the 
 Not proven or not built yet (JOH-57 stays open):
 
 - Without a mark's reads, the email copy can't follow a session that changed mail through himalaya before the moment. From then on it answers `unsupported`. Moments marked live with this plugin carry the reads; older moments and moments made at an earlier line don't.
-- The copy holds only page 1 of each touched folder and the bodies of mail new during the session. A later page, or the body of older mail the session never read, falls through.
+- The copy holds only page 1 of each touched folder and the bodies of mail dated from the start of the minute before the session's first himalaya call. A later page, the body of older mail the session never read, and the body of mail that arrived after the session started but before its first himalaya call (and that the session never read) fall through.
 - MCP prefetch isn't used.
 
 Other limits:
